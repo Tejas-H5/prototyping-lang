@@ -2,85 +2,95 @@ import { EditableTextArea } from './components/text-area.ts';
 import { GlobalState, newGlobalState } from './state.ts';
 import "./styling.ts";
 import { cnApp } from './styling.ts';
-import { cn, div, RenderGroup } from './utils/dom-utils.ts';
+import { cn, div, imState, imRerenderFn, UIRoot } from './utils/im-dom-utils.ts';
 
-function AppCodeOutput(rg: RenderGroup<GlobalContext>) {
-    return div({
-        class: [cn.h100, cn.preWrap]
-    }, [
-        rg.text(s => s.state.text),
-    ]);
+function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
+    const { state } = ctx;
+
+    div(r, r => {
+        if (r.isFirstRender) {
+            r.c(cn.h100).c(cn.preWrap).c(cn.overflowYAuto).c(cn.borderBox)
+             .s("padding", "10px");
+        }
+
+        r.text(state.text);
+    });
 }
 
-function AppCodeEditor(rg: RenderGroup<GlobalContext>) {
+function AppCodeEditor(r: UIRoot, ctx: GlobalContext) {
+    const { state, rerenderApp } = ctx;
+
     function onInput(newText: string) {
-        const state = rg.s.state;
-
         state.text = newText;
-
-        rg.s.rerenderApp();
+        rerenderApp();
     }
 
     function onInputKeyDown(e: KeyboardEvent, textArea: HTMLTextAreaElement) {
+
     }
 
-    return div({
-        class: [
-            // cnApp.bgFocus, 
-            cn.h100, cn.borderBox],
-        style: "padding: 10px",
-    }, [
-        div({
-            class: [
-                cn.w100,
-                //cn.h100
-            ],
-        }, [
-            rg.c(EditableTextArea, (c, s) => {
-                c.render({
-                    text: s.state.text,
-                    isEditing: true,
-                    onInput,
-                    onInputKeyDown,
-                    config: {
-                        useSpacesInsteadOfTabs: true,
-                        tabStopSize: 4
-                    },
-                });
-            })
-        ])
-    ]);
+    div(r, r => {
+        if (r.isFirstRender) {
+            r.c(cnApp.bgFocus).c(cn.h100).c(cn.overflowYAuto).c(cn.borderBox)
+             .s("padding", "10px");
+        }
 
+        EditableTextArea(r, {
+            text: state.text,
+            isEditing: true,
+            onInput,
+            onInputKeyDown,
+            config: {
+                useSpacesInsteadOfTabs: true,
+                tabStopSize: 4
+            },
+        });
+    });
 }
 
 export type GlobalContext = {
-    rerenderApp(): void;
     state: GlobalState;
+    rerenderApp: () => void;
 }
 
-export function App(rg: RenderGroup) {
-    const ctx: GlobalContext =  {
-        rerenderApp: () => {
-            rg.renderWithCurrentState();
-        },
+function newGlobalContext() {
+    return {
+        rerenderApp: () => {},
         state: newGlobalState(),
-    }
+    };
+}
 
-    ctx.state.text = `Henlo!
+export function App(r: UIRoot) {
+    const rerender = imRerenderFn(r, () => App(r));
 
+    const ctx = imState(r, newGlobalContext);
+    ctx.rerenderApp = rerender;
 
-        `;
+    div(r, r => {
+        if (r.isFirstRender) {
+            r.c(cn.fixed).c(cn.absoluteFill)
+             .c(cnApp.normalFont);
+        }
 
-    return div({
-        class: [cn.fixed, cn.absoluteFill, cnApp.normalFont],
-    }, [
-        div({ class: [cn.row, cn.alignItemsStretch, cn.h100] }, [
-            div({ class: [cn.flex1] }, [
-                rg.c(AppCodeEditor, c => c.render(ctx))
-            ]),
-            div({ class: [cn.flex1] }, [
-                rg.c(AppCodeOutput, c => c.render(ctx))
-            ]),
-        ]),
-    ]);
+        div(r, r => {
+            if (r.isFirstRender) {
+                r.c(cn.row).c(cn.alignItemsStretch).c(cn.h100);
+            }
+
+            div(r, r => {
+                if (r.isFirstRender) {
+                    r.c(cn.flex1);
+                }
+
+                AppCodeEditor(r, ctx);
+            });
+            div(r, r => {
+                if (r.isFirstRender) {
+                    r.c(cn.flex1);
+                }
+
+                AppCodeOutput(r, ctx);
+            });
+        });
+    });
 }

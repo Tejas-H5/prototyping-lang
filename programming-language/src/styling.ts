@@ -1,5 +1,5 @@
 // Using css was a mistake. Most styling should be available in javascript for the code to know about and use...
-import { newCssBuilder, newColorFromHex, setCssVars } from "src/utils/dom-utils";
+import { newCssBuilder, newColorFromHex, setCssVars } from "src/utils/im-dom-utils";
 
 const mainTheme = Object.freeze({
     bg: newColorFromHex("#FFF"),
@@ -40,27 +40,6 @@ body {
     color: ${cssVars.fg};
     background: ${cssVars.bg};
     font-size: 1em;
-}
-
-textarea {
-    all: unset;
-    font-family: monospace;
-    white-space: pre-wrap;
-    padding: 5px;
-}
-
-textarea:focus {
-    background-color: ${cssVars.bg2};
-}
-
-input {
-    all: unset;
-    font-family: monospace;
-    white-space: pre-wrap;
-}
-
-input:focus {
-    background-color: ${cssVars.bg2};
 }
     `);
 
