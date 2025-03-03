@@ -1,7 +1,7 @@
-import { assert, newStyleElement } from "./utils/im-dom-utils";
+import { assert } from "./utils/im-dom-utils";
 
 type TextSlice = {
-    text: string;
+    fullText: string;
     start: number;
     end: number;
 }
@@ -33,18 +33,21 @@ export function expressionTypeToString(expr: ProgramExpression) {
 }
 
 type ProgramExpressionBase = {
-    span: TextSlice;
+    slice: TextSlice;
 };
 
+// An identifier is just something that refers to a thing in the program.
+// It could be a variable name, or varName[i]. It is any lvalue.
 type ProgramExpressionIdentifier = ProgramExpressionBase & {
     t: typeof T_IDENTIFIER;
+    indexers: ProgramExpression[] | null;
 }
 
 type ProgramExpressionNumberLiteral = ProgramExpressionBase & {
     t: typeof T_NUMBER_LITERAL;
     integerPart: TextSlice;
-    decimalPart?: TextSlice;
-    exponentPart?: TextSlice;
+    decimalPart: TextSlice | null;
+    exponentPart: TextSlice | null;
 }
 
 type ProgramExpressionAssignment = ProgramExpressionBase & {
@@ -73,18 +76,24 @@ type ParserContext = {
     pos: TextPosition;
 }
 
-function newOptionalTextSpan(text: string, start: number, end: number): TextSlice | undefined {
+function newOptionalTextSpan(text: string, start: number, end: number): TextSlice | null {
     if (start === end) {
-        return undefined;
+        return null;
     }
+
+    return newTextSpan(text, start, end);
 }
 
 function newTextSpan(text: string, start: number, end: number): TextSlice {
     return {
         start,
         end,
-        text: text.substring(start, end)
+        fullText: text,
     };
+}
+
+export function getSliceText(slice: TextSlice) {
+    return slice.fullText.substring(slice.start, slice.end);
 }
 
 // Thankyou Trevor https://stackoverflow.com/questions/1496826/check-if-a-single-character-is-a-whitespace
@@ -169,16 +178,16 @@ function parseNumberLiteral(ctx: ParserContext): ProgramExpressionNumberLiteral 
     const result: ProgramExpressionNumberLiteral = {
         t: T_NUMBER_LITERAL,
         integerPart: newTextSpan(ctx.text, start, ctx.pos.i),
-        span: newTextSpan(ctx.text, start, ctx.pos.i),
-        decimalPart: undefined,
-        exponentPart: undefined,
+        slice: newTextSpan(ctx.text, start, ctx.pos.i),
+        decimalPart: null,
+        exponentPart: null,
     };
 
     const decimalPartStart = ctx.pos.i;
     if (currentChar(ctx) === "." && advance(ctx)) {
         while (isValidNumberPart(currentChar(ctx)) && advance(ctx)) { }
         result.decimalPart = newOptionalTextSpan(ctx.text, decimalPartStart, ctx.pos.i);
-        result.span.end = ctx.pos.i;
+        result.slice.end = ctx.pos.i;
     }
 
     const exponentPartStart = ctx.pos.i;
@@ -192,7 +201,7 @@ function parseNumberLiteral(ctx: ParserContext): ProgramExpressionNumberLiteral 
 
         while (isValidNumberPart(currentChar(ctx)) && advance(ctx)) { }
         result.exponentPart = newOptionalTextSpan(ctx.text, exponentPartStart, ctx.pos.i);
-        result.span.end = ctx.pos.i;
+        result.slice.end = ctx.pos.i;
     }
 
     return result;
@@ -207,10 +216,38 @@ function parseIdentifier(ctx: ParserContext): ProgramExpressionIdentifier {
         advance(ctx)
     ) {}
 
-    return {
+    const result: ProgramExpressionIdentifier = {
         t: T_IDENTIFIER,
-        span: newTextSpan(ctx.text, start, ctx.pos.i)
+        slice: newTextSpan(ctx.text, start, ctx.pos.i),
+        indexers: null,
+    };
+
+    if (currentChar(ctx) === "[") {
+        while(currentChar(ctx) === "[" && advance(ctx)) {
+            parseWhitespace(ctx);
+            const expr = parseExpression(ctx);
+            if (expr) {
+                if (!result.indexers) {
+                    result.indexers = [];
+                }
+                result.indexers.push(expr);
+            }
+
+            parseWhitespace(ctx);
+            if (currentChar(ctx) !== "]") {
+                ctx.program.errors.push({
+                    pos: getParserPosition(ctx),
+                    problem: "Expected a closing square brace here",
+                });
+                break;
+            }
+            advance(ctx);
+            result.slice.end = ctx.pos.i;
+            parseWhitespace(ctx);
+        }
     }
+
+    return result;
 }
 
 function parseExpression(ctx: ParserContext): ProgramExpression | undefined {
@@ -232,7 +269,7 @@ function parseExpression(ctx: ParserContext): ProgramExpression | undefined {
         if (currentChar(ctx) === "=") {
             // This might actually be an assignment.
 
-            const start = res.span.start;
+            const start = res.slice.start;
 
             advance(ctx);
             const endOfEquals = ctx.pos.i;
@@ -244,7 +281,7 @@ function parseExpression(ctx: ParserContext): ProgramExpression | undefined {
                 t: T_ASSIGNMENT,
                 lhs: res,
                 rhs,
-                span: newTextSpan(ctx.text, start, rhs?.span.end ?? endOfEquals),
+                slice: newTextSpan(ctx.text, start, rhs?.slice.end ?? endOfEquals),
             };
         }
     }
@@ -267,7 +304,6 @@ function parseStatements(ctx: ParserContext, statements: ProgramExpression[]) {
         if (statement) {
             statements.push(statement);
         } else {
-            // NOTE: the program 
             ctx.program.errors.push({
                 pos: getParserPosition(ctx),
                 problem: "Couldn't figure out how to parse this expression."

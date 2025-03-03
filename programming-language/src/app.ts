@@ -1,9 +1,9 @@
 import { EditableTextArea } from './components/text-area.ts';
-import { expressionTypeToString, interpret, parse, ProgramExpression, ProgramOutput, T_ASSIGNMENT, T_IDENTIFIER, T_NUMBER_LITERAL } from './program-parser.ts';
+import { expressionTypeToString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_ASSIGNMENT, T_IDENTIFIER, T_NUMBER_LITERAL } from './program-parser.ts';
 import { GlobalState, loadState, saveState } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
-import { el, cn, div, imState, imRerenderFn, UIRoot, imRef, imIf, imElse, span, imList, assert, imStateInline, ValidElement, imErrorBoundary, } from './utils/im-dom-utils.ts';
+import { cn, div, el, imElse, imErrorBoundary, imIf, imList, imRef, imRerenderFn, imState, span, UIRoot } from './utils/im-dom-utils.ts';
 
 function newH3() {
     return document.createElement("h3");
@@ -81,9 +81,14 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
                     }
 
                     let typeString = expressionTypeToString(expr);
-                    renderRow(title, typeString, depth, expr.span.text);
+                    renderRow(title, typeString, depth, getSliceText(expr.slice));
                     switch (expr.t) {
                         case T_IDENTIFIER: {
+                            if (expr.indexers) {
+                                for (let i = 0; i < expr.indexers.length; i++) {
+                                    dfs("[" + i + "]", expr.indexers[i], depth + 1);
+                                }
+                            }
                         } break;
                         case T_ASSIGNMENT: {
                             dfs("lhs", expr.lhs, depth + 1);
@@ -96,7 +101,6 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
                         }
                     }
                 }
-
 
                 const statements = output.program.statements;
                 for (let i = 0; i < statements.length; i++) {
@@ -121,7 +125,7 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
             });
             imIf(output.program.errors.length === 0, r, r => {
                 div(r, r => {
-                    textSpan(r, "No errors!");
+                    textSpan(r, "No parsing errors!");
                 });
             })
         });
