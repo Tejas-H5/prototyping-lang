@@ -13,20 +13,16 @@
  * Apparently, it makes a pretty big difference - a lot of string comparisions like `assert(type === lastType)` seem to tank performance, 
  * but they seem to be optimized out when this thing just early-returns `true`.
  *
- * Every assertion should have a comment above it explaining why it's there, to make
+ * Every assertion in the library code (and not necessarily user code) should have a comment above it explaining why it's there, to make
  * debugging for users easier. This is also why I don't bother printing a different debug message per assertion -
  * you should be able to break on these in the debugger and see a more descriptive comment,
  * which can also be removed in production code.
  * Some asserts have DEV: in front of them. They exist to catch errors in the library code that I wrote, and not in user code that you wrote.
  */
-function assert(value: boolean) {
-    // return true;
-
+export function assert(value: unknown): asserts value {
     if (!value) {
         throw new Error("Assertion failed");
     }
-
-    return true;
 }
 
 function userError(): never {
@@ -484,15 +480,16 @@ export function getCurrentNumAnimations() {
 // it's own size at some point during a 'frame boundary'.
 // The idea is that by adding strict element count preconditions,
 // An immediate mode renderer can be written that has better
-// performance charactaristics than a diffing algorithm.
+// performance charactaristics by avoiding the need for a diffing algorithm.
+// It's certainly easier to code on my end.
 
-export type ImmediateModeArray<T> = {
+type ImmediateModeArray<T> = {
     items: T[];
     expectedLength: number;
     idx: number;
 };
 
-export function newImArray<T>(): ImmediateModeArray<T> {
+function newImArray<T>(): ImmediateModeArray<T> {
     return {
         items: [],
         expectedLength: -1,
@@ -500,7 +497,7 @@ export function newImArray<T>(): ImmediateModeArray<T> {
     };
 }
 
-export function imGetNext<T>(arr: ImmediateModeArray<T>): T | undefined {
+function imGetNext<T>(arr: ImmediateModeArray<T>): T | undefined {
     arr.idx++;
 
     if (arr.idx < arr.items.length) {
@@ -521,7 +518,7 @@ export function imGetNext<T>(arr: ImmediateModeArray<T>): T | undefined {
     assert(false);
 }
 
-export function imPush<T>(arr: ImmediateModeArray<T>, value: T): T {
+function imPush<T>(arr: ImmediateModeArray<T>, value: T): T {
     // DEV: Pushing to an immediate mode array after it's been finalized is always a mistake
     assert(arr.expectedLength === -1);
     assert(arr.items.length === arr.idx);
@@ -531,7 +528,7 @@ export function imPush<T>(arr: ImmediateModeArray<T>, value: T): T {
     return value;
 }
 
-export function imLockSize(arr: ImmediateModeArray<unknown>) {
+function imLockSize(arr: ImmediateModeArray<unknown>) {
     if (arr.expectedLength === -1) {
         if (arr.idx !== -1) {
             arr.expectedLength = arr.items.length;
@@ -539,7 +536,7 @@ export function imLockSize(arr: ImmediateModeArray<unknown>) {
     }
 }
 
-export function imReset(arr: ImmediateModeArray<unknown>, idx: number = -1) {
+function imReset(arr: ImmediateModeArray<unknown>, idx: number = -1) {
     if (arr.expectedLength !== -1) {
         // Once an immediate mode array has been finalized, every subsequent render must create the same number of things.
         // In this case, you've rendered too few(?) things.
@@ -548,12 +545,6 @@ export function imReset(arr: ImmediateModeArray<unknown>, idx: number = -1) {
 
     arr.idx = idx;
 }
-
-
-
-
-
-
 
 ///////// Immediate-mode dom renderer. I've replaced the old render-groups approach with this thing. 
 // It solves a lot of issues I've had with the old renderer, at the cost of being a bit more complicated,
@@ -630,6 +621,7 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     manuallyHidden = false;
     ifStatementOpen = false;
     removed = false;
+    began = false;
 
     // Users should call `newUiRoot` instead.
     constructor(domRoot: DomRoot<E>, elementFactory: () => ValidElement) {
@@ -655,10 +647,15 @@ export class UIRoot<E extends ValidElement = ValidElement> {
         this.ifStatementOpen = false;
 
         this.removed = false;
+        // we may be recovering from an error, so I'm not asserting !this.began here.
+        this.began = true;
     }
 
     // Only lock the size if we reach the end without the component throwing errors. 
     __end() {
+        assert(this.began);
+        this.began = false;
+
         if (this.isFirstRenderCall) {
             imLockSize(this.items);
             this.isFirstRenderCall = false;
@@ -721,6 +718,8 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     }
 }
 
+// TODO: keyed list renderer. It will be super useful, for type narrowing with switch statements.
+
 export class ListRenderer {
     uiRoot: UIRoot;
     builders: UIRoot[] = [];
@@ -740,11 +739,23 @@ export class ListRenderer {
         this.uiRoot.openListRenderers++;
     }
 
+    getCurrent() {
+        assert(this.builderIdx > 0);
+        return this.builders[this.builderIdx - 1];
+    }
+
     getNext() {
         const idx = this.builderIdx;
 
         // DEV: whenever this.builderIdx === this.builders.length, we should append another builder to the list
         assert(idx <= this.builders.length);
+
+        if (idx > 0) {
+            const last = this.builders[idx - 1];
+            if (!last.removed) {
+                last.__end();
+            }
+        }
 
         let result;
         if (idx < this.builders.length) {
@@ -769,6 +780,10 @@ export class ListRenderer {
         assert(this.hasBegun);
 
         this.hasBegun = false;
+
+        if (this.builderIdx > 0) {
+            this.builders[this.builderIdx - 1].__end();
+        }
 
         // DEV: don't decrement this more times than you increment it
         assert(this.uiRoot.openListRenderers > 0);
@@ -815,7 +830,7 @@ export function beginList(r: UIRoot): ListRenderer {
     return result.v;
 }
 
-export function list(r: UIRoot, listRenderFn: (l: ListRenderer) => void) {
+export function imList(r: UIRoot, listRenderFn: (l: ListRenderer) => void) {
     const list = beginList(r);
     listRenderFn(list);
     list.end();
@@ -885,8 +900,11 @@ export function imState<T>(r: UIRoot, supplier: () => T): T {
 }
 
 /**
- * WARNING: using this method won't allow you to catch out-of-order hook-rendering bugs at runtime, 
- * leading to potential data corruption.
+ * Lets you do your suppliers inline, like `const s = imStateInline(() => ({ blah }));`.
+ *
+ * WARNING: using this method won't allow you to catch out-of-order im-state-rendering bugs at runtime, 
+ * leading to potential data corruption. 
+ *
  */
 export function imStateInline<T>(r: UIRoot, supplier: () => T): T {
     return imStateInternal(r, supplier, true);
@@ -913,6 +931,7 @@ export function el<E extends ValidElement = ValidElement>(r: UIRoot, elementSupp
     // a reference to the function that created the dom element and comparing those instead.
     assert(result.v.elementSupplier === elementSupplier);
 
+    r.hasRealChildren = true;
     appendToDomRoot(r.domRoot, result.v.domRoot.root);
 
     result.v.__begin();
@@ -1008,23 +1027,25 @@ export function span(r: UIRoot, next?: RenderFn<HTMLSpanElement>): UIRoot<HTMLSp
     return el<HTMLSpanElement>(r, newSpan, next);
 }
 
-export function imIf(condition: boolean, r: UIRoot, next: RenderFn) {
+
+type Falsy = "" | 0 | null | undefined | false;
+export function imIf<V>(val: V | Falsy, r: UIRoot, next: (r: UIRoot, typeNarrowedVal: V) => void) {
     r.ifStatementOpen = true;
-    ElseIf(condition, r, next);
+    ElseIf(val, r, next);
 }
 
-export function imElse(r: UIRoot, next: RenderFn) {
+export function imElse(r: UIRoot, next: (r: UIRoot, typeNarrowedVal: true) => void) {
     ElseIf(true, r, next);
 }
 
-export function ElseIf(condition: boolean, rIn: UIRoot, next: RenderFn) {
-    list(rIn, l => {
+export function ElseIf<V>(val: V | Falsy, rIn: UIRoot, next: (r: UIRoot, typeNarrowedVal: V) => void) {
+    imList(rIn, l => {
         const domRootIdx = rIn.domRoot.currentIdx;
         const r = l.getNext();
 
-        if (rIn.ifStatementOpen && condition) {
+        if (rIn.ifStatementOpen && val) {
             rIn.ifStatementOpen = false;
-            next(r);
+            next(r, val);
         } else {
             l.__removeAllDomElementsFromList();
             rIn.domRoot.currentIdx = domRootIdx;
@@ -1145,27 +1166,26 @@ export function intermittent(r: UIRoot, fn: RenderFn, ms: number) {
 export function imErrorBoundary(
     rIn: UIRoot,
     renderFnNormal: RenderFn,
-    renderFnError: RenderFnArgs<[unknown, () => void]>,
+    renderFnError: RenderFnArgs<[any, () => void]>,
 ) {
     const rerender = imRerenderFn(rIn, () => imErrorBoundary(rIn, renderFnNormal, renderFnError));
 
     const l = beginList(rIn);
-    const r = l.getNext();
-    const rError = l.getNext();
 
     const recover = () => {
-        rError.__removeAllDomElements();
+        l.__removeAllDomElementsFromList();
         rerender();
     }
 
     try {
-        renderFnNormal(r);
+        renderFnNormal(l.getNext());
     } catch (error) {
+        const r = l.getCurrent();
         r.__removeAllDomElements();
         // need to reset the dom root, since we've just removed elements underneath it
         resetDomRoot(r.domRoot);
 
-        renderFnError(rError, error, recover);
+        renderFnError(l.getNext(), error, recover);
     } finally {
         l.end();
     }
@@ -1175,6 +1195,10 @@ type Ref<T> = { val: T | null; }
 function newRef<T>(): Ref<T> {
     return { val: null };
 }
+
+// NOTE: Prefer using this for transient UI state rather than actual program state, 
+// and prefer `imState` for actual program state that you're storing locally, so that
+// your refactorings willl be easier. 
 export function imRef<T>(r: UIRoot): Ref<T> {
     return imState(r, newRef as (typeof newRef<T>));
 }

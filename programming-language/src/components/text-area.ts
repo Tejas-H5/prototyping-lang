@@ -18,7 +18,7 @@ const cssb = newCssBuilder();
 const cnEditableTextArea = cssb.newClassName("editableTextArea");
 cssb.s(`
 textarea.${cnEditableTextArea} { 
-    font-family: monospace; white-space: pre-wrap; padding: 5px; 
+    white-space: pre-wrap; padding: 5px; 
     caret-color: ${CSSVARS_FG};
 };
 textarea.${cnEditableTextArea}:focus { background-color: ${CSSVARS_FOCUS}; };
@@ -50,7 +50,7 @@ function newEditableTextAreaState() {
 //   - When I have a lot of empty newlines, and then click off, the empty lines go away 'as needed' 
 export function EditableTextArea(r: UIRoot, {
     text,
-    isEditing: isEditingArgs,
+    isEditing,
     isOneLine,
     onInput,
     onInputKeyDown,
@@ -59,7 +59,7 @@ export function EditableTextArea(r: UIRoot, {
     const state = imState(r, newEditableTextAreaState);
 
     const wasEditing = state.isEditing;
-    state.isEditing = isEditingArgs;
+    state.isEditing = isEditing;
 
     const root = div(r, r => {
         if (r.isFirstRender) {
@@ -67,7 +67,7 @@ export function EditableTextArea(r: UIRoot, {
              .s("overflowY", "hidden");
         }
 
-        imIf(isEditingArgs, r, r => {
+        imIf(isEditing, r, r => {
             el(r, newTextArea, r => {
                 if (r.isFirstRender) {
                     r.c(cn.allUnset)
@@ -84,11 +84,11 @@ export function EditableTextArea(r: UIRoot, {
                 }
 
 
-                if (state.lastText !== text || state.lastIsEditing !== isEditingArgs) {
+                if (state.lastText !== text || state.lastIsEditing !== isEditing) {
                     state.lastText = text;
                     // for some reason, we need to render this thing again when we start editing - perhaps
                     // setting the input value doesn't work if it isn't visible...
-                    state.lastIsEditing = isEditingArgs;
+                    state.lastIsEditing = isEditing;
                     setInputValue(r.root, text);
                 }
 

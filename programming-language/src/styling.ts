@@ -35,12 +35,17 @@ const cssb = newCssBuilder();
 
 cssb.s(`
 body {
-    font-family: monospace;
+    font-family: Arial;
     font-size: ${cssVars.normalText};
     color: ${cssVars.fg};
     background: ${cssVars.bg};
     font-size: 1em;
 }
+
+h4, h3, h2, h1 {
+    margin: 0;
+}
+
     `);
 
 export const cnApp = {
@@ -56,7 +61,9 @@ export const cnApp = {
 
     border1Solid: cssb.cn("border1Solid", [`{ border: 1px solid ${cssVars.fg}; }`]),
 
-    gap5: cssb.cn("gap5", [`{ gap: 5px; }`]),
+    gap5: cssb.cn("gap5", [` { gap: 5px; }`]),
+
+    code: cssb.cn("code", [` { font-family: Source Code Pro, monospace; }`]),
 };
 
 setCssVars(mainTheme);
