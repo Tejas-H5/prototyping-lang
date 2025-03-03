@@ -1,5 +1,5 @@
 import { EditableTextArea } from './components/text-area.ts';
-import { expressionTypeToString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_ASSIGNMENT, T_IDENTIFIER, T_NUMBER_LITERAL } from './program-parser.ts';
+import { expressionTypeToString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_ASSIGNMENT, T_IDENTIFIER, T_LIST_LITERAL, T_NUMBER_LITERAL } from './program-parser.ts';
 import { GlobalState, loadState, saveState } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
@@ -95,6 +95,11 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
                             dfs("rhs", expr.rhs, depth + 1);
                         } break;
                         case T_NUMBER_LITERAL: {
+                        } break;
+                        case T_LIST_LITERAL: {
+                            for (let i = 0; i < expr.items.length; i++) {
+                                dfs("[" + i + "]", expr.items[i], depth + 1);
+                            }
                         } break;
                         default: {
                             throw new Error("Unhandled type: " + typeString);

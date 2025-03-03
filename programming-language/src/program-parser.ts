@@ -19,6 +19,7 @@ function newTextPosition(i: number, line: number, col: number): TextPosition {
 export const T_IDENTIFIER = 1;
 export const T_ASSIGNMENT = 2;
 export const T_NUMBER_LITERAL = 3;
+export const T_LIST_LITERAL = 4;
 
 export function expressionTypeToString(expr: ProgramExpression) {
     switch(expr.t) {
@@ -28,6 +29,8 @@ export function expressionTypeToString(expr: ProgramExpression) {
             return "Assignment";
         case T_NUMBER_LITERAL:
             return "Number literal";
+        case T_LIST_LITERAL:
+            return "List literal";
     }
     return "???";
 }
@@ -50,6 +53,11 @@ type ProgramExpressionNumberLiteral = ProgramExpressionBase & {
     exponentPart: TextSlice | null;
 }
 
+type ProgramExpressionListLiteral = ProgramExpressionBase & {
+    t: typeof T_LIST_LITERAL;
+    items: ProgramExpression[];
+}
+
 type ProgramExpressionAssignment = ProgramExpressionBase & {
     t: typeof T_ASSIGNMENT;
     lhs: ProgramExpression;
@@ -58,7 +66,8 @@ type ProgramExpressionAssignment = ProgramExpressionBase & {
 
 export type ProgramExpression = ProgramExpressionIdentifier
     | ProgramExpressionAssignment
-    | ProgramExpressionNumberLiteral;
+    | ProgramExpressionNumberLiteral
+    | ProgramExpressionListLiteral;
 
 export type Program = {
     statements: ProgramExpression[];
@@ -76,15 +85,15 @@ type ParserContext = {
     pos: TextPosition;
 }
 
-function newOptionalTextSpan(text: string, start: number, end: number): TextSlice | null {
+function newOptionalTextSlice(text: string, start: number, end: number): TextSlice | null {
     if (start === end) {
         return null;
     }
 
-    return newTextSpan(text, start, end);
+    return newTextSlice(text, start, end);
 }
 
-function newTextSpan(text: string, start: number, end: number): TextSlice {
+function newTextSlice(text: string, start: number, end: number): TextSlice {
     return {
         start,
         end,
@@ -93,6 +102,9 @@ function newTextSpan(text: string, start: number, end: number): TextSlice {
 }
 
 export function getSliceText(slice: TextSlice) {
+    // DEV: you forgot to set the span correctly
+    assert(slice.end >= slice.start);
+
     return slice.fullText.substring(slice.start, slice.end);
 }
 
@@ -169,6 +181,40 @@ function isValidNumberPart(c: string) {
     return isDigit(c) || c === "_";
 }
 
+function parseListLiteral(ctx: ParserContext): ProgramExpressionListLiteral {
+    assert(currentChar(ctx) === "[");
+
+    const result: ProgramExpressionListLiteral = {
+        t: T_LIST_LITERAL,
+        slice: newTextSlice(ctx.text, ctx.pos.i, 0),
+        items: [],
+    };
+
+    advance(ctx);
+    
+    while(true) {
+        parseWhitespace(ctx);
+        if (!parseExpressionOrMoveToNextLine(ctx, result.items)) {
+            break;
+        }
+
+        parseWhitespace(ctx);
+
+        if (currentChar(ctx) === ",") {
+            advance(ctx);
+            parseWhitespace(ctx);
+        }
+
+        if (currentChar(ctx) === "]") {
+            advance(ctx);
+            break;
+        }
+    }
+
+    result.slice.end = ctx.pos.i;
+    return result;
+}
+
 function parseNumberLiteral(ctx: ParserContext): ProgramExpressionNumberLiteral {
     assert(canParseNumberLiteral(ctx));
 
@@ -177,8 +223,8 @@ function parseNumberLiteral(ctx: ParserContext): ProgramExpressionNumberLiteral 
 
     const result: ProgramExpressionNumberLiteral = {
         t: T_NUMBER_LITERAL,
-        integerPart: newTextSpan(ctx.text, start, ctx.pos.i),
-        slice: newTextSpan(ctx.text, start, ctx.pos.i),
+        integerPart: newTextSlice(ctx.text, start, ctx.pos.i),
+        slice: newTextSlice(ctx.text, start, ctx.pos.i),
         decimalPart: null,
         exponentPart: null,
     };
@@ -186,7 +232,7 @@ function parseNumberLiteral(ctx: ParserContext): ProgramExpressionNumberLiteral 
     const decimalPartStart = ctx.pos.i;
     if (currentChar(ctx) === "." && advance(ctx)) {
         while (isValidNumberPart(currentChar(ctx)) && advance(ctx)) { }
-        result.decimalPart = newOptionalTextSpan(ctx.text, decimalPartStart, ctx.pos.i);
+        result.decimalPart = newOptionalTextSlice(ctx.text, decimalPartStart, ctx.pos.i);
         result.slice.end = ctx.pos.i;
     }
 
@@ -200,7 +246,7 @@ function parseNumberLiteral(ctx: ParserContext): ProgramExpressionNumberLiteral 
         }
 
         while (isValidNumberPart(currentChar(ctx)) && advance(ctx)) { }
-        result.exponentPart = newOptionalTextSpan(ctx.text, exponentPartStart, ctx.pos.i);
+        result.exponentPart = newOptionalTextSlice(ctx.text, exponentPartStart, ctx.pos.i);
         result.slice.end = ctx.pos.i;
     }
 
@@ -218,32 +264,34 @@ function parseIdentifier(ctx: ParserContext): ProgramExpressionIdentifier {
 
     const result: ProgramExpressionIdentifier = {
         t: T_IDENTIFIER,
-        slice: newTextSpan(ctx.text, start, ctx.pos.i),
-        indexers: null,
+        slice: newTextSlice(ctx.text, start, ctx.pos.i),
+        indexers: [],
     };
+
+    // only allow one space between x [0]
+    if (currentChar(ctx) === " ") {
+        advance(ctx);
+    }
 
     if (currentChar(ctx) === "[") {
         while(currentChar(ctx) === "[" && advance(ctx)) {
-            parseWhitespace(ctx);
-            const expr = parseExpression(ctx);
-            if (expr) {
-                if (!result.indexers) {
-                    result.indexers = [];
-                }
-                result.indexers.push(expr);
+            if (!parseExpressionOrMoveToNextLine(ctx, result.indexers!)) {
+                return result;
             }
 
             parseWhitespace(ctx);
+
             if (currentChar(ctx) !== "]") {
                 ctx.program.errors.push({
                     pos: getParserPosition(ctx),
                     problem: "Expected a closing square brace here",
                 });
+                advance(ctx);
                 break;
             }
+
             advance(ctx);
             result.slice.end = ctx.pos.i;
-            parseWhitespace(ctx);
         }
     }
 
@@ -262,6 +310,8 @@ function parseExpression(ctx: ParserContext): ProgramExpression | undefined {
         res = parseIdentifier(ctx);
     } else if (isDigit(c)) {
         res = parseNumberLiteral(ctx);
+    } else if (c === "[") {
+        res = parseListLiteral(ctx);
     }
 
     if (res) {
@@ -281,7 +331,7 @@ function parseExpression(ctx: ParserContext): ProgramExpression | undefined {
                 t: T_ASSIGNMENT,
                 lhs: res,
                 rhs,
-                slice: newTextSpan(ctx.text, start, rhs?.slice.end ?? endOfEquals),
+                slice: newTextSlice(ctx.text, start, rhs?.slice.end ?? endOfEquals),
             };
         }
     }
@@ -293,26 +343,32 @@ function getParserPosition(ctx: ParserContext): TextPosition {
     return { ...ctx.pos };
 }
 
+function parseExpressionOrMoveToNextLine(ctx: ParserContext, expressions: ProgramExpression[])  {
+    parseWhitespace(ctx);
+    if (reachedEnd(ctx)) {
+        return false;
+    }
+
+    const statement = parseExpression(ctx);
+    if (statement) {
+        expressions.push(statement);
+        return true;
+    } 
+
+    ctx.program.errors.push({
+        pos: getParserPosition(ctx),
+        problem: "Couldn't figure out how to parse this expression."
+    });
+
+    // Let's just get to the next line, and continue from there.
+    while (advance(ctx) && currentChar(ctx) !== "\n") { }
+    advance(ctx);
+    return false;
+}
+
 function parseStatements(ctx: ParserContext, statements: ProgramExpression[]) {
-    while (true) {
-        parseWhitespace(ctx);
-        if (reachedEnd(ctx)) {
-            break;
-        }
-
-        const statement = parseExpression(ctx);
-        if (statement) {
-            statements.push(statement);
-        } else {
-            ctx.program.errors.push({
-                pos: getParserPosition(ctx),
-                problem: "Couldn't figure out how to parse this expression."
-            });
-
-            // Let's just get to the next line, and continue from there.
-            while(advance(ctx) && currentChar(ctx) !== "\n") {}
-            advance(ctx);
-        }
+    while (!reachedEnd(ctx)) {
+        parseExpressionOrMoveToNextLine(ctx, statements);
     }
 }
 
