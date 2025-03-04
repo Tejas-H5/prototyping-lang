@@ -1,5 +1,5 @@
 import { EditableTextArea } from './components/text-area.ts';
-import { expressionTypeToString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_ASSIGNMENT, T_IDENTIFIER, T_LIST_LITERAL, T_NUMBER_LITERAL } from './program-parser.ts';
+import { binOpToString, expressionTypeToString, getBinaryOperatorType, getBinaryOperatorTypeOpString as binOpToSymbolString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_BINARY_OP, T_IDENTIFIER, T_LIST_LITERAL, T_NUMBER_LITERAL, DiagnosticInfo } from './program-parser.ts';
 import { GlobalState, loadState, saveState } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
@@ -74,29 +74,41 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
                     });
                 }
 
+                const INCOMPLETE = " <Incomplete!> ";
+
                 const dfs = (title: string, expr: ProgramExpression | undefined, depth: number) => {
                     if (!expr) {
-                        renderRow(title, " <Incomplete!> ", depth);
+                        renderRow(title, INCOMPLETE, depth);
                         return;
                     }
 
                     let typeString = expressionTypeToString(expr);
-                    renderRow(title, typeString, depth, getSliceText(expr.slice));
                     switch (expr.t) {
                         case T_IDENTIFIER: {
+                            renderRow(title, typeString, depth, getSliceText(expr.slice));
+
                             if (expr.indexers) {
                                 for (let i = 0; i < expr.indexers.length; i++) {
                                     dfs("[" + i + "]", expr.indexers[i], depth + 1);
                                 }
                             }
                         } break;
-                        case T_ASSIGNMENT: {
+                        case T_BINARY_OP: {
+                            const lhsText = getSliceText(expr.lhs.slice);
+                            const rhsText = expr.rhs ? getSliceText(expr.rhs.slice) : INCOMPLETE;
+                            const opSymbol = binOpToSymbolString(expr.op);
+                            const text = `(${lhsText}) ${opSymbol} (${rhsText})`;
+                            renderRow(title, binOpToString(expr.op), depth, text);
+
                             dfs("lhs", expr.lhs, depth + 1);
                             dfs("rhs", expr.rhs, depth + 1);
                         } break;
                         case T_NUMBER_LITERAL: {
+                            renderRow(title, typeString, depth, getSliceText(expr.slice));
                         } break;
                         case T_LIST_LITERAL: {
+                            renderRow(title, typeString, depth, getSliceText(expr.slice));
+
                             for (let i = 0; i < expr.items.length; i++) {
                                 dfs("[" + i + "]", expr.items[i], depth + 1);
                             }
@@ -115,24 +127,29 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
             });
 
             // TODO: display these in the code editor itself. 
-            el(r, newH3, r => {
-                r.isFirstRender && r.s("padding", "10px 0");
-                textSpan(r, "Errors");
-            });
 
-            imList(r, l => {
-                for (const e of output.program.errors) {
-                    const r = l.getNext();
-                    div(r, r => {
-                        textSpan(r, "Line " + e.pos.line + " Col " + (e.pos.col + 1) + " - " + e.problem);
-                    });
-                }
-            });
-            imIf(output.program.errors.length === 0, r, r => {
-                div(r, r => {
-                    textSpan(r, "No parsing errors!");
+            const displayInfo = (heading: string, info: DiagnosticInfo[], emptyText: string) => {
+                el(r, newH3, r => {
+                    r.isFirstRender && r.s("padding", "10px 0");
+                    textSpan(r, heading);
                 });
-            })
+                imList(r, l => {
+                    for (const e of info) {
+                        const r = l.getNext();
+                        div(r, r => {
+                            textSpan(r, "Line " + e.pos.line + " Col " + (e.pos.col + 1) + " - " + e.problem);
+                        });
+                    }
+                });
+                imIf(info.length === 0, r, r => {
+                    div(r, r => {
+                        textSpan(r, emptyText);
+                    });
+                })
+            }
+
+            displayInfo("Errors", output.program.errors, "No parsing errors!");
+            displayInfo("Warnings", output.program.warnings, "No parsing warnings");
         });
         imElse(r, r => {
             textSpan(r, "No output yet");
