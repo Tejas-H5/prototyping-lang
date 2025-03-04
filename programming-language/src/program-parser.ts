@@ -20,8 +20,9 @@ export const T_IDENTIFIER = 1;
 export const T_BINARY_OP = 2;
 export const T_NUMBER_LITERAL = 3;
 export const T_LIST_LITERAL = 4;
+export const T_STRING_LITERAL = 5;
 
-export function expressionTypeToString(expr: ProgramExpression) {
+export function expressionTypeToString(expr: ProgramExpression): string {
     switch(expr.t) {
         case T_IDENTIFIER:
             return "Identifier";
@@ -31,6 +32,8 @@ export function expressionTypeToString(expr: ProgramExpression) {
             return "Number literal";
         case T_LIST_LITERAL:
             return "List literal";
+        case T_STRING_LITERAL:
+            return "String literal";
     }
 }
 
@@ -44,8 +47,9 @@ export const BIN_OP_LESS_THAN = 7;
 export const BIN_OP_LESS_THAN_EQ = 8;
 export const BIN_OP_GREATER_THAN = 9;
 export const BIN_OP_GREATER_THAN_EQ = 10;
-export const BIN_OP_AND_AND = 10;
-export const BIN_OP_OR_OR = 10;
+export const BIN_OP_AND_AND = 11;
+export const BIN_OP_OR_OR = 12;
+export const STRING_LITERAL = 13;
 export const BIN_OP_INVALID = -1;
 
 export type BinaryOperatorType = typeof BIN_OP_ASSIGNMENT
@@ -161,6 +165,10 @@ type ProgramExpressionListLiteral = ProgramExpressionBase & {
     items: ProgramExpression[];
 }
 
+type ProgramExpressionStringLiteral = ProgramExpressionBase & {
+    t: typeof T_STRING_LITERAL;
+}
+
 type ProgramExpressionAssignment = ProgramExpressionBase & {
     t: typeof T_BINARY_OP;
     op: BinaryOperatorType;
@@ -171,7 +179,8 @@ type ProgramExpressionAssignment = ProgramExpressionBase & {
 export type ProgramExpression = ProgramExpressionIdentifier
     | ProgramExpressionAssignment
     | ProgramExpressionNumberLiteral
-    | ProgramExpressionListLiteral;
+    | ProgramExpressionListLiteral
+    | ProgramExpressionStringLiteral;
 
 export type ProgramParseResult = {
     statements: ProgramExpression[];
@@ -249,6 +258,10 @@ function currentChar(ctx: ParserContext) {
     return ctx.text[ctx.pos.i];
 }
 
+function prevChar(ctx: ParserContext): string {
+    return ctx.text[ctx.pos.i - 1] ?? " ";
+}
+
 function compareCurrent(ctx: ParserContext, str: string): boolean {
     for (let i = 0; i < str.length; i++) {
         const pos = ctx.pos.i + i;
@@ -290,7 +303,7 @@ function parseWhitespace(ctx: ParserContext) {
 
         // Comments can be considered whitespace.
         if (compareCurrent(ctx, "//")) {
-            while(advance(ctx) && currentChar(ctx) !== "\n") {}
+            advanceToNextNewLine(ctx);
             advance(ctx);
             continue;
         }
@@ -312,6 +325,47 @@ function canParseNumberLiteral(ctx: ParserContext) {
 
 function isValidNumberPart(c: string) {
     return isDigit(c) || c === "_";
+}
+
+
+// TODO: This is a very basic string literal that could be vastly improved. current problems include:
+// - opening a " connects directly to the start of another string. JavaScript ` has this problem as well, lmao.
+// - I want the indentation in a string to be relative to the current indentation of the code, not to the
+//      start of the line. Something like the Java """ strings would be good here
+// - need some form of interpolation, since that is always nice to have.
+function parseStringLiteral(ctx: ParserContext): ProgramExpressionStringLiteral | undefined {
+    assert(currentChar(ctx) === "\"");
+
+    const startPos = getParserPosition(ctx);
+
+    let closed = false;
+    while (!reachedEnd(ctx)) {
+        advance(ctx);
+
+        const c = currentChar(ctx);
+        if (c === "\\") {
+            advance(ctx);
+        } else if (c === "\"") {
+            closed = true;
+            advance(ctx);
+            break;
+        }
+    }
+
+    // There's a good chance we'll go off the edge of the document when 
+    // we've opened up a string literal. It's best we just reset to the end of the
+    // line we started on, so we can still parse the rest of the stuff correctly (hopefully);
+
+    if (!closed) {
+        ctx.pos = startPos;
+        advanceToNextNewLine(ctx);
+        return;
+    }
+
+    return {
+        t: T_STRING_LITERAL,
+        slice: newTextSlice(ctx.text, startPos.i, ctx.pos.i),
+    };
 }
 
 function parseListLiteral(ctx: ParserContext): ProgramExpressionListLiteral {
@@ -530,10 +584,11 @@ function parseExpression(ctx: ParserContext, maxPrec: number = MAX_PRECEDENCE): 
         res = parseNumberLiteral(ctx);
     } else if (c === "[") {
         res = parseListLiteral(ctx);
+    } else if (c === "\"") {
+        res = parseStringLiteral(ctx);
     }
 
     if (res) {
-
         while (true) {
             parseWhitespace(ctx);
 
@@ -570,10 +625,14 @@ function parseExpressionOrMoveToNextLine(ctx: ParserContext): ProgramExpression 
     });
 
     // Let's just get to the next line, and continue from there.
-    while (advance(ctx) && currentChar(ctx) !== "\n") { }
+    advanceToNextNewLine(ctx);
     advance(ctx);
 
     return;
+}
+
+function advanceToNextNewLine(ctx: ParserContext) {
+    while (advance(ctx) && currentChar(ctx) !== "\n") { }
 }
 
 function parseStatements(ctx: ParserContext, statements: ProgramExpression[]) {

@@ -1,5 +1,5 @@
 import { EditableTextArea } from './components/text-area.ts';
-import { binOpToString, expressionTypeToString, getBinaryOperatorType, getBinaryOperatorTypeOpString as binOpToSymbolString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_BINARY_OP, T_IDENTIFIER, T_LIST_LITERAL, T_NUMBER_LITERAL, DiagnosticInfo } from './program-parser.ts';
+import { binOpToString, expressionTypeToString, getBinaryOperatorType, getBinaryOperatorTypeOpString as binOpToSymbolString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_BINARY_OP, T_IDENTIFIER, T_LIST_LITERAL, T_NUMBER_LITERAL, DiagnosticInfo, T_STRING_LITERAL } from './program-parser.ts';
 import { GlobalState, loadState, saveState } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
@@ -103,15 +103,18 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
                             dfs("lhs", expr.lhs, depth + 1);
                             dfs("rhs", expr.rhs, depth + 1);
                         } break;
-                        case T_NUMBER_LITERAL: {
-                            renderRow(title, typeString, depth, getSliceText(expr.slice));
-                        } break;
                         case T_LIST_LITERAL: {
                             renderRow(title, typeString, depth, getSliceText(expr.slice));
 
                             for (let i = 0; i < expr.items.length; i++) {
                                 dfs("[" + i + "]", expr.items[i], depth + 1);
                             }
+                        } break;
+                        case T_NUMBER_LITERAL: {
+                            renderRow(title, typeString, depth, getSliceText(expr.slice));
+                        } break;
+                        case T_STRING_LITERAL: {
+                            renderRow(title, typeString, depth, getSliceText(expr.slice));
                         } break;
                         default: {
                             throw new Error("Unhandled type: " + typeString);
