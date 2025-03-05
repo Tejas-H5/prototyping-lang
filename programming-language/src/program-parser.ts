@@ -21,6 +21,7 @@ export const T_BINARY_OP = 2;
 export const T_NUMBER_LITERAL = 3;
 export const T_LIST_LITERAL = 4;
 export const T_STRING_LITERAL = 5;
+export const T_TERNARY_IF = 6;
 
 export function expressionTypeToString(expr: ProgramExpression): string {
     switch(expr.t) {
@@ -34,6 +35,8 @@ export function expressionTypeToString(expr: ProgramExpression): string {
             return "List literal";
         case T_STRING_LITERAL:
             return "String literal";
+        case T_TERNARY_IF:
+            return "Ternary if";
     }
 }
 
@@ -98,8 +101,6 @@ export function isUnreachable(t: never): never {
 
 function getBinOpPrecedence(op: BinaryOperatorType): number {
     switch (op) {
-        case BIN_OP_ASSIGNMENT:
-            return 1;
         case BIN_OP_IS_EQUAL_TO: 
         case BIN_OP_GREATER_THAN: 
         case BIN_OP_GREATER_THAN_EQ: 
@@ -116,6 +117,8 @@ function getBinOpPrecedence(op: BinaryOperatorType): number {
         case BIN_OP_ADD:
         case BIN_OP_SUBTRACT:
             return 8;
+        case BIN_OP_ASSIGNMENT:
+            return 60;
         case BIN_OP_INVALID:
             return -1;
     }
@@ -169,6 +172,13 @@ type ProgramExpressionStringLiteral = ProgramExpressionBase & {
     t: typeof T_STRING_LITERAL;
 }
 
+type ProgramExpressionTernaryIf = ProgramExpressionBase & {
+    t: typeof T_TERNARY_IF;
+    query: ProgramExpression;
+    trueBranch: ProgramExpression;
+    falseBranch: ProgramExpression | null;
+}
+
 type ProgramExpressionAssignment = ProgramExpressionBase & {
     t: typeof T_BINARY_OP;
     op: BinaryOperatorType;
@@ -180,7 +190,8 @@ export type ProgramExpression = ProgramExpressionIdentifier
     | ProgramExpressionAssignment
     | ProgramExpressionNumberLiteral
     | ProgramExpressionListLiteral
-    | ProgramExpressionStringLiteral;
+    | ProgramExpressionStringLiteral
+    | ProgramExpressionTernaryIf;
 
 export type ProgramParseResult = {
     statements: ProgramExpression[];
@@ -254,12 +265,8 @@ function isLetter(c: string) {
     return c.toUpperCase() != c.toLowerCase() || (c.codePointAt(0) ?? 0) > 127 || c === "_";
 }
 
-function currentChar(ctx: ParserContext) {
-    return ctx.text[ctx.pos.i];
-}
-
-function prevChar(ctx: ParserContext): string {
-    return ctx.text[ctx.pos.i - 1] ?? " ";
+function currentChar(ctx: ParserContext, offset = 0) {
+    return ctx.text[ctx.pos.i + offset] ?? "";
 }
 
 function compareCurrent(ctx: ParserContext, str: string): boolean {
@@ -325,6 +332,45 @@ function canParseNumberLiteral(ctx: ParserContext) {
 
 function isValidNumberPart(c: string) {
     return isDigit(c) || c === "_";
+}
+
+function parseTernaryIf(ctx: ParserContext, query: ProgramExpression): ProgramExpressionTernaryIf | undefined {
+    assert(currentChar(ctx) === "?");
+
+    advance(ctx);
+    parseWhitespace(ctx);
+
+    const start = query.slice.start
+
+    const trueBranch = parseExpressionOrMoveToNextLine(ctx);
+    if (!trueBranch) {
+        return undefined;
+    }
+
+    const res: ProgramExpressionTernaryIf = {
+        t: T_TERNARY_IF,
+        slice: newTextSlice(ctx.text, start, ctx.pos.i),
+        query,
+        trueBranch,
+        falseBranch: null,
+    };
+
+    parseWhitespace(ctx);
+    if (currentChar(ctx) !== ":") {
+        addErrorAtCurrentPosition(ctx, "Expected a colon : here to complete the ternary.");
+    } else {
+        advance(ctx);
+    }
+
+    parseWhitespace(ctx);
+
+    const falseBranch = parseExpression(ctx);
+    if (falseBranch) {
+        res.falseBranch = falseBranch;
+        res.slice.end = ctx.pos.i;
+    }
+
+    return res;
 }
 
 
@@ -475,10 +521,7 @@ function parseIdentifier(ctx: ParserContext): ProgramExpressionIdentifier {
             parseWhitespace(ctx);
 
             if (currentChar(ctx) !== "]") {
-                ctx.parseResult.errors.push({
-                    pos: getParserPosition(ctx),
-                    problem: "Expected a closing square brace here",
-                });
+                addErrorAtCurrentPosition(ctx, "Expected a closing square brace ] here");
                 advance(ctx);
                 break;
             }
@@ -494,46 +537,45 @@ function parseIdentifier(ctx: ParserContext): ProgramExpressionIdentifier {
 function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
     let op: BinaryOperatorType = BIN_OP_INVALID;
 
-    const c1 = currentChar(ctx);
-    switch(c1) {
-        case "=": op = BIN_OP_ASSIGNMENT; break;
+    const c = currentChar(ctx);
+    const c2 = currentChar(ctx, 1);
+    switch(c) {
+        case "=": 
+            if (c2 === "=") {
+                op = BIN_OP_IS_EQUAL_TO;
+            } else {
+                op = BIN_OP_ASSIGNMENT; 
+            }
+            break;
         case "*": op = BIN_OP_MULTIPLY; break;
         case "/": op = BIN_OP_DIVIDE; break;
         case "+": op = BIN_OP_ADD; break;
         case "-": op = BIN_OP_SUBTRACT; break;
-        case "<": op = BIN_OP_LESS_THAN; break;
-        case ">": op = BIN_OP_GREATER_THAN; break;
-        case "&": op = BIN_OP_AND_AND; break;
-        case "|": op = BIN_OP_OR_OR; break;
-    }
-
-    if (op === BIN_OP_INVALID) {
-        return op;
-    }
-
-    advance(ctx);
-    const c2 = currentChar(ctx);
-    switch(c2) {
-        case "=": {
-            switch (op) {
-                case BIN_OP_ASSIGNMENT: op = BIN_OP_IS_EQUAL_TO; break;
-                case BIN_OP_LESS_THAN: op = BIN_OP_LESS_THAN_EQ; break;
-                case BIN_OP_GREATER_THAN: op = BIN_OP_GREATER_THAN_EQ; break;
-                default: op = BIN_OP_INVALID;
+        case "<": 
+            if (c2 === "=") {
+                op = BIN_OP_LESS_THAN_EQ;
+            } else {
+                op = BIN_OP_LESS_THAN;
             }
-        } break;
-        case "&": {
-            switch (op) {
-                case BIN_OP_AND_AND: break;
-                default: op = BIN_OP_INVALID;
+            break;
+        case ">": 
+            if (c2 === "=") {
+                op = BIN_OP_GREATER_THAN_EQ;
+            } else {
+                op = BIN_OP_GREATER_THAN;
             }
-        } break;
-        case "|": {
-            switch (op) {
-                case BIN_OP_OR_OR: break;
-                default: op = BIN_OP_INVALID;
+            break;
+        case "&": 
+            if (c2 === "&") {
+                op = BIN_OP_AND_AND; 
             }
-        } break;
+            break;
+        case "|":  {
+            if (c2 === "|") {
+                op = BIN_OP_OR_OR;
+            }
+            break;
+        }
     }
     
     return op;
@@ -543,6 +585,8 @@ function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
 // Damn, it works! Funny how I had basically the same design up to the point I referred to this though.
 // NOTE: My precedence is the other way around to what they had.
 function parseBinaryOperatorIncreasingPrecedence(ctx: ParserContext, lhs: ProgramExpression, maxPrecedence: number): ProgramExpression | undefined {
+    assert(!isWhitespace(currentChar(ctx)));
+
     const op = parseBinaryOperator(ctx);
     const prec = getBinOpPrecedence(op);
     if (prec === -1) {
@@ -551,6 +595,10 @@ function parseBinaryOperatorIncreasingPrecedence(ctx: ParserContext, lhs: Progra
 
     if (prec >= maxPrecedence) {
         return;
+    }
+
+    for (let i = 0; i < getBinaryOperatorTypeOpString(op).length; i++) {
+        advance(ctx);
     }
 
     const start = lhs.slice.start;
@@ -577,31 +625,62 @@ function parseExpression(ctx: ParserContext, maxPrec: number = MAX_PRECEDENCE): 
 
     let res: ProgramExpression | undefined;
 
-    const c = currentChar(ctx);
+    let c = currentChar(ctx);
     if (isLetter(c)) {
         res = parseIdentifier(ctx);
     } else if (isDigit(c)) {
         res = parseNumberLiteral(ctx);
     } else if (c === "[") {
         res = parseListLiteral(ctx);
-    } else if (c === "\"") {
-        res = parseStringLiteral(ctx);
-    }
-
-    if (res) {
-        while (true) {
+    } else if (c === "(") {
+        advance(ctx);
+        parseWhitespace(ctx);
+        res = parseExpressionOrMoveToNextLine(ctx);
+        if (res) {
             parseWhitespace(ctx);
 
-            const nextRes = parseBinaryOperatorIncreasingPrecedence(ctx, res, maxPrec);
-            if (!nextRes) {
-                break;
+            if (currentChar(ctx) !== ")") {
+                // TODO: figure out why col is 1 higher than it should be
+                addErrorAtCurrentPosition(ctx, "Expected a closing paren ) here");
+            } else {
+                advance(ctx);
             }
+        }
+    } else if (c === "\"") {
+        res = parseStringLiteral(ctx);
+    }  
 
-            res = nextRes;
+    if (res) {
+        parseWhitespace(ctx);
+        c = currentChar(ctx);
+        if (c === "?") {
+            const ternary = parseTernaryIf(ctx, res);
+            if (ternary) {
+                res = ternary;
+            }
+        } else {
+            while (true) {
+
+                const nextRes = parseBinaryOperatorIncreasingPrecedence(ctx, res, maxPrec);
+                if (!nextRes) {
+                    break;
+                }
+
+                parseWhitespace(ctx);
+
+                res = nextRes;
+            }
         }
     }
 
     return res;
+}
+
+function addErrorAtCurrentPosition(ctx: ParserContext, error: string) {
+    ctx.parseResult.errors.push({
+        pos: getParserPosition(ctx),
+        problem: error
+    });
 }
 
 function getParserPosition(ctx: ParserContext): TextPosition {
@@ -619,10 +698,7 @@ function parseExpressionOrMoveToNextLine(ctx: ParserContext): ProgramExpression 
         return statement;
     } 
 
-    ctx.parseResult.errors.push({
-        pos: getParserPosition(ctx),
-        problem: "Couldn't figure out how to parse this expression."
-    });
+    addErrorAtCurrentPosition(ctx, "Couldn't figure out how to parse this expression.");
 
     // Let's just get to the next line, and continue from there.
     advanceToNextNewLine(ctx);

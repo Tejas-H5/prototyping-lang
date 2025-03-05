@@ -1,5 +1,5 @@
 import { EditableTextArea } from './components/text-area.ts';
-import { binOpToString, expressionTypeToString, getBinaryOperatorType, getBinaryOperatorTypeOpString as binOpToSymbolString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_BINARY_OP, T_IDENTIFIER, T_LIST_LITERAL, T_NUMBER_LITERAL, DiagnosticInfo, T_STRING_LITERAL } from './program-parser.ts';
+import { binOpToString, expressionTypeToString, getBinaryOperatorType, getBinaryOperatorTypeOpString as binOpToSymbolString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_BINARY_OP, T_IDENTIFIER, T_LIST_LITERAL, T_NUMBER_LITERAL, DiagnosticInfo, T_STRING_LITERAL, T_TERNARY_IF } from './program-parser.ts';
 import { GlobalState, loadState, saveState } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
@@ -115,6 +115,15 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
                         } break;
                         case T_STRING_LITERAL: {
                             renderRow(title, typeString, depth, getSliceText(expr.slice));
+                        } break;
+                        case T_TERNARY_IF: {
+                            renderRow(title, typeString, depth, getSliceText(expr.slice));
+
+                            dfs("query", expr.query, depth + 1);
+                            dfs("trueBranch", expr.trueBranch, depth + 1);
+                            if (expr.falseBranch) {
+                                dfs("falseBranch", expr.falseBranch, depth + 1);
+                            }
                         } break;
                         default: {
                             throw new Error("Unhandled type: " + typeString);
