@@ -22,6 +22,7 @@ export const T_NUMBER_LITERAL = 3;
 export const T_LIST_LITERAL = 4;
 export const T_STRING_LITERAL = 5;
 export const T_TERNARY_IF = 6;
+export const T_BLOCK = 7;
 
 export function expressionTypeToString(expr: ProgramExpression): string {
     switch(expr.t) {
@@ -37,6 +38,8 @@ export function expressionTypeToString(expr: ProgramExpression): string {
             return "String literal";
         case T_TERNARY_IF:
             return "Ternary if";
+        case T_BLOCK:
+            return "Block";
     }
 }
 
@@ -186,12 +189,18 @@ type ProgramExpressionAssignment = ProgramExpressionBase & {
     rhs?: ProgramExpression; // undefined when the AST is incomplete.
 }
 
+type ProgramExpressionBlock = ProgramExpressionBase & {
+    t: typeof T_BLOCK;
+    statements: ProgramExpression[];
+}
+
 export type ProgramExpression = ProgramExpressionIdentifier
     | ProgramExpressionAssignment
     | ProgramExpressionNumberLiteral
     | ProgramExpressionListLiteral
     | ProgramExpressionStringLiteral
-    | ProgramExpressionTernaryIf;
+    | ProgramExpressionTernaryIf
+    | ProgramExpressionBlock;
 
 export type ProgramParseResult = {
     statements: ProgramExpression[];
@@ -414,6 +423,29 @@ function parseStringLiteral(ctx: ParserContext): ProgramExpressionStringLiteral 
     };
 }
 
+function parseBlock(ctx: ParserContext): ProgramExpressionBlock | undefined {
+    assert(currentChar(ctx) === "{");
+    advance(ctx);
+
+    const start = ctx.pos.i;
+
+    const statements: ProgramExpression[] = [];
+    parseStatements(ctx, statements, "}");
+
+    if (currentChar(ctx) !== "}") {
+        addErrorAtCurrentPosition(ctx, "Expected a closing curly brace } here");
+        return;
+    }
+
+    advance(ctx);
+
+    return {
+        t: T_BLOCK,
+        slice: newTextSlice(ctx.text, start, ctx.pos.i),
+        statements
+    };
+}
+
 function parseListLiteral(ctx: ParserContext): ProgramExpressionListLiteral {
     assert(currentChar(ctx) === "[");
 
@@ -632,6 +664,8 @@ function parseExpression(ctx: ParserContext, maxPrec: number = MAX_PRECEDENCE): 
         res = parseNumberLiteral(ctx);
     } else if (c === "[") {
         res = parseListLiteral(ctx);
+    } else if (c === "{") {
+        res = parseBlock(ctx);
     } else if (c === "(") {
         advance(ctx);
         parseWhitespace(ctx);
@@ -660,7 +694,6 @@ function parseExpression(ctx: ParserContext, maxPrec: number = MAX_PRECEDENCE): 
             }
         } else {
             while (true) {
-
                 const nextRes = parseBinaryOperatorIncreasingPrecedence(ctx, res, maxPrec);
                 if (!nextRes) {
                     break;
@@ -711,9 +744,17 @@ function advanceToNextNewLine(ctx: ParserContext) {
     while (advance(ctx) && currentChar(ctx) !== "\n") { }
 }
 
-function parseStatements(ctx: ParserContext, statements: ProgramExpression[]) {
+function parseStatements(ctx: ParserContext, statements: ProgramExpression[], closingCurlyBrace = "") {
     let lastLine = -1;
-    while (!reachedEnd(ctx)) {
+    while (true) {
+        if (reachedEnd(ctx)) {
+            break;
+        }
+
+        if (closingCurlyBrace && currentChar(ctx) === closingCurlyBrace) {
+            break;
+        }
+
         const thisLine = ctx.pos.line;
 
         const expr = parseExpressionOrMoveToNextLine(ctx);

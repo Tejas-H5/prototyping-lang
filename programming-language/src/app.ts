@@ -1,5 +1,5 @@
 import { EditableTextArea } from './components/text-area.ts';
-import { binOpToString, expressionTypeToString, getBinaryOperatorType, getBinaryOperatorTypeOpString as binOpToSymbolString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_BINARY_OP, T_IDENTIFIER, T_LIST_LITERAL, T_NUMBER_LITERAL, DiagnosticInfo, T_STRING_LITERAL, T_TERNARY_IF } from './program-parser.ts';
+import { binOpToString, expressionTypeToString, getBinaryOperatorType, getBinaryOperatorTypeOpString as binOpToSymbolString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_BINARY_OP, T_IDENTIFIER, T_LIST_LITERAL, T_NUMBER_LITERAL, DiagnosticInfo, T_STRING_LITERAL, T_TERNARY_IF, T_BLOCK } from './program-parser.ts';
 import { GlobalState, loadState, saveState } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
@@ -76,7 +76,7 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
 
                 const INCOMPLETE = " <Incomplete!> ";
 
-                const dfs = (title: string, expr: ProgramExpression | undefined, depth: number) => {
+                const dfs = (title: string, expr: ProgramExpression | undefined, depth: number, showCode = true) => {
                     if (!expr) {
                         renderRow(title, INCOMPLETE, depth);
                         return;
@@ -123,6 +123,13 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
                             dfs("trueBranch", expr.trueBranch, depth + 1);
                             if (expr.falseBranch) {
                                 dfs("falseBranch", expr.falseBranch, depth + 1);
+                            }
+                        } break;
+                        case T_BLOCK: {
+                            renderRow(title, typeString, depth, "statement count: " + expr.statements.length);
+
+                            for (let i = 0; i < expr.statements.length; i++) {
+                                dfs("s" + i, expr.statements[i], depth + 1);
                             }
                         } break;
                         default: {
