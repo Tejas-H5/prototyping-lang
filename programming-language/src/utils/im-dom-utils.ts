@@ -641,9 +641,11 @@ export class UIRoot<E extends ValidElement = ValidElement> {
 
         imReset(this.items, rp?.itemsIdx);
 
-        // DEV: If this is negative, I fkd up (I decremented this thing too many times) 
-        // User: If this is positive, u fked up (You forgot to finalize an open list)
-        assert(this.openListRenderers === 0);
+        // NOTE: avoid any more asertions here - the component may error out, and
+        // __end may not get called. No I'm not going to catch it with an exception stfu. We livin on the edge, bois.
+
+        this.openListRenderers = 0;
+
         this.ifStatementOpen = false;
 
         this.removed = false;
@@ -661,6 +663,10 @@ export class UIRoot<E extends ValidElement = ValidElement> {
             this.isFirstRenderCall = false;
             return;
         }
+
+        // DEV: If this is negative, I fkd up (I decremented this thing too many times) 
+        // User: If this is positive, u fked up (You forgot to finalize an open list)
+        assert(this.openListRenderers === 0);
     }
 
     setStyle<K extends (keyof E["style"])>(key: K, value: string) {
@@ -724,17 +730,12 @@ export class ListRenderer {
     uiRoot: UIRoot;
     builders: UIRoot[] = [];
     builderIdx = 0;
-    hasBegun = false;
 
     constructor(root: UIRoot) {
         this.uiRoot = root;
     }
 
     __begin() {
-        // DEV: Don't begin a list twice. (A user usually doesn't have to begin a list themselves)
-        assert(!this.hasBegun);
-
-        this.hasBegun = true;
         this.builderIdx = 0;
         this.uiRoot.openListRenderers++;
     }
@@ -776,11 +777,6 @@ export class ListRenderer {
     }
 
     end() {
-        // You should only finalize a list once.
-        assert(this.hasBegun);
-
-        this.hasBegun = false;
-
         if (this.builderIdx > 0) {
             this.builders[this.builderIdx - 1].__end();
         }

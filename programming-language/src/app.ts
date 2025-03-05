@@ -1,5 +1,5 @@
 import { EditableTextArea } from './components/text-area.ts';
-import { binOpToString, expressionTypeToString, getBinaryOperatorType, getBinaryOperatorTypeOpString as binOpToSymbolString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_BINARY_OP, T_IDENTIFIER, T_LIST_LITERAL, T_NUMBER_LITERAL, DiagnosticInfo, T_STRING_LITERAL, T_TERNARY_IF, T_BLOCK } from './program-parser.ts';
+import { binOpToString, expressionTypeToString, getBinaryOperatorType, getBinaryOperatorTypeOpString as binOpToSymbolString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_BINARY_OP, T_IDENTIFIER, T_LIST_LITERAL, T_NUMBER_LITERAL, DiagnosticInfo, T_STRING_LITERAL, T_TERNARY_IF, T_BLOCK, T_RANGE_FOR } from './program-parser.ts';
 import { GlobalState, loadState, saveState } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
@@ -131,6 +131,12 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
                             for (let i = 0; i < expr.statements.length; i++) {
                                 dfs("s" + i, expr.statements[i], depth + 1);
                             }
+                        } break;
+                        case T_RANGE_FOR: {
+                            renderRow(title, typeString, depth);
+                            dfs("loop var", expr.loopVar, depth + 1);
+                            dfs("loop range", expr.range, depth + 1);
+                            dfs("loop body", expr.body, depth + 1);
                         } break;
                         default: {
                             throw new Error("Unhandled type: " + typeString);
