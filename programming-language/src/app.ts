@@ -1,5 +1,5 @@
 import { EditableTextArea } from './components/text-area.ts';
-import { binOpToString, expressionTypeToString, getBinaryOperatorType, getBinaryOperatorTypeOpString as binOpToSymbolString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_BINARY_OP, T_IDENTIFIER, T_LIST_LITERAL, T_NUMBER_LITERAL, DiagnosticInfo, T_STRING_LITERAL, T_TERNARY_IF, T_BLOCK, T_RANGE_FOR } from './program-parser.ts';
+import { binOpToString, expressionTypeToString, getBinaryOperatorType, getBinaryOperatorTypeOpString as binOpToSymbolString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_BINARY_OP, T_IDENTIFIER, T_LIST_LITERAL, T_NUMBER_LITERAL, DiagnosticInfo, T_STRING_LITERAL, T_TERNARY_IF, T_BLOCK, T_RANGE_FOR, T_FN, T_DATA_INDEX_OP, T_IDENTIFIER_THE_RESULT_FROM_ABOVE } from './program-parser.ts';
 import { GlobalState, loadState, saveState } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
@@ -86,12 +86,9 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
                     switch (expr.t) {
                         case T_IDENTIFIER: {
                             renderRow(title, typeString, depth, getSliceText(expr.slice));
-
-                            if (expr.indexers) {
-                                for (let i = 0; i < expr.indexers.length; i++) {
-                                    dfs("[" + i + "]", expr.indexers[i], depth + 1);
-                                }
-                            }
+                        } break;
+                        case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: {
+                            renderRow(title, typeString, depth);
                         } break;
                         case T_BINARY_OP: {
                             const lhsText = getSliceText(expr.lhs.slice);
@@ -137,6 +134,23 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
                             dfs("loop var", expr.loopVar, depth + 1);
                             dfs("loop range", expr.range, depth + 1);
                             dfs("loop body", expr.body, depth + 1);
+                        } break;
+                        case T_FN: {
+                            renderRow(title, typeString, depth);
+                            dfs("name", expr.fnName, depth + 1);
+                            for (let i = 0; i < expr.arguments.length; i++) {
+                                dfs("arg" + i, expr.arguments[i], depth + 1);
+                            }
+                            if (expr.body) {
+                                dfs("body", expr.body, depth + 1);
+                            }
+                        } break;
+                        case T_DATA_INDEX_OP: {
+                            renderRow(title, typeString, depth);
+                            dfs("var", expr.var, depth + 1);
+                            for (let i = 0; i < expr.indexes.length; i++) {
+                                dfs("[" + i + "]", expr.indexes[i], depth + 1);
+                            }
                         } break;
                         default: {
                             throw new Error("Unhandled type: " + typeString);

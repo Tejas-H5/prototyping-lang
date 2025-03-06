@@ -17,18 +17,23 @@ function newTextPosition(i: number, line: number, col: number): TextPosition {
 }
 
 export const T_IDENTIFIER = 1;
-export const T_BINARY_OP = 2;
-export const T_NUMBER_LITERAL = 3;
-export const T_LIST_LITERAL = 4;
-export const T_STRING_LITERAL = 5;
-export const T_TERNARY_IF = 6;
-export const T_BLOCK = 7;
-export const T_RANGE_FOR = 8;
+export const T_IDENTIFIER_THE_RESULT_FROM_ABOVE = 2;
+export const T_BINARY_OP = 3;
+export const T_NUMBER_LITERAL = 4;
+export const T_LIST_LITERAL = 5;
+export const T_STRING_LITERAL = 6;
+export const T_TERNARY_IF = 7;
+export const T_BLOCK = 8;
+export const T_DATA_INDEX_OP = 9;
+export const T_FN = 10;
+export const T_RANGE_FOR = 11;
 
 export function expressionTypeToString(expr: ProgramExpression): string {
     switch(expr.t) {
         case T_IDENTIFIER:
             return "Identifier";
+        case T_IDENTIFIER_THE_RESULT_FROM_ABOVE:
+            return "(result from above)";
         case T_BINARY_OP:
             return "Binary operator";
         case T_NUMBER_LITERAL:
@@ -41,6 +46,10 @@ export function expressionTypeToString(expr: ProgramExpression): string {
             return "Ternary if";
         case T_BLOCK:
             return "Block";
+        case T_FN:
+            return expr.body ? "Function declaration" : "Function call";
+        case T_DATA_INDEX_OP:
+            return "Indexing op";
         case T_RANGE_FOR:
             return "Range-for loop";
     }
@@ -110,6 +119,7 @@ export function isUnreachable(t: never): never {
     throw new Error("This code is unreachable!");
 }
 
+// This precedence table is the gift that keeps giving. thank you j blow, very cool.
 function getBinOpPrecedence(op: BinaryOperatorType): number {
     switch (op) {
         case BIN_OP_IS_EQUAL_TO: 
@@ -132,7 +142,7 @@ function getBinOpPrecedence(op: BinaryOperatorType): number {
         case BIN_OP_RANGE_IN:
             return 9;
         case BIN_OP_ASSIGNMENT:
-            return 10;
+            return 11;
         case BIN_OP_INVALID:
             return -1;
     }
@@ -168,8 +178,7 @@ type ProgramExpressionBase = {
 // An identifier is just something that refers to a thing in the program.
 // It could be a variable name, or varName[i]. It is any lvalue.
 type ProgramExpressionIdentifier = ProgramExpressionBase & {
-    t: typeof T_IDENTIFIER;
-    indexers: ProgramExpression[] | null;
+    t: typeof T_IDENTIFIER | typeof T_IDENTIFIER_THE_RESULT_FROM_ABOVE;
 }
 
 type ProgramExpressionNumberLiteral = ProgramExpressionBase & {
@@ -207,6 +216,20 @@ type ProgramExpressionBlock = ProgramExpressionBase & {
     statements: ProgramExpression[];
 }
 
+type ProgramExpressionDataIndex = ProgramExpressionBase & {
+    t: typeof T_DATA_INDEX_OP;
+    var: ProgramExpressionIdentifier;
+    indexes: ProgramExpression[];
+}
+
+type ProgramExpressionFn = ProgramExpressionBase & {
+    t: typeof T_FN;
+    fnName: ProgramExpressionIdentifier;
+    arguments: ProgramExpression[];
+    // If this is present, it's a declaration. else, it's a call.
+    body: ProgramExpressionBlock | null;
+}
+
 type ProgramExpressionRangedFor = ProgramExpressionBase & {
     t: typeof T_RANGE_FOR;
     loopVar: ProgramExpressionIdentifier;
@@ -221,6 +244,8 @@ export type ProgramExpression = ProgramExpressionIdentifier
     | ProgramExpressionStringLiteral
     | ProgramExpressionTernaryIf
     | ProgramExpressionBlock
+    | ProgramExpressionDataIndex
+    | ProgramExpressionFn
     | ProgramExpressionRangedFor;
 
 export type ProgramParseResult = {
@@ -484,7 +509,7 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
         addErrorAtCurrentPosition(ctx, "Expected an identifier to assign the current loop variable to here");
         return undefined;
     }
-    const loopVar = parseIdentifier(ctx, false);
+    const loopVar = parseIdentifier(ctx);
 
     parseWhitespace(ctx);
 
@@ -529,6 +554,56 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
     return result;
 }
 
+function parseExpressionsDelimiterSeparated(
+    ctx: ParserContext, 
+    expressions: ProgramExpression[], 
+    delimiter: string, 
+    closingDelimiterChar: string,
+) {
+    while(true) {
+        parseWhitespace(ctx);
+
+        if (closingDelimiterChar && currentChar(ctx) === closingDelimiterChar) {
+            advance(ctx);
+            break;
+        }
+
+        const expr = parseExpressionOrMoveToNextLine(ctx);
+        if (expr) {
+            expressions.push(expr);
+        } else {
+            break;
+        }
+
+        parseWhitespace(ctx);
+
+        let foundSomeDelimiter = false;
+        if (compareCurrent(ctx, delimiter)) {
+            for (let i = 0; i < delimiter.length; i++) {
+                advance(ctx);
+            }
+
+            parseWhitespace(ctx);
+            foundSomeDelimiter = true;
+        }
+
+        if (closingDelimiterChar && currentChar(ctx) === closingDelimiterChar) {
+            advance(ctx);
+            break;
+        }
+
+        if (!foundSomeDelimiter) {
+            if (closingDelimiterChar) {
+                addErrorAtCurrentPosition(ctx, `Expected a delimiter ${delimiter} or a closing delimiter ${closingDelimiterChar} here`);
+                return undefined;
+            } else { 
+                addErrorAtCurrentPosition(ctx, `Expected a delimiter ${delimiter} here`);
+                return undefined;
+            }
+        }
+    }
+}
+
 function parseListLiteral(ctx: ParserContext): ProgramExpressionListLiteral | undefined {
     assert(currentChar(ctx) === "[");
 
@@ -539,35 +614,8 @@ function parseListLiteral(ctx: ParserContext): ProgramExpressionListLiteral | un
     };
 
     advance(ctx);
-    
-    while(true) {
-        parseWhitespace(ctx);
-        const expr = parseExpressionOrMoveToNextLine(ctx);
-        if (expr) {
-            result.items.push(expr);
-        } else {
-            break;
-        }
 
-        parseWhitespace(ctx);
-
-        let foundSomeDelimiter = false;
-        if (currentChar(ctx) === ",") {
-            advance(ctx);
-            parseWhitespace(ctx);
-            foundSomeDelimiter = true;
-        }
-
-        if (currentChar(ctx) === "]") {
-            advance(ctx);
-            break;
-        }
-
-        if (!foundSomeDelimiter) {
-            addErrorAtCurrentPosition(ctx, "Expected a comma , or a closing square bracket ] here");
-            return undefined;
-        }
-    }
+    parseExpressionsDelimiterSeparated(ctx, result.items, "," ,"]");
 
     result.slice.end = ctx.pos.i;
     return result;
@@ -616,8 +664,81 @@ function parseNumberLiteral(ctx: ParserContext): ProgramExpressionNumberLiteral 
     return result;
 }
 
-function parseIdentifier(ctx: ParserContext, parseIndexers = true): ProgramExpressionIdentifier {
-    assert(isLetter(currentChar(ctx)));
+function parseIdentifierAndFollowOns(ctx: ParserContext): ProgramExpression | undefined {
+    let result: ProgramExpression = parseIdentifier(ctx);
+
+    parseWhitespace(ctx);
+
+    if (currentChar(ctx) === "[") {
+        result = {
+            t: T_DATA_INDEX_OP,
+            slice: newTextSlice(ctx.text, result.slice.start, ctx.pos.i),
+            var: result,
+            indexes: [],
+        };
+
+        while (currentChar(ctx) === "[" && advance(ctx)) {
+            const expr = parseExpressionOrMoveToNextLine(ctx);
+            if (expr) {
+                result.indexes.push(expr);
+            } else {
+                return result;
+            }
+
+            parseWhitespace(ctx);
+
+            if (currentChar(ctx) !== "]") {
+                addErrorAtCurrentPosition(ctx, "Expected a closing square brace ] here");
+                break;
+            }
+
+            advance(ctx);
+
+            parseWhitespace(ctx);
+        }
+
+        result.slice.end = ctx.pos.i;
+    } else if (currentChar(ctx) === "(") {
+        result = {
+            t: T_FN,
+            slice: newTextSlice(ctx.text, result.slice.start, ctx.pos.i),
+            fnName: result,
+            arguments: [],
+            body: null,
+        };
+
+        advance(ctx);
+
+        parseExpressionsDelimiterSeparated(ctx, result.arguments, ",", ")");
+
+        parseWhitespace(ctx);
+
+        if (currentChar(ctx) === "{") {
+            const block = parseBlock(ctx);
+            if (!block) {
+                return undefined;
+            }
+
+            result.body = block;
+        }
+
+        result.slice.end = ctx.pos.i;
+    }
+
+    return result;
+}
+
+function parseIdentifier(ctx: ParserContext): ProgramExpressionIdentifier {
+    const c = currentChar(ctx);
+    if (c === "^") {
+        advance(ctx);
+        return {
+            t: T_IDENTIFIER_THE_RESULT_FROM_ABOVE,
+            slice: newTextSlice(ctx.text, ctx.pos.i - 1, ctx.pos.i),
+        };
+    }
+
+    assert(isLetter(c));
 
     const start = ctx.pos.i;
     while (
@@ -625,42 +746,10 @@ function parseIdentifier(ctx: ParserContext, parseIndexers = true): ProgramExpre
         advance(ctx)
     ) {}
 
-    const result: ProgramExpressionIdentifier = {
+    return {
         t: T_IDENTIFIER,
         slice: newTextSlice(ctx.text, start, ctx.pos.i),
-        indexers: [],
     };
-
-    // only allow one space between x [0]
-    if (currentChar(ctx) === " ") {
-        advance(ctx);
-    }
-
-    if (parseIndexers) {
-        if (currentChar(ctx) === "[") {
-            while(currentChar(ctx) === "[" && advance(ctx)) {
-                const expr = parseExpressionOrMoveToNextLine(ctx);
-                if (expr) {
-                    result.indexers!.push(expr);
-                } else {
-                    return result;
-                }
-
-                parseWhitespace(ctx);
-
-                if (currentChar(ctx) !== "]") {
-                    addErrorAtCurrentPosition(ctx, "Expected a closing square brace ] here");
-                    advance(ctx);
-                    break;
-                }
-
-                advance(ctx);
-                result.slice.end = ctx.pos.i;
-            }
-        }
-    }
-
-    return result;
 }
 
 function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
@@ -762,14 +851,12 @@ function parseExpression(ctx: ParserContext, maxPrec: number = MAX_PRECEDENCE): 
 
     let res: ProgramExpression | undefined;
 
-
-
     let c = currentChar(ctx);
-    if (isLetter(c)) {
+    if (isLetter(c) || c === "^") {
         if (compareCurrent(ctx, "for")) {
             res = parseRangedFor(ctx);
         } else {
-            res = parseIdentifier(ctx);
+            res = parseIdentifierAndFollowOns(ctx);
         }
     } else if (isDigit(c)) {
         res = parseNumberLiteral(ctx);
