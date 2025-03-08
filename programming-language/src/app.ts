@@ -1,9 +1,33 @@
 import { EditableTextArea } from './components/text-area.ts';
-import { binOpToString, expressionTypeToString, getBinaryOperatorType, getBinaryOperatorTypeOpString as binOpToSymbolString, getSliceText, interpret, parse, ProgramExpression, ProgramOutput, T_BINARY_OP, T_IDENTIFIER, T_LIST_LITERAL, T_NUMBER_LITERAL, DiagnosticInfo, T_STRING_LITERAL, T_TERNARY_IF, T_BLOCK, T_RANGE_FOR, T_FN, T_DATA_INDEX_OP, T_IDENTIFIER_THE_RESULT_FROM_ABOVE } from './program-parser.ts';
+import {
+    binOpToString,
+    getBinaryOperatorTypeOpString as binOpToSymbolString,
+    DiagnosticInfo,
+    expressionTypeToString,
+    getSliceText,
+    interpret,
+    parse,
+    ProgramExpression,
+    ProgramOutput,
+    programResultTypeString,
+    ProgramParseResult,
+    T_BINARY_OP,
+    T_BLOCK,
+    T_DATA_INDEX_OP,
+    T_FN,
+    T_IDENTIFIER,
+    T_IDENTIFIER_THE_RESULT_FROM_ABOVE,
+    T_LIST_LITERAL,
+    T_VECTOR_LITERAL,
+    T_NUMBER_LITERAL,
+    T_RANGE_FOR,
+    T_STRING_LITERAL,
+    T_TERNARY_IF
+} from './program-parser.ts';
 import { GlobalState, loadState, saveState } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
-import { cn, div, el, imElse, imErrorBoundary, imIf, imList, imRef, imRerenderFn, imState, span, UIRoot } from './utils/im-dom-utils.ts';
+import { cn, div, el, imElse, imErrorBoundary, imIf, imList, imMemo, imOn, imRerenderable, imState, span, UIRoot } from './utils/im-dom-utils.ts';
 
 function newH3() {
     return document.createElement("h3");
@@ -11,9 +35,10 @@ function newH3() {
 
 function newOutputState(): {
     lastText: string;
-    lastOutput: ProgramOutput | null;
+    lastPaseResult: ProgramParseResult | undefined;
+    lastOutput: ProgramOutput | undefined;
 } {
-    return { lastText: "", lastOutput: null };
+    return { lastText: "", lastOutput: undefined, lastPaseResult: undefined, };
 }
 
 function textSpan(r: UIRoot, text: string) {
@@ -32,18 +57,186 @@ function textCode(r: UIRoot, text: string) {
     });
 }
 
+
+function ParserOutput(r: UIRoot, parseResult: ProgramParseResult | undefined) {
+    imIf(parseResult, r, (r, parseResult) => {
+        imList(r, l => {
+            function renderRow(title: string, type: string, depth: number, code?: string) {
+                const r = l.getNext();
+                div(r, r => {
+                    r.s("paddingLeft", (depth * 20) + "px");
+                    textSpan(r, title);
+                    textSpan(r, " = ");
+                    textSpan(r, type);
+                    imIf(code, r, (r, code) => {
+                        textSpan(r, " ");
+                        textCode(r, code);
+                    })
+                });
+            }
+
+            const INCOMPLETE = " <Incomplete!> ";
+
+            const dfs = (title: string, expr: ProgramExpression | undefined, depth: number, showCode = true) => {
+                if (!expr) {
+                    renderRow(title, INCOMPLETE, depth);
+                    return;
+                }
+
+                let typeString = expressionTypeToString(expr);
+                switch (expr.t) {
+                    case T_IDENTIFIER: {
+                        renderRow(title, typeString, depth, getSliceText(expr.slice));
+                    } break;
+                    case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: {
+                        renderRow(title, typeString, depth);
+                    } break;
+                    case T_BINARY_OP: {
+                        const lhsText = getSliceText(expr.lhs.slice);
+                        const rhsText = expr.rhs ? getSliceText(expr.rhs.slice) : INCOMPLETE;
+                        const opSymbol = binOpToSymbolString(expr.op);
+                        const text = `(${lhsText}) ${opSymbol} (${rhsText})`;
+                        renderRow(title, binOpToString(expr.op), depth, text);
+
+                        dfs("lhs", expr.lhs, depth + 1);
+                        dfs("rhs", expr.rhs, depth + 1);
+                    } break;
+                    case T_LIST_LITERAL: 
+                    case T_VECTOR_LITERAL: {
+                        renderRow(title, typeString, depth, getSliceText(expr.slice));
+
+                        for (let i = 0; i < expr.items.length; i++) {
+                            dfs("[" + i + "]", expr.items[i], depth + 1);
+                        }
+                    } break;
+                    case T_NUMBER_LITERAL: {
+                        renderRow(title, typeString, depth, getSliceText(expr.slice));
+                    } break;
+                    case T_STRING_LITERAL: {
+                        renderRow(title, typeString, depth, getSliceText(expr.slice));
+                    } break;
+                    case T_TERNARY_IF: {
+                        renderRow(title, typeString, depth, getSliceText(expr.slice));
+
+                        dfs("query", expr.query, depth + 1);
+                        dfs("trueBranch", expr.trueBranch, depth + 1);
+                        if (expr.falseBranch) {
+                            dfs("falseBranch", expr.falseBranch, depth + 1);
+                        }
+                    } break;
+                    case T_BLOCK: {
+                        renderRow(title, typeString, depth, "statement count: " + expr.statements.length);
+
+                        for (let i = 0; i < expr.statements.length; i++) {
+                            dfs("s" + i, expr.statements[i], depth + 1);
+                        }
+                    } break;
+                    case T_RANGE_FOR: {
+                        renderRow(title, typeString, depth);
+                        dfs("loop var", expr.loopVar, depth + 1);
+                        dfs("loop range", expr.range, depth + 1);
+                        dfs("loop body", expr.body, depth + 1);
+                    } break;
+                    case T_FN: {
+                        renderRow(title, typeString, depth);
+                        dfs("name", expr.fnName, depth + 1);
+                        for (let i = 0; i < expr.arguments.length; i++) {
+                            dfs("arg" + i, expr.arguments[i], depth + 1);
+                        }
+                        if (expr.body) {
+                            dfs("body", expr.body, depth + 1);
+                        }
+                    } break;
+                    case T_DATA_INDEX_OP: {
+                        renderRow(title, typeString, depth);
+                        dfs("var", expr.lhs, depth + 1);
+                        for (let i = 0; i < expr.indexes.length; i++) {
+                            dfs("[" + i + "]", expr.indexes[i], depth + 1);
+                        }
+                    } break;
+                    default: {
+                        throw new Error("Unhandled type: " + typeString);
+                    }
+                }
+            }
+
+            const statements = parseResult.statements;
+            for (let i = 0; i < statements.length; i++) {
+                const statement = statements[i];
+                dfs("Statement " + (i + 1), statement, 0);
+            }
+        });
+        imElse(r, r => {
+            textSpan(r, "Nothing parsed yet");
+        });
+
+        // TODO: display these in the code editor itself. 
+
+        const displayInfo = (heading: string, info: DiagnosticInfo[], emptyText: string) => {
+            el(r, newH3, r => {
+                r.isFirstRender && r.s("padding", "10px 0");
+                textSpan(r, heading);
+            });
+            imList(r, l => {
+                for (const e of info) {
+                    const r = l.getNext();
+                    div(r, r => {
+                        textSpan(r, "Line " + e.pos.line + " Col " + (e.pos.col + 1) + " - " + e.problem);
+                    });
+                }
+            });
+            imIf(info.length === 0, r, r => {
+                div(r, r => {
+                    textSpan(r, emptyText);
+                });
+            })
+        }
+
+        displayInfo("Errors", parseResult.errors, "No parsing errors!");
+        displayInfo("Warnings", parseResult.warnings, "No parsing warnings");
+    });
+    imElse(r, r => {
+        textSpan(r, "No parse results yet");
+    });
+}
+
+function CodeOuptut(r: UIRoot, output: ProgramOutput | undefined) {
+    imIf(output, r, (r, output) => {
+        imList(r, l => {
+            for (const result of output.results) {
+                const r = l.getNext();
+                imList(r, l => {
+                    const r = l.get(result.t);
+
+                    switch(r) {
+                    default:
+                        throw new Error("Unhandled result type: " + programResultTypeString(result));
+                    }
+                });
+            }
+        });
+        imElse(r, r => {
+            textSpan(r, "No results yet");
+        });
+    });
+    imElse(r, r => {
+        textSpan(r, "No code output yet");
+    });
+}
+
 function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
     const outputState = imState(r, newOutputState);
 
     const text = ctx.state.text;
+
     if (outputState.lastText !== text) {
         outputState.lastText = text;
-
-        const program = parse(text);
-        outputState.lastOutput = interpret(program);
+        outputState.lastPaseResult = parse(text);
+        outputState.lastOutput = interpret(outputState.lastPaseResult);
     }
 
-    const output = outputState.lastOutput;
+    const parseResult = outputState.lastPaseResult;
+    const programOutput = outputState.lastOutput;
 
     div(r, r => {
         if (r.isFirstRender) {
@@ -52,148 +245,35 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
              .s("padding", "10px");
         }
 
-        el(r, newH3, r => {
-            r.isFirstRender && r.s("padding", "10px 0");
+        const heading = (heading: string, isCollapsed: boolean, toggle: () => void) => {
+            el(r, newH3, r => {
+                r.isFirstRender && r.s("padding", "10px 0").s("userSelect", "none").s("cursor", "pointer");
 
-            textSpan(r, "Output");
-        });
+                textSpan(r, heading);
+                imIf(isCollapsed, r, r => {
+                    textSpan(r, " (collapsed)");
+                });
 
-        imIf(output, r, (r, output) => {
-            imList(r, l => {
-                function renderRow(title: string, type: string, depth: number, code?: string) {
-                    const r = l.getNext();
-                    div(r, r => {
-                        r.s("paddingLeft", (depth * 20) + "px");
-                        textSpan(r, title);
-                        textSpan(r, " = ");
-                        textSpan(r, type);
-                        imIf(code, r, (r, code) => {
-                            textSpan(r, " ");
-                            textCode(r, code);
-                        })
-                    });
-                }
-
-                const INCOMPLETE = " <Incomplete!> ";
-
-                const dfs = (title: string, expr: ProgramExpression | undefined, depth: number, showCode = true) => {
-                    if (!expr) {
-                        renderRow(title, INCOMPLETE, depth);
-                        return;
-                    }
-
-                    let typeString = expressionTypeToString(expr);
-                    switch (expr.t) {
-                        case T_IDENTIFIER: {
-                            renderRow(title, typeString, depth, getSliceText(expr.slice));
-                        } break;
-                        case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: {
-                            renderRow(title, typeString, depth);
-                        } break;
-                        case T_BINARY_OP: {
-                            const lhsText = getSliceText(expr.lhs.slice);
-                            const rhsText = expr.rhs ? getSliceText(expr.rhs.slice) : INCOMPLETE;
-                            const opSymbol = binOpToSymbolString(expr.op);
-                            const text = `(${lhsText}) ${opSymbol} (${rhsText})`;
-                            renderRow(title, binOpToString(expr.op), depth, text);
-
-                            dfs("lhs", expr.lhs, depth + 1);
-                            dfs("rhs", expr.rhs, depth + 1);
-                        } break;
-                        case T_LIST_LITERAL: {
-                            renderRow(title, typeString, depth, getSliceText(expr.slice));
-
-                            for (let i = 0; i < expr.items.length; i++) {
-                                dfs("[" + i + "]", expr.items[i], depth + 1);
-                            }
-                        } break;
-                        case T_NUMBER_LITERAL: {
-                            renderRow(title, typeString, depth, getSliceText(expr.slice));
-                        } break;
-                        case T_STRING_LITERAL: {
-                            renderRow(title, typeString, depth, getSliceText(expr.slice));
-                        } break;
-                        case T_TERNARY_IF: {
-                            renderRow(title, typeString, depth, getSliceText(expr.slice));
-
-                            dfs("query", expr.query, depth + 1);
-                            dfs("trueBranch", expr.trueBranch, depth + 1);
-                            if (expr.falseBranch) {
-                                dfs("falseBranch", expr.falseBranch, depth + 1);
-                            }
-                        } break;
-                        case T_BLOCK: {
-                            renderRow(title, typeString, depth, "statement count: " + expr.statements.length);
-
-                            for (let i = 0; i < expr.statements.length; i++) {
-                                dfs("s" + i, expr.statements[i], depth + 1);
-                            }
-                        } break;
-                        case T_RANGE_FOR: {
-                            renderRow(title, typeString, depth);
-                            dfs("loop var", expr.loopVar, depth + 1);
-                            dfs("loop range", expr.range, depth + 1);
-                            dfs("loop body", expr.body, depth + 1);
-                        } break;
-                        case T_FN: {
-                            renderRow(title, typeString, depth);
-                            dfs("name", expr.fnName, depth + 1);
-                            for (let i = 0; i < expr.arguments.length; i++) {
-                                dfs("arg" + i, expr.arguments[i], depth + 1);
-                            }
-                            if (expr.body) {
-                                dfs("body", expr.body, depth + 1);
-                            }
-                        } break;
-                        case T_DATA_INDEX_OP: {
-                            renderRow(title, typeString, depth);
-                            dfs("var", expr.var, depth + 1);
-                            for (let i = 0; i < expr.indexes.length; i++) {
-                                dfs("[" + i + "]", expr.indexes[i], depth + 1);
-                            }
-                        } break;
-                        default: {
-                            throw new Error("Unhandled type: " + typeString);
-                        }
-                    }
-                }
-
-                const statements = output.program.statements;
-                for (let i = 0; i < statements.length; i++) {
-                    const statement = statements[i];
-                    dfs("Statement " + (i + 1), statement, 0);
-                }
+                imOn(r, "click", () => {
+                    toggle();
+                    ctx.rerenderApp();
+                });
             });
+        }
 
-            // TODO: display these in the code editor itself. 
-
-            const displayInfo = (heading: string, info: DiagnosticInfo[], emptyText: string) => {
-                el(r, newH3, r => {
-                    r.isFirstRender && r.s("padding", "10px 0");
-                    textSpan(r, heading);
-                });
-                imList(r, l => {
-                    for (const e of info) {
-                        const r = l.getNext();
-                        div(r, r => {
-                            textSpan(r, "Line " + e.pos.line + " Col " + (e.pos.col + 1) + " - " + e.problem);
-                        });
-                    }
-                });
-                imIf(info.length === 0, r, r => {
-                    div(r, r => {
-                        textSpan(r, emptyText);
-                    });
-                })
-            }
-
-            displayInfo("Errors", output.program.errors, "No parsing errors!");
-            displayInfo("Warnings", output.program.warnings, "No parsing warnings");
+        heading("Parser output", ctx.state.collapseParserOutput, () => {
+            ctx.state.collapseParserOutput = !ctx.state.collapseParserOutput;
         });
-        imElse(r, r => {
-            textSpan(r, "No output yet");
-        })
+        imIf(!ctx.state.collapseParserOutput, r, r => {
+            ParserOutput(r, parseResult);
+        });
 
+        heading("Program output", ctx.state.collapseProgramOutput, () => {
+            ctx.state.collapseProgramOutput = !ctx.state.collapseProgramOutput;
+        });
+        imIf(!ctx.state.collapseProgramOutput, r, r => {
+            CodeOuptut(r, programOutput);
+        });
     });
 }
 
@@ -253,63 +333,59 @@ function saveStateDebounced(ctx: GlobalContext) {
 }
 
 export function App(r: UIRoot) {
-    const rerender = imRerenderFn(r, () => App(r));
+    imRerenderable(r, (r, rerender) => {
+        const ctx = imState(r, newGlobalContext);
+        ctx.rerenderApp = rerender;
 
-    const ctx = imState(r, newGlobalContext);
-    ctx.rerenderApp = rerender;
+        const { state } = ctx;
 
-    const { state } = ctx;
-
-    const lastTextRef = imRef<string>(r);
-    if (lastTextRef.val === null) {
-        lastTextRef.val = state.text;
-    } else if (lastTextRef.val !== state.text) {
-        lastTextRef.val = state.text;
-        saveStateDebounced(ctx);
-    }
-
-    div(r, r => {
-        if (r.isFirstRender) {
-            r.c(cn.fixed).c(cn.absoluteFill)
-             .c(cnApp.normalFont);
+        if (!imMemo(r).keys(state).isSame) {
+            saveStateDebounced(ctx);
         }
 
-        imErrorBoundary(r, r => {
-            div(r, r => {
-                if (r.isFirstRender) {
-                    r.c(cn.row).c(cn.alignItemsStretch).c(cn.h100);
-                }
+        div(r, r => {
+            if (r.isFirstRender) {
+                r.c(cn.fixed).c(cn.absoluteFill)
+                 .c(cnApp.normalFont);
+            }
+
+            imErrorBoundary(r, r => {
+                div(r, r => {
+                    if (r.isFirstRender) {
+                        r.c(cn.row).c(cn.alignItemsStretch).c(cn.h100);
+                    }
+
+                    div(r, r => {
+                        if (r.isFirstRender) {
+                            r.c(cn.flex1);
+                        }
+
+                        AppCodeEditor(r, ctx);
+                    });
+                    div(r, r => {
+                        if (r.isFirstRender) {
+                            r.c(cn.flex1);
+                        }
+
+                        AppCodeOutput(r, ctx);
+                    });
+                });
+
 
                 div(r, r => {
                     if (r.isFirstRender) {
-                        r.c(cn.flex1);
+                        r.c(cn.absolute)
+                         .s("right", "10px").s("bottom", "10px")
                     }
 
-                    AppCodeEditor(r, ctx);
+                    r.text(saveTimeout ? "Saving..." : "Saved");
                 });
+            }, (r, error, _recover) => {
+                console.error(error);
+
                 div(r, r => {
-                    if (r.isFirstRender) {
-                        r.c(cn.flex1);
-                    }
-
-                    AppCodeOutput(r, ctx);
+                    textSpan(r, "An error occured: " + error.message);
                 });
-            });
-
-
-            div(r, r => {
-                if (r.isFirstRender) {
-                    r.c(cn.absolute)
-                     .s("right", "10px").s("bottom", "10px")
-                }
-
-                r.text(saveTimeout ? "Saving..." : "Saved");
-            });
-        }, (r, error, _recover) => {
-            console.error(error);
-
-            div(r, r => {
-                textSpan(r, "An error occured: " + error.message);
             });
         });
     });

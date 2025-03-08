@@ -1,4 +1,4 @@
-// *IM* DOM-utils v0.1.0001 - @Tejas-H5
+// *IM* DOM-utils v0.1.0006 - @Tejas-H5
 // A variation on DOM-utils with the immediate-mode API isntead of the normal one. I'm still deciding which one I will continue to use.
 // Right now, this one seems better, but the other one has a 'proven' track record of actually working.
 // But in a matter of hours/days, I was able to implement features in this framework that I wasn't able to for months/years in the other one...
@@ -611,7 +611,8 @@ export type RerenderPoint =  {
 export class UIRoot<E extends ValidElement = ValidElement> {
     readonly root: E;
     readonly domRoot: DomRoot<E>;
-    readonly elementSupplier: () => ValidElement;
+    // If there was no supplier, then this root is probably attached to the same DOM element as another UI root.
+    readonly elementSupplier: (() => ValidElement) | null;
 
     readonly items = newImArray<UIRootItem>();
     lockImArray = false;
@@ -620,11 +621,11 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     hasRealChildren = false;
     manuallyHidden = false;
     ifStatementOpen = false;
-    removed = false;
+    removed = true;
     began = false;
 
     // Users should call `newUiRoot` instead.
-    constructor(domRoot: DomRoot<E>, elementFactory: () => ValidElement) {
+    constructor(domRoot: DomRoot<E>, elementFactory: (() => ValidElement) | null) {
         this.root = domRoot.root;
         this.domRoot = domRoot;
         this.elementSupplier = elementFactory;
@@ -728,8 +729,10 @@ export class UIRoot<E extends ValidElement = ValidElement> {
 
 export class ListRenderer {
     uiRoot: UIRoot;
+    keys = new Map<string | number, { root: UIRoot, rendered: boolean }>();
     builders: UIRoot[] = [];
     builderIdx = 0;
+    current: UIRoot | null = null;
 
     constructor(root: UIRoot) {
         this.uiRoot = root;
@@ -738,11 +741,32 @@ export class ListRenderer {
     __begin() {
         this.builderIdx = 0;
         this.uiRoot.openListRenderers++;
+        for (const v of this.keys.values()) {
+            v.rendered = false;
+        }
+        this.current = null;
     }
 
-    getCurrent() {
-        assert(this.builderIdx > 0);
-        return this.builders[this.builderIdx - 1];
+    /** Use this for a keyed list renderer */
+    get(key: string | number) {
+        let result = this.keys.get(key);
+        if (!result) {
+            result = { 
+                root: new UIRoot(this.uiRoot.domRoot, null),
+                rendered: false
+            };
+            this.keys.set(key, result);
+        } else {
+            // Don't render the same list element twice in a single render pass, haiyaaaa
+
+            assert(!result.rendered);
+        }
+
+        this.appendRootResult(result.root);
+        result.rendered = true;
+        this.current = result.root;
+
+        return result;
     }
 
     getNext() {
@@ -762,18 +786,22 @@ export class ListRenderer {
         if (idx < this.builders.length) {
             result = this.builders[idx];
         } else {
-            // NOTE: the supplier is not important at all here, so I'm just passing in something random.
-            result = new UIRoot(this.uiRoot.domRoot, newDiv);
+            result = new UIRoot(this.uiRoot.domRoot, null);
             this.builders.push(result);
         }
 
+        this.appendRootResult(result);
+        this.current = result;
+
+        return result;
+    }
+
+    appendRootResult(result: UIRoot) {
         // Append new list elements to where we're currently appending
         const currentDomRootIdx = result.domRoot.currentIdx;
         result.__begin(undefined);
         result.domRoot.currentIdx = currentDomRootIdx;
         this.builderIdx++;
-
-        return result;
     }
 
     end() {
@@ -789,6 +817,11 @@ export class ListRenderer {
         for (let i = this.builderIdx; i < this.builders.length; i++) {
             this.builders[i].__removeAllDomElements();
         }
+        for (const v of this.keys.values()) {
+            if (!v.rendered) {
+                v.root.__removeAllDomElements();
+            }
+        }
         this.builders.length = this.builderIdx;
     }
 
@@ -796,6 +829,9 @@ export class ListRenderer {
     __removeAllDomElementsFromList() {
         for (let i = 0; i < this.builders.length; i++) {
             this.builders[i].__removeAllDomElements();
+        }
+        for (const v of this.keys.values()) {
+            v.root.__removeAllDomElements();
         }
     }
 
@@ -826,10 +862,63 @@ export function beginList(r: UIRoot): ListRenderer {
     return result.v;
 }
 
+/**
+ * Use lists to return an arbitrary amount of roots. 
+ * The items may be keyed, or not keyed. 
+ *
+ * ```ts
+ * // Non-keyed usage:
+ *
+ * imList(r, l => {
+ *     for (let i = 0; i < n; i++) {
+ *         const r = l.getNext();
+ *         Component(r);
+ *     }
+ * });
+ *
+ * // Keyed usage:
+ *
+ * imList(r, l => {
+ *     for (const user of users) {
+ *         const r = l.get(user.id);
+ *         UserProfileInfo(r, user);
+ *     }
+ * });
+ *
+ * ```
+ *
+ * You are under no obligation to key or not key the list - there is no best practice.
+ * You should do what you believe is more fitting/performant/correct for your use-case.
+ *
+ * NOTE: You can also use imList like a switch statement:
+ *
+ * ```
+ * imList(r, l => {
+ *      const r = l.get(unionObject.type);
+ *      switch(unionObject.type) {
+ *          case "type1":
+ *              RenderComponent1(r);
+ *              break;
+ *          case "type2":
+ *              RenderComponent2(r);
+ *              break;
+ *          ...
+ *      }
+ * });
+ * ```
+ *
+ * This is because each `root` can accept any arbitrary component on the first render,
+ * and because you're keying the list on the type, you can be sure that subsequent renders
+ * on the same root will always be with the same component.
+ */
 export function imList(r: UIRoot, listRenderFn: (l: ListRenderer) => void) {
     const list = beginList(r);
     listRenderFn(list);
     list.end();
+
+    if (list.current === null) {
+        r.ifStatementOpen = true;
+    }
 }
 
 
@@ -1025,16 +1114,52 @@ export function span(r: UIRoot, next?: RenderFn<HTMLSpanElement>): UIRoot<HTMLSp
 
 
 type Falsy = "" | 0 | null | undefined | false;
+/**
+ * You'll need to use this, as well as {@link imElse} and {@link imElseIf} for (most) conditional rendering,
+ * so that you're rendering the same amount of im-state entries to a UIRoot at a time.
+ * It's just implemented with an imList under the hood, but that might change in the future.
+ *
+ * This component also does smoe basic type narrowing.
+ *
+ * For switch-like behaviour, you may be able to use a {@link imList} directly - check it's documentation for more info.
+ *
+ * You can also use it after {@link imList} - it will render stuff when the list rendered zero things.
+ *
+ * Examples:
+ *
+ * ```ts
+ *
+ * // basic usage:
+ * imIf(condition1, r, r => { ... });
+ * imElseIf(condition2, r => { ... });
+ * imElse(r, r => { ... });
+ *
+ * // type narrowing
+ * imIf(valueOrNull, r, (r, value) => { ... });
+ * 
+ * // lists
+ * imList(...)
+ * imElse(r, r => { // this part runs when imList rendered 0 items 
+ * });
+ *
+ * ```
+ */
 export function imIf<V>(val: V | Falsy, r: UIRoot, next: (r: UIRoot, typeNarrowedVal: V) => void) {
     r.ifStatementOpen = true;
-    ElseIf(val, r, next);
+    imElseIf(val, r, next);
 }
 
+/**
+ * See {@link imIf}
+ */
 export function imElse(r: UIRoot, next: (r: UIRoot, typeNarrowedVal: true) => void) {
-    ElseIf(true, r, next);
+    imElseIf(true, r, next);
 }
 
-export function ElseIf<V>(val: V | Falsy, rIn: UIRoot, next: (r: UIRoot, typeNarrowedVal: V) => void) {
+/**
+ * See {@link imIf}
+ */
+export function imElseIf<V>(val: V | Falsy, rIn: UIRoot, next: (r: UIRoot, typeNarrowedVal: V) => void) {
     imList(rIn, l => {
         const domRootIdx = rIn.domRoot.currentIdx;
         const r = l.getNext();
@@ -1053,6 +1178,8 @@ function canAnimate(r: UIRoot) {
     return !r.removed && !r.manuallyHidden;
 }
 
+// Old documentation for the hook:
+//
 // The `rerender` method resets `r`'s current immediate mode state index to 1 before the call to `rerenderFn`, and the invokes
 // the render method you passed in. It relies on the fact that every render method will always generate the same number of immediate
 // mode state entries each time, so we can reliably just reset some indicies to what they were before we called them, and then 
@@ -1076,23 +1203,20 @@ function canAnimate(r: UIRoot) {
 //
 // This is because when we generate `rerender`, getState will have bumped the immedate mode index up by 1, so 
 // the index we store will be one higher than what was correct if we wanted to call IWillThrowAnError(r) on the root again.
-//
-// NOTE: Always call this as the first immediate mode function in your component.
-export function imRerenderFn(r: UIRoot, fn: RenderFn) {
+
+/**
+ * Wrap any component tree you want to the abilit to 'rerender' in this method.
+ *
+ * Due to the way this framework is implemented, I haven't been able to just give you a rerender method on 
+ * every UIRoot, unfortunately. There's a big block comment above this JSDoc that explains it, if you 
+ * care to navigate here and read it...
+ */
+export function imRerenderable(r: UIRoot, fn: (r: UIRoot, rerender: () => void) => void) {
     const rerenderPoint = imRerenderPoint(r, FROM_HERE);
-
-    const renderFn = imRef<RenderFn>(r);
-    renderFn.val = fn;
-
-    const handler = imRef<() => void>(r);
-    if (!handler.val) {
-        handler.val = () => {
-            r.__begin(rerenderPoint);
-            renderFn.val!(r);
-        };
-    }
-
-    return handler.val;
+    fn(r, () => {
+        r.__begin(rerenderPoint);
+        imRerenderable(r, fn)
+    });
 }
 
 function newRealtimeState(): {
@@ -1106,24 +1230,24 @@ function newRealtimeState(): {
 }
 
 export function realtime(r: UIRoot, fn: RenderFnArgs<[number]>) {
-    const rerender = imRerenderFn(r, () => realtime(r, fn));
+    imRerenderable(r, (r, rerender) => {
+        const state = imState(r, newRealtimeState);
+        if (!state.animation) {
+            state.animation = newAnimation((dt) => {
+                if (!canAnimate(r)) {
+                    return false;
+                } 
 
-    const state = imState(r, newRealtimeState);
-    if (!state.animation) {
-        state.animation = newAnimation((dt) => {
-            if (!canAnimate(r)) {
-                return false;
-            } 
+                state.dt = dt;
+                rerender();
+                return true;
+            });
+        }
 
-            state.dt = dt;
-            rerender();
-            return true;
-        });
-    }
+        fn(r, state.dt);
 
-    fn(r, state.dt);
-
-    startAnimation(state.animation);
+        startAnimation(state.animation);
+    });
 }
 
 function newIntermittentState() : {
@@ -1133,29 +1257,29 @@ function newIntermittentState() : {
 }
 
 export function intermittent(r: UIRoot, fn: RenderFn, ms: number) {
-    const rerender = imRerenderFn(r, () => intermittent(r, fn, ms));
+    imRerenderable(r, (r, rerender) => {
+        const state = imState(r, newIntermittentState);
+        state.ms = ms;
+        if (!state.animation) {
+            state.animation = newAnimation((dt) => {
+                if (!canAnimate(r)) {
+                    return false;
+                } 
 
-    const state = imState(r, newIntermittentState);
-    state.ms = ms;
-    if (!state.animation) {
-        state.animation = newAnimation((dt) => {
-            if (!canAnimate(r)) {
-                return false;
-            } 
+                state.t += dt;
+                if (state.t > state.ms) {
+                    rerender();
+                    state.t = 0;
+                }
 
-            state.t += dt;
-            if (state.t > state.ms) {
-                rerender();
-                state.t = 0;
-            }
+                return true;
+            });
+        }
 
-            return true;
-        });
-    }
+        fn(r);
 
-    fn(r);
-
-    startAnimation(state.animation);
+        startAnimation(state.animation);
+    });
 }
 
 
@@ -1164,27 +1288,30 @@ export function imErrorBoundary(
     renderFnNormal: RenderFn,
     renderFnError: RenderFnArgs<[any, () => void]>,
 ) {
-    const rerender = imRerenderFn(rIn, () => imErrorBoundary(rIn, renderFnNormal, renderFnError));
+    imRerenderable(rIn, (rIn, rerender) => {
+        const l = beginList(rIn);
 
-    const l = beginList(rIn);
+        const recover = () => {
+            l.__removeAllDomElementsFromList();
+            rerender();
+        }
 
-    const recover = () => {
-        l.__removeAllDomElementsFromList();
-        rerender();
-    }
+        try {
+            renderFnNormal(l.getNext());
+        } catch (error) {
+            const r = l.current;
+            if (r) {
+                r.__removeAllDomElements();
 
-    try {
-        renderFnNormal(l.getNext());
-    } catch (error) {
-        const r = l.getCurrent();
-        r.__removeAllDomElements();
-        // need to reset the dom root, since we've just removed elements underneath it
-        resetDomRoot(r.domRoot);
+                // need to reset the dom root, since we've just removed elements underneath it
+                resetDomRoot(r.domRoot);
+            }
 
-        renderFnError(l.getNext(), error, recover);
-    } finally {
-        l.end();
-    }
+            renderFnError(l.getNext(), error, recover);
+        } finally {
+            l.end();
+        }
+    });
 }
 
 type Ref<T> = { val: T | null; }
@@ -1199,11 +1326,60 @@ export function imRef<T>(r: UIRoot): Ref<T> {
     return imState(r, newRef as (typeof newRef<T>));
 }
 
+
+class Memoizer{
+    items = newImArray<[unknown]>();
+
+    // If a Memo is supposed to keep our realtime animation loop from firing repeatedly,
+    // but we've done `if(imMemo(r).val(r))` by mistake, the bug will be some expensive thing firing
+    // very repeatedly. However, if the mistake was `if(!imMemo(r).val(r))`, then nothing will happen.
+    // This is why I am using `isSame` here instead of `changed`, so that the mis-use will be less costly.
+    isSame = true;
+
+    begin() {
+        if (this.items.expectedLength !== -1) {
+            imLockSize(this.items);
+        }
+
+        imReset(this.items);
+        this.isSame = true;
+    }
+
+    keys(obj: Record<string, unknown>) {
+        for (const k in obj) {
+            this.val(obj[k]);
+        }
+        return this;
+    }
+
+    val(val: unknown) {
+        let existing = imGetNext(this.items);
+        if (!existing) {
+            existing = imPush(this.items, [val]);
+        }
+        if (val !== existing[0]) {
+            this.isSame = false;
+        }
+        existing[0] = val;
+        return this;
+    }
+}
+
+function newMemoizer() {
+    return new Memoizer();
+}
+
+export function imMemo(r: UIRoot) {
+    const val = imState(r, newMemoizer);
+    val.begin();
+    return val;
+}
+
 /**
  * Seems like simply doing r.root.onwhatever = () => { blah } destroys performance,
  * so this  method exists now...
  */
-export function imEvent<K extends keyof HTMLElementEventMap>(
+export function imOn<K extends keyof HTMLElementEventMap>(
     r: UIRoot,
     type: K,
     listener: (this: HTMLElement, ev: HTMLElementEventMap[K]) => any,

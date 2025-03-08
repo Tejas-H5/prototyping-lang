@@ -1,5 +1,5 @@
 import { cssVars } from "src/styling";
-import { cn, div, el, setInputValue, imEvent, newCssBuilder, span, UIRoot, newDomElement, imState, imIf } from "src/utils/im-dom-utils";
+import { cn, div, el, setInputValue, imOn, newCssBuilder, span, UIRoot, newDomElement, imState, imIf } from "src/utils/im-dom-utils";
 import { getLineBeforePos } from "src/utils/text-utils";
 
 const CSSVARS_FOCUS = cssVars.bg;
@@ -92,11 +92,11 @@ export function EditableTextArea(r: UIRoot, {
                     setInputValue(r.root, text);
                 }
 
-                imEvent(r, "input", () => {
+                imOn(r, "input", () => {
                     onInput(r.root.value, r.root);
                 });
 
-                imEvent(r, "keydown", (e) => {
+                imOn(r, "keydown", (e) => {
                     if (!handleTextAreaKeyboardInput(e, r.root, config)) {
                         onInputKeyDown(e, r.root);
                     }

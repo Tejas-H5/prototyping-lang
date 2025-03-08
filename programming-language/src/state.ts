@@ -1,11 +1,15 @@
 
 export type GlobalState = {
     text: string;
+    collapseParserOutput: boolean;
+    collapseProgramOutput: boolean;
 };
 
 export function newGlobalState(): GlobalState {
     return {
-        text: ""
+        text: "",
+        collapseParserOutput: false,
+        collapseProgramOutput: false,
     };
 }
 
