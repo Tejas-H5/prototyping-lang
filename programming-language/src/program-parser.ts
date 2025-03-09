@@ -4,13 +4,13 @@ import { assert } from "./utils/im-dom-utils";
 // Parser
 
 
-type TextSlice = {
+export type TextSlice = {
     fullText: string;
     start: number;
     end: number;
 }
 
-type TextPosition = {
+export type TextPosition = {
     i: number;
     line: number;
     col: number;
@@ -34,6 +34,7 @@ export const T_BLOCK = 9;
 export const T_DATA_INDEX_OP = 10;
 export const T_FN = 11;
 export const T_RANGE_FOR = 12;
+export const T_ASSIGNMENT = 13;
 
 export function expressionTypeToString(expr: ProgramExpression): string {
     switch(expr.t) {
@@ -61,10 +62,11 @@ export function expressionTypeToString(expr: ProgramExpression): string {
             return "Indexing op";
         case T_RANGE_FOR:
             return "Range-for loop";
+        case T_ASSIGNMENT:
+            return "Assignment";
     }
 }
 
-export const BIN_OP_ASSIGNMENT = 1;
 export const BIN_OP_MULTIPLY = 2;
 export const BIN_OP_DIVIDE = 3;
 export const BIN_OP_ADD = 4;
@@ -80,8 +82,7 @@ export const BIN_OP_RANGE_IN = 13;
 export const BIN_OP_RANGE_EX = 14;
 export const BIN_OP_INVALID = -1;
 
-export type BinaryOperatorType = typeof BIN_OP_ASSIGNMENT
-    | typeof BIN_OP_MULTIPLY
+export type BinaryOperatorType = typeof BIN_OP_MULTIPLY
     | typeof BIN_OP_DIVIDE
     | typeof BIN_OP_ADD
     | typeof BIN_OP_SUBTRACT
@@ -104,9 +105,8 @@ export function getBinaryOperatorType(c: string): BinaryOperatorType {
     return BIN_OP_INVALID;
 }
 
-export function getBinaryOperatorTypeOpString(op: BinaryOperatorType): string {
+export function binOpToOpString(op: BinaryOperatorType): string {
     switch (op) {
-        case BIN_OP_ASSIGNMENT: return "=";
         case BIN_OP_MULTIPLY: return "*";
         case BIN_OP_DIVIDE: return "/";
         case BIN_OP_ADD: return "+";
@@ -153,18 +153,16 @@ function getBinOpPrecedence(op: BinaryOperatorType): number {
         case BIN_OP_RANGE_EX:
         case BIN_OP_RANGE_IN:
             return 9;
-        case BIN_OP_ASSIGNMENT:
-            return 11;
         case BIN_OP_INVALID:
             return -1;
     }
 }
+const TERNARY_PRECEDENCE = 20;
 
 const MAX_PRECEDENCE = 100;
 
 export function binOpToString(op: BinaryOperatorType): string {
     switch (op) {
-        case BIN_OP_ASSIGNMENT: return "Assignment";
         case BIN_OP_MULTIPLY: return "Multiply";
         case BIN_OP_DIVIDE: return "Divide";
         case BIN_OP_ADD: return "Add";
@@ -183,77 +181,93 @@ export function binOpToString(op: BinaryOperatorType): string {
 }
 
 
-type ProgramExpressionBase = {
+export type ProgramExpressionBase = {
     slice: TextSlice;
     pos: TextPosition;
 };
 
 // An identifier is just something that refers to a thing in the program.
 // It could be a variable name, or varName[i]. It is any lvalue.
-type ProgramExpressionIdentifier = ProgramExpressionBase & {
+export type ProgramExpressionIdentifier = ProgramExpressionBase & {
     t: typeof T_IDENTIFIER;
+    name: string;
+
+    // an offset from the current stack index. if undefined, it wasn't defined yet.
+    // This is an optimization that is supposed to speed up identifier lookup - 
+    // rather than looking up a name in a hashmap, we just access an array index.
+    stackOffset?: StackFrameBlockOffset;
 }
 
-type ProgramExpressionPreviousResult = ProgramExpressionBase & {
+export type ProgramExpressionPreviousResult = ProgramExpressionBase & {
     t: typeof T_IDENTIFIER_THE_RESULT_FROM_ABOVE;
 };
 
-type ProgramExpressionNumberLiteral = ProgramExpressionBase & {
+export type ProgramExpressionNumberLiteral = ProgramExpressionBase & {
     t: typeof T_NUMBER_LITERAL;
     integerPart: TextSlice;
     decimalPart: TextSlice | null;
     exponentPart: TextSlice | null;
+    isNegative: boolean;
+    val: number;
 }
 
-type ProgramExpressionListLiteral = ProgramExpressionBase & {
+export type ProgramExpressionListLiteral = ProgramExpressionBase & {
     t: typeof T_LIST_LITERAL | typeof T_VECTOR_LITERAL;
     items: ProgramExpression[];
 }
 
-type ProgramExpressionStringLiteral = ProgramExpressionBase & {
+export type ProgramExpressionStringLiteral = ProgramExpressionBase & {
     t: typeof T_STRING_LITERAL;
+    val: string;
 }
 
-type ProgramExpressionTernaryIf = ProgramExpressionBase & {
+export type ProgramExpressionTernaryIf = ProgramExpressionBase & {
     t: typeof T_TERNARY_IF;
     query: ProgramExpression;
     trueBranch: ProgramExpression;
     falseBranch: ProgramExpression | undefined;
 }
 
-type ProgramExpressionBinaryOperator = ProgramExpressionBase & {
+export type ProgramExpressionBinaryOperator = ProgramExpressionBase & {
     t: typeof T_BINARY_OP;
     // NOTE: it would be more optimal to just have t encode every binary op as a separate type...
     // I don't care about this right now though
     op: BinaryOperatorType; 
     lhs: ProgramExpression;
-    rhs?: ProgramExpression; // undefined when the AST is incomplete.
+    rhs?: ProgramExpression; 
 }
 
-type ProgramExpressionBlock = ProgramExpressionBase & {
+export type ProgramExpressionBlock = ProgramExpressionBase & {
     t: typeof T_BLOCK;
     statements: ProgramExpression[];
 }
 
-type ProgramExpressionDataIndex = ProgramExpressionBase & {
+export type ProgramExpressionDataIndex = ProgramExpressionBase & {
     t: typeof T_DATA_INDEX_OP;
     lhs: ProgramExpression;
     indexes: ProgramExpression[];
 }
 
-type ProgramExpressionFn = ProgramExpressionBase & {
+export type ProgramExpressionFn = ProgramExpressionBase & {
     t: typeof T_FN;
     fnName: ProgramExpressionIdentifier;
     arguments: ProgramExpression[];
-    // If this is present, it's a declaration. else, it's a call.
+    // If these are present, it's a declaration. else, it's a call.
     body: ProgramExpressionBlock | null;
+    argumentNames: ProgramExpressionIdentifier[] | null;
 }
 
-type ProgramExpressionRangedFor = ProgramExpressionBase & {
+export type ProgramExpressionRangedFor = ProgramExpressionBase & {
     t: typeof T_RANGE_FOR;
     loopVar: ProgramExpressionIdentifier;
     range: ProgramExpression;
     body: ProgramExpression;
+};
+
+export type ProgramExpressionAssignment = ProgramExpressionBase & {
+    t: typeof T_ASSIGNMENT;
+    lhs: ProgramExpression;
+    rhs?: ProgramExpression; 
 };
 
 export type ProgramExpression = ProgramExpressionIdentifier
@@ -266,14 +280,127 @@ export type ProgramExpression = ProgramExpressionIdentifier
     | ProgramExpressionBlock
     | ProgramExpressionDataIndex
     | ProgramExpressionFn
-    | ProgramExpressionRangedFor;
+    | ProgramExpressionRangedFor
+    | ProgramExpressionAssignment;
 
 export type ProgramParseResult = {
     text: string;
     statements: ProgramExpression[];
+    functions: Map<string, ProgramExpressionFn>;
     errors: DiagnosticInfo[];
     warnings: DiagnosticInfo[];
+    stack: StackFrame[];
 };
+
+
+type StackFrameBlock = {
+    nextAvailableSlot: number;
+    variables: Map<string, number>;
+}
+
+type StackFrame = {
+    blocks: StackFrameBlock[];
+};
+
+type StackFrameBlockOffset = {
+    global: boolean;
+    offset: number;
+};
+
+function newStackFrameBlock(lastSlot: number): StackFrameBlock {
+    return {
+        variables: new Map(),
+        nextAvailableSlot: lastSlot,
+    };
+}
+
+function pushStackFrameBlock(program: ProgramParseResult): StackFrameBlock {
+    const sf = getCurrentStackFrame(program);
+    const cb = getCurrentStackFrameBlock(program);
+    const block = newStackFrameBlock(cb.nextAvailableSlot); 
+
+    sf.blocks.push(block);
+    return block;
+}
+
+function popStackFrameBlock(program: ProgramParseResult) {
+    const sf = getCurrentStackFrame(program);
+    sf.blocks.pop();
+}
+
+// NOTE: The parser and interpreter both need to be in agreement about what kinds of 
+// expressions will push a new stack frame to the stack. Otherwise, this won't work...
+function pushStackFrame(program: ProgramParseResult): StackFrame {
+    const sf: StackFrame = { 
+        blocks: [newStackFrameBlock(
+            // reserving slot 0  for the per-block 'last result'
+            1
+        )],
+    };
+    program.stack.push(sf);
+    return sf;
+}
+
+function popStackFrame(program: ProgramParseResult) {
+    const sf = getCurrentStackFrame(program);
+    assert(sf.blocks.length === 1);
+    program.stack.pop();
+}
+
+function getCurrentStackFrame(program: ProgramParseResult) {
+    assert(program.stack.length > 0);
+    return program.stack[program.stack.length - 1];
+}
+
+function getCurrentStackFrameBlock(program: ProgramParseResult) {
+    const sf = getCurrentStackFrame(program);
+    const block = sf.blocks[sf.blocks.length - 1];
+    assert(block);
+    return block;
+}
+
+function getGlobalStackFrameBlock(program: ProgramParseResult) {
+    assert(program.stack.length > 0);
+    const sfb = program.stack[0].blocks[0];
+    assert(sfb);
+    return sfb;
+}
+
+function getIdentifierStackFrameOffset(program: ProgramParseResult, name: string): StackFrameBlockOffset | undefined {
+    const sf = getCurrentStackFrame(program);
+    for (const b of sf.blocks) {
+        const offset = b.variables.get(name);
+        if (offset !== undefined) {
+            return { global: false, offset };
+        }
+    }
+
+    const globalSfBlock = getGlobalStackFrameBlock(program);
+    const offset = globalSfBlock.variables.get(name);
+    if (offset !== undefined) {
+        return { global: true, offset };
+    }
+
+    return undefined;
+}
+
+function putIdentifierInCurrentStackFrame(program: ProgramParseResult, name: string, overwrite: boolean, mustBeNew: boolean): StackFrameBlockOffset {
+    const currentSf = getCurrentStackFrameBlock(program);
+    const sfOffset = currentSf.nextAvailableSlot;
+    currentSf.nextAvailableSlot++;
+
+    if (!overwrite && currentSf.variables.has(name)) {
+        if (mustBeNew) {
+            throw new Error("Can't overwrite existing variables");
+        }
+
+        return { global: false, offset: currentSf.variables.get(name)! };
+    }
+
+    currentSf.variables.set(name, sfOffset);
+
+    return { global: false, offset: sfOffset };
+}
 
 export type DiagnosticInfo = {
     pos: TextPosition;
@@ -375,11 +502,12 @@ function advance(ctx: ParserContext) {
         ctx.pos.col++;
     }
 
+
     return !reachedEnd(ctx);
 }
 
 function parseWhitespace(ctx: ParserContext) {
-    while (true) {
+    while (!reachedEnd(ctx)) {
         const c = currentChar(ctx);
         if (isWhitespace(c)) {
             advance(ctx);
@@ -421,7 +549,7 @@ function parseTernaryIf(ctx: ParserContext, query: ProgramExpression): ProgramEx
 
     const start = query.slice.start
 
-    const trueBranch = parseExpressionOrMoveToNextLine(ctx);
+    const trueBranch = parseExpression(ctx);
     if (!trueBranch) {
         return undefined;
     }
@@ -489,11 +617,22 @@ function parseStringLiteral(ctx: ParserContext): ProgramExpressionStringLiteral 
         return;
     }
 
-    return {
+
+    const result: ProgramExpressionStringLiteral = {
         t: T_STRING_LITERAL,
         slice: newTextSlice(ctx.text, startPos.i, ctx.pos.i),
         pos,
+        val: "",
     };
+
+    const [val, error] = computeStringForStringLiteral(result);
+    if (!val) {
+        addErrorAtCurrentPosition(ctx, error);
+        return;
+    }
+
+    result.val = val;
+    return result;
 }
 
 function parseBlock(ctx: ParserContext): ProgramExpressionBlock | undefined {
@@ -544,7 +683,7 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
     if (!compareCurrent(ctx, "in")) {
         addErrorAtCurrentPosition(
             ctx,
-            "For-loops take the format `for {loopVar} in {range-expression} {loop-expression}`. You need to type 'in' here. (Well you don't need to - obviously this parser knew when the previous expression ended, in order to provide this error message in the first place. But still, it makes the code more readable)"
+            `For-loops here look like "for <loopVar> in <rangeExpression> { <statements> }". For example, "for i in 0..<100 { x = x + i }"`
         );
         return undefined;
     }
@@ -566,10 +705,17 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
         addErrorAtCurrentPosition(ctx, "Expected a block here for the loop body. E.g `for i in 0..<100 { log(i) }`");
         return undefined;
     }
+
+    pushStackFrameBlock(ctx.parseResult);
+
+    loopVar.stackOffset = putIdentifierInCurrentStackFrame(ctx.parseResult, loopVar.name, false, true);
+
     const loopExpr = parseBlock(ctx);
     if (!loopExpr) {
         return undefined;
     }
+
+    popStackFrameBlock(ctx.parseResult);
 
     const result: ProgramExpressionRangedFor = {
         t: T_RANGE_FOR,
@@ -589,46 +735,49 @@ function parseExpressionsDelimiterSeparated(
     delimiter: string, 
     closingDelimiterChar: string,
 ) {
-    while(true) {
+    assert(delimiter.length === 1);
+    assert(closingDelimiterChar.length === 1);
+
+    let foundClosingDelimiter = false;
+
+    while(!reachedEnd(ctx)) {
         parseWhitespace(ctx);
 
-        if (closingDelimiterChar && currentChar(ctx) === closingDelimiterChar) {
-            advance(ctx);
-            break;
-        }
-
-        const expr = parseExpressionOrMoveToNextLine(ctx);
+        const expr = parseExpression(ctx);
         if (expr) {
             expressions.push(expr);
-        } else {
-            break;
-        }
-
-        parseWhitespace(ctx);
-
-        let foundSomeDelimiter = false;
-        if (compareCurrent(ctx, delimiter)) {
-            for (let i = 0; i < delimiter.length; i++) {
-                advance(ctx);
-            }
 
             parseWhitespace(ctx);
-            foundSomeDelimiter = true;
+        } 
+
+        let foundDelimiter = false;
+        if (compareCurrent(ctx, delimiter)) {
+            if (!expr) {
+                addErrorAtCurrentPosition(ctx, `Found a delimiter ${delimiter} before an actual expression`);
+                return undefined;
+            }
+
+            foundDelimiter = true;
+
+            advance(ctx);
+
+            parseWhitespace(ctx);
         }
 
-        if (closingDelimiterChar && currentChar(ctx) === closingDelimiterChar) {
+        if (currentChar(ctx) === closingDelimiterChar) {
+            foundClosingDelimiter = true;
             advance(ctx);
             break;
         }
 
-        if (!foundSomeDelimiter) {
-            if (closingDelimiterChar) {
-                addErrorAtCurrentPosition(ctx, `Expected a delimiter ${delimiter} or a closing delimiter ${closingDelimiterChar} here`);
-                return undefined;
-            } else { 
-                addErrorAtCurrentPosition(ctx, `Expected a delimiter ${delimiter} here`);
-                return undefined;
-            }
+        if (!expr) {
+            addErrorAtCurrentPosition(ctx, `Expected a closing delmiter ${closingDelimiterChar} here.`);
+            return undefined;
+        }
+
+        if (!foundDelimiter) {
+            addErrorAtCurrentPosition(ctx, `Expected a delimiter ${delimiter} here.`);
+            return undefined;
         }
     }
 }
@@ -650,6 +799,7 @@ function parseListLiteral(ctx: ParserContext): ProgramExpressionListLiteral | un
 
     if (currentChar(ctx) === "L") {
         result.t = T_LIST_LITERAL;
+        advance(ctx);
     }
 
     result.slice.end = ctx.pos.i;
@@ -659,6 +809,14 @@ function parseListLiteral(ctx: ParserContext): ProgramExpressionListLiteral | un
 function parseNumberLiteral(ctx: ParserContext): ProgramExpressionNumberLiteral {
     assert(canParseNumberLiteral(ctx));
     const pos = getParserPosition(ctx);
+
+    let isNegative = false;
+    if (currentChar(ctx) === "+") {
+        advance(ctx);
+    } else if (currentChar(ctx) === "-") {
+        isNegative = true;
+        advance(ctx);
+    }
 
     const start = ctx.pos.i;
     while (advance(ctx) && isValidNumberPart(currentChar(ctx))) { }
@@ -670,22 +828,24 @@ function parseNumberLiteral(ctx: ParserContext): ProgramExpressionNumberLiteral 
         pos,
         decimalPart: null,
         exponentPart: null,
+        isNegative,
+        val: 0,
     };
 
-    const decimalPartStart = ctx.pos.i;
     if (
         currentChar(ctx) === "."
         // Here specifically because we need to make sure numbers don't collide with ..< and ..= operators
         && currentChar(ctx, 1) !== "."
         && advance(ctx)
     ) {
+        const decimalPartStart = ctx.pos.i;
         while (isValidNumberPart(currentChar(ctx)) && advance(ctx)) { }
         result.decimalPart = newOptionalTextSlice(ctx.text, decimalPartStart, ctx.pos.i);
         result.slice.end = ctx.pos.i;
     }
 
-    const exponentPartStart = ctx.pos.i;
     if (currentChar(ctx) === "e" && advance(ctx)) {
+        const exponentPartStart = ctx.pos.i;
         const c = currentChar(ctx);
         if (c === "+" || c === "-") {
             if (!advance(ctx)) {
@@ -698,9 +858,17 @@ function parseNumberLiteral(ctx: ParserContext): ProgramExpressionNumberLiteral 
         result.slice.end = ctx.pos.i;
     }
 
+    result.val = computeNumberForNumberExpression(result);
+
     return result;
 }
 
+// Parses quite a lot of stuff, actually.
+// - function declarations/calls
+// - indexaction ops (we gotta move this actually)
+// - assignment (used to be done with precedence, but then I had a whole
+// bunch of code everywhere checking that it was only happening as a 'block level' statement. also makes the
+// stack frame stuff easier to implement when we make it it's own thing like this
 function parseIdentifierAndFollowOns(ctx: ParserContext): ProgramExpression | undefined {
     const pos = getParserPosition(ctx);
     let result: ProgramExpression = parseIdentifierOrPreviousResultOp(ctx);
@@ -738,7 +906,9 @@ function parseIdentifierAndFollowOns(ctx: ParserContext): ProgramExpression | un
         }
 
         result.slice.end = ctx.pos.i;
-    } else if (result.t === T_IDENTIFIER && currentChar(ctx) === "(") {
+    }
+
+    if (result.t === T_IDENTIFIER && currentChar(ctx) === "(") {
         result = {
             t: T_FN,
             slice: newTextSlice(ctx.text, result.slice.start, ctx.pos.i),
@@ -746,6 +916,7 @@ function parseIdentifierAndFollowOns(ctx: ParserContext): ProgramExpression | un
             fnName: result,
             arguments: [],
             body: null,
+            argumentNames: null,
         };
 
         advance(ctx);
@@ -755,7 +926,36 @@ function parseIdentifierAndFollowOns(ctx: ParserContext): ProgramExpression | un
         parseWhitespace(ctx);
 
         if (currentChar(ctx) === "{") {
+            ctx.parseResult.functions.set(result.fnName.name, result);
+
+            pushStackFrame(ctx.parseResult);
+
+            const argNames: ProgramExpressionIdentifier[] = [];
+            for (let i = 0; i < result.arguments.length; i++) {
+                const arg = result.arguments[i];
+
+                if (arg.t !== T_IDENTIFIER) {
+                    addErrorAtPosition(ctx, arg.pos, "A function declaration's arguments list can only be identifiers");
+                    return;
+                }
+
+                const name = arg.name;
+                for (const otherName of argNames) {
+                    if (otherName.name === name) {
+                        addErrorAtPosition(ctx, arg.pos, "This argument name matches the name of a previous argument");
+                        return;
+                    }
+                }
+
+                argNames.push(arg);
+                arg.stackOffset = putIdentifierInCurrentStackFrame(ctx.parseResult, name, false, true);
+            }
+
+            result.argumentNames = argNames;
+
             const block = parseBlock(ctx);
+            popStackFrame(ctx.parseResult);
+
             if (!block) {
                 return undefined;
             }
@@ -763,6 +963,34 @@ function parseIdentifierAndFollowOns(ctx: ParserContext): ProgramExpression | un
             result.body = block;
         }
 
+        result.slice.end = ctx.pos.i;
+    } else if (currentChar(ctx) === "=" && currentChar(ctx, 1) !== "=") {
+        advance(ctx);
+        parseWhitespace(ctx);
+
+        // TODO: move this to be for any expression
+        result = {
+            t: T_ASSIGNMENT,
+            slice: newTextSlice(ctx.text, result.slice.start, ctx.pos.i),
+            pos,
+            lhs: result,
+            rhs: undefined,
+        };
+
+        const rhs = parseExpression(ctx);
+        if (!rhs) {
+            addErrorAtPosition(ctx, getParserPosition(ctx), "Assignment expression is incomplete");
+            return result;
+        }
+
+        if (result.lhs.t === T_IDENTIFIER) {
+            const offset = getIdentifierStackFrameOffset(ctx.parseResult, result.lhs.name);
+            if (!offset) {
+                result.lhs.stackOffset = putIdentifierInCurrentStackFrame(ctx.parseResult, result.lhs.name, true, false);
+            }
+        }
+
+        result.rhs = rhs;
         result.slice.end = ctx.pos.i;
     }
 
@@ -802,10 +1030,18 @@ function parseIdentifier(ctx: ParserContext): ProgramExpressionIdentifier  {
         advance(ctx)
     ) {}
 
+    const slice = newTextSlice(ctx.text, start, ctx.pos.i);
+
+    const name = getSliceText(slice);
+
+    const stackOffset = getIdentifierStackFrameOffset(ctx.parseResult, name);
+
     return {
         t: T_IDENTIFIER,
-        slice: newTextSlice(ctx.text, start, ctx.pos.i),
+        slice,
         pos,
+        name,
+        stackOffset
     };
 }
 
@@ -819,8 +1055,6 @@ function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
         case "=": 
             if (c2 === "=") {
                 op = BIN_OP_IS_EQUAL_TO;
-            } else {
-                op = BIN_OP_ASSIGNMENT; 
             }
             break;
         case "*": op = BIN_OP_MULTIPLY; break;
@@ -883,7 +1117,7 @@ function parseBinaryOperatorIncreasingPrecedence(ctx: ParserContext, lhs: Progra
         return;
     }
 
-    for (let i = 0; i < getBinaryOperatorTypeOpString(op).length; i++) {
+    for (let i = 0; i < binOpToOpString(op).length; i++) {
         advance(ctx);
     }
 
@@ -917,12 +1151,14 @@ function parseExpression(ctx: ParserContext, maxPrec: number = MAX_PRECEDENCE): 
         } else {
             res = parseIdentifierAndFollowOns(ctx);
         }
-    } else if (isDigit(c)) {
+    } else if (canParseNumberLiteral(ctx)) {
         res = parseNumberLiteral(ctx);
     } else if (c === "[") {
         res = parseListLiteral(ctx);
     } else if (c === "{") {
+        pushStackFrameBlock(ctx.parseResult);
         res = parseBlock(ctx);
+        popStackFrameBlock(ctx.parseResult);
     } else if (c === "(") {
         advance(ctx);
         parseWhitespace(ctx);
@@ -943,22 +1179,26 @@ function parseExpression(ctx: ParserContext, maxPrec: number = MAX_PRECEDENCE): 
 
     if (res) {
         parseWhitespace(ctx);
-        c = currentChar(ctx);
-        if (c === "?") {
+
+        while (true) {
+            const nextRes = parseBinaryOperatorIncreasingPrecedence(ctx, res, maxPrec);
+            if (!nextRes) {
+                break;
+            }
+
+            parseWhitespace(ctx);
+
+            res = nextRes;
+        }
+    }
+
+    if (res) {
+        parseWhitespace(ctx);
+        const c = currentChar(ctx);
+        if (c === "?" && TERNARY_PRECEDENCE < maxPrec) {
             const ternary = parseTernaryIf(ctx, res);
             if (ternary) {
                 res = ternary;
-            }
-        } else {
-            while (true) {
-                const nextRes = parseBinaryOperatorIncreasingPrecedence(ctx, res, maxPrec);
-                if (!nextRes) {
-                    break;
-                }
-
-                parseWhitespace(ctx);
-
-                res = nextRes;
             }
         }
     }
@@ -969,6 +1209,13 @@ function parseExpression(ctx: ParserContext, maxPrec: number = MAX_PRECEDENCE): 
 function addErrorAtCurrentPosition(ctx: ParserContext, error: string) {
     ctx.parseResult.errors.push({
         pos: getParserPosition(ctx),
+        problem: error
+    });
+}
+
+function addErrorAtPosition(ctx: ParserContext, pos: TextPosition, error: string) {
+    ctx.parseResult.errors.push({
+        pos,
         problem: error
     });
 }
@@ -1035,20 +1282,31 @@ export function parse(text: string): ProgramParseResult {
     const program: ProgramParseResult = {
         text,
         statements: [],
+        functions: new Map(),
         errors: [],
         warnings: [],
+
+        stack: [],
     };
 
-    const ctx: ParserContext =  { 
-        text, 
-        parseResult: program, 
-        pos: newTextPosition(0, 0, 0), 
+    const ctx: ParserContext = {
+        text,
+        parseResult: program,
+        pos: newTextPosition(0, 0, 0),
     };
 
+    pushStackFrame(program);
     parseStatements(ctx, program.statements);
+
+    // dont bother popping the global stack frame
+
+    if (program.errors) {
+        return program;
+    }
 
     return program;
 }
+
 
 ////////////////////////
 // Interpreter
@@ -1083,16 +1341,15 @@ export type ProgramResultHPMatrix = {
 
 export type ProgramResultFunctionDeclaration = {
     t: typeof T_RESULT_FN;
-    argNames: string[];
     expr: ProgramExpressionFn;
 };
 
-type HPMatrix = {
+export type HPMatrix = {
     values: number[];
     shape: number[];
 };
 
-type HPMatrixIndex = {
+export type HPMatrixIndex = {
     m: HPMatrix;
     indexes: number[];
 };
@@ -1125,10 +1382,6 @@ export type ProgramResult = ProgramResultNumber
     | ProgramResultHPMatrix
     | ProgramResultFunctionDeclaration;
 
-export type ProgramOutput = {
-    results: ProgramResult[];
-};
-
 export function programResultTypeString(output: ProgramResult): string {
     switch (output.t) {
         case T_RESULT_NUMBER:
@@ -1147,27 +1400,40 @@ export function programResultTypeString(output: ProgramResult): string {
             );
         }
         case T_RESULT_FN:
-            return `Function ${getIdentifierName(output.expr.fnName)}`;
+            return `Function`;
     }
 }
 
-type ProgramScope = {
-    variables: Map<string, ProgramResult>;
-    lastResult: ProgramResult | undefined;
-};
+function beginScope(state: ProgramOutputState) {
+    state.stackIdxStack.push(state.stackIdx);
+    state.stackIdx += state.stackIdxMaxOffset + 1;
+    state.stackIdxMaxOffset = 0;
 
-function beginScope(state: ProgramState): ProgramScope {
-    const scope = { variables: new Map(), lastResult: undefined };
-    state.stack.push(scope);
-    return scope;
+    // reserve space for "the result above"
+    assignAtStackPos(state, state.stackIdx, null);
 }
 
-function endScope(state: ProgramState)  {
-    state.stack.pop();
+function endScope(state: ProgramOutputState)  {
+    const previousStackIdx = getPreviousStackIdx(state);;
+    state.stackIdxStack.pop();
+    const delta = state.stackIdx - previousStackIdx;
+    state.stackIdx = previousStackIdx;
+    state.stackIdxMaxOffset = delta - 1;
 }
 
-type ProgramState = {
-    stack: ProgramScope[];
+function getPreviousStackIdx(state: ProgramOutputState): number {
+    assert(state.stackIdxStack.length > 0);
+    return state.stackIdxStack[state.stackIdxStack.length - 1];
+}
+
+export type ProgramOutputState = {
+    stack: (ProgramResult | null)[];
+    stackIdxStack: number[];
+    stackIdx: number;
+    stackIdxMaxOffset: number;
+
+    functions: Map<string, ProgramExpressionFn>;
+
     results: ProgramResult[];
     error: {
         pos: TextPosition;
@@ -1176,15 +1442,19 @@ type ProgramState = {
     } | null;
 };
 
-function newProgramState(): ProgramState {
+function newProgramState(parserResult: ProgramParseResult): ProgramOutputState {
     return { 
+        functions: parserResult.functions,
         stack: [],
+        stackIdx: 0,
+        stackIdxMaxOffset: 0,
+        stackIdxStack: [],
         results: [],
         error: null,
     };
 }
 
-function setProgramError(state: ProgramState, expr: ProgramExpression, message: string, result? : ProgramResult) {
+function setProgramError(state: ProgramOutputState, expr: ProgramExpression, message: string, result? : ProgramResult) {
     // An error was already present
     assert(!state.error);
 
@@ -1195,111 +1465,88 @@ function setProgramError(state: ProgramState, expr: ProgramExpression, message: 
     };
 }
 
-function getGlobalScope(state: ProgramState): ProgramScope {
-    const scope = state.stack[0];
-    // Expected there to always be a scope to look at
-    assert(scope);
-    return scope;
-}
-
-function getCurrentScope(state: ProgramState): ProgramScope {
-    const scope = state.stack[state.stack.length - 1];
-    // Expected there to always be a scope to look at
-    assert(scope);
-    return scope;
-}
-
-function calculateNumberLiteralValue(expr: ProgramExpressionNumberLiteral, state: ProgramState): number | undefined {
-    if (state.error) return;
-
-    let num = 0;
-
-    if (expr.decimalPart) {
-        const text = getSliceText(expr.decimalPart);
-        const decimalVal = parseInt(text) / Math.pow(10, text.length)
-        num += decimalVal;
-    }
-
-    if (expr.integerPart) {
-        const text = getSliceText(expr.integerPart);
-        const intVal = parseInt(text);
-        num += intVal;
-    }
-
-    if (expr.exponentPart) {
-        const text = getSliceText(expr.exponentPart);
-        const expVal = parseInt(text);
-        num *= Math.pow(10, expVal);
-    }
-
-    // TODO: error out if the literal is impossible to generate properly
-    
-    return num;
-}
-
 
 function newNumberResult(val: number): ProgramResultNumber {
     return { t: T_RESULT_NUMBER, val };
 }
 
-function interpretNumberLiteral(expr: ProgramExpressionNumberLiteral, state: ProgramState): ProgramResultNumber | undefined {
-    if (state.error) return;
+function computeNumberForNumberExpression(expr: ProgramExpressionNumberLiteral): number {
+    let result = 0;
 
-    const result = calculateNumberLiteralValue(expr, state);
-    if (result === undefined) {
-        return;
+    if (expr.decimalPart) {
+        const text = getSliceText(expr.decimalPart).replace(/_/g, "");
+        const decimalVal = parseInt(text) / Math.pow(10, text.length)
+        result += decimalVal;
     }
 
-    return newNumberResult(result);
-}
+    if (expr.integerPart) {
+        const text = getSliceText(expr.integerPart).replace(/_/g, "");
+        const intVal = parseInt(text);
+        result += intVal;
+    }
 
-function getIdentifierName(expr: ProgramExpressionIdentifier): string {
-    const result = getSliceText(expr.slice);
+    if (expr.exponentPart) {
+        const text = getSliceText(expr.exponentPart).replace(/_/g, "");
+        const expVal = parseInt(text);
+        result *= Math.pow(10, expVal);
+    }
+
+    if (expr.isNegative) {
+        result = -result;
+    }
+
+    // TODO: return undefined if the literal is impossible to generate properly
+
     return result;
 }
 
-function interpretIdentifier(expr: ProgramExpressionIdentifier | ProgramExpressionPreviousResult, state: ProgramState): ProgramResult | undefined {
-    if (state.error) return;
+function interpretIdentifier(expr: ProgramExpressionIdentifier | ProgramExpressionPreviousResult, state: ProgramOutputState): ProgramResult | null {
+    if (state.error) return null;
 
     if (expr.t === T_IDENTIFIER_THE_RESULT_FROM_ABOVE) {
-        const scope = getCurrentScope(state);
-        const lastResult = scope.lastResult;
-        if (!lastResult) {
+        const result = getLastResult(state);
+        if (!result) {
             setProgramError(state, expr, "Can't refer to ^ 'the result above' when we don't have a previous result in this scope");
-            return;
+            return null;
         }
 
-        return lastResult;
+        return result;
     }
 
-    let result: ProgramResult | undefined;
 
-    const name = getIdentifierName(expr);
-    const currentScope = getCurrentScope(state);
-    result = currentScope.variables.get(name);
-
-    if (!result) {
-        const globalScope = getGlobalScope(state);
-        result = globalScope.variables.get(name);
-    }
-
-    if (!result) {
+    if (!expr.stackOffset) {
         setProgramError(state, expr, "This identifier hasn't been defined yet");
-        return;
+        return null;
+    }
+
+    const varIdx = getVariableStackIndex(state, expr.stackOffset);
+    const result = state.stack[varIdx];
+
+    if (!result) {
+        setProgramError(state, expr, "This identifier hasn't been assigned yet");
+        return null;
     }
 
     return result;
 }
 
+function getVariableStackIndex(state: ProgramOutputState, offset: StackFrameBlockOffset): number {
+    let idx;
+    if (offset.global) {
+        idx = offset.offset;
+    } else {
+        idx = state.stackIdx + offset.offset;
+    }
+    return idx;
+}
 
-function interpretStringLiteral(expr: ProgramExpressionStringLiteral, state: ProgramState): ProgramResultString | undefined {
-    if (state.error) return;
 
+function computeStringForStringLiteral(expr: ProgramExpressionStringLiteral): [string | undefined, string] {
     const text = getSliceText(expr.slice);
     const sb = [];
 
     let isEscape = false;
-    let isValid = true;
+    let errorMessage = "";
     for (const c of text) {
         if (c === "\\") {
             isEscape = true;
@@ -1329,111 +1576,95 @@ function interpretStringLiteral(expr: ProgramExpressionStringLiteral, state: Pro
                     sb.push("\\");
                     break;
                 default:
-                    isValid = false;
-                    setProgramError(state, expr, "Invalid escape sequence \\" + c);
+                    errorMessage = "Invalid escape sequence \\" + c;
                     break;
             }
         }
     }
 
-    if (!isValid) {
-        return;
+    if (!errorMessage) {
+        return [undefined, errorMessage]
     }
 
-    const joined = sb.join("");
-    return { t: T_RESULT_STRING, val: joined };
+    const result = sb.join("");
+    return [result, ""];
 }
 
-function interpretListLiteral(expr: ProgramExpressionListLiteral, state: ProgramState): ProgramResultList | ProgramResultHPMatrix | undefined {
-    if (state.error) return;
+function interpretStringLiteral(expr: ProgramExpressionStringLiteral, state: ProgramOutputState): ProgramResultString | null {
+    if (state.error) return null;
+
+    return { t: T_RESULT_STRING, val: expr.val };
+}
+
+function interpretListLiteral(expr: ProgramExpressionListLiteral, state: ProgramOutputState): ProgramResultList | ProgramResultHPMatrix | null {
+    if (state.error) return null;
+
+    const resultList: ProgramResult[] = Array(expr.items.length);
+
+    for (let i = 0; i < expr.items.length; i++) {
+        const value = interpretExpression(expr.items[i], state);
+        if (!value) {
+            return null;
+        }
+
+        resultList[i] = value;
+    }
 
     if (expr.t === T_LIST_LITERAL) {
-        const result: ProgramResult[] = [];
-
-        for (let i = 0; i < expr.items.length; i++) {
-            const value = interpretExpression(expr.items[i], state);
-            if (!value) {
-                return;
-            }
-        }
-
-        return { t: T_RESULT_LIST, values: result };
+        return { t: T_RESULT_LIST, values: resultList };
     }
 
-    const shape: number[] = [];
+    // Vectors/matricies need extra validation.
+
+    assert(expr.t === T_VECTOR_LITERAL);
+
+    let innerLen = 0;
+    let innerT = 0;
+    let innerShape: number[] | undefined;
     const values: number[] = [];
-    let isValid = true;
+    for (let i = 0; i < resultList.length; i++) {
+        const result = resultList[i];
 
-    // This was more complicated than I thought. We need to check that all the rows and columns are consistent with each other.
-    const dfs = (root: ProgramExpressionListLiteral, dimIdx: number) => {
-        if (root.t === T_VECTOR_LITERAL) {
-            const len = root.items.length;
-            if (shape.length === dimIdx) {
-                shape.push(len);
-            } else {
-                if (len !== shape.length) {
-                    setProgramError(state, root, "The size or type of this entry is not consistent with the first entry in this vector or matrix");
-                    isValid = false;
-                    return;
-                }
-            }
+        if (result.t !== T_RESULT_NUMBER && result.t !== T_RESULT_HIGH_PERFORMANCE_MATRIX) {
+            setProgramError(state, expr.items[i], "Vectors/Matrices can only contain other vectors/matrices/numbers", result);
+            return null;
         }
 
-        if (root.items.length > 0) {
-            let type = 0;
-            let len = 0;
-            for (let i = 0; i < root.items.length; i++) {
-                const item = root.items[i];
+        let rowLen;
+        if (result.t === T_RESULT_HIGH_PERFORMANCE_MATRIX) {
+            rowLen = getLengthHpMatrix(result.val);
 
-                if (item.t !== T_VECTOR_LITERAL && item.t !== T_NUMBER_LITERAL) {
-                    isValid = false;
-                    setProgramError(state, item, "Vectors can only contain other vectors, or numbers");
-                    return;
-                } 
+            // TODO: reserve the correct size based on matrix shape. flatmap...
+            values.push(...result.val.m.values);
+        } else {
+            values.push(result.val);
+            rowLen = 1;
+        }
 
-                const itemType = item.t;
-                const itemLen = item.t === T_VECTOR_LITERAL ? item.items.length : 1;
-                if (i === 0) {
-                    type = itemType;
-                    len = itemLen;
-                } else {
-                    if (type !== itemType) {
-                        isValid = false;
-                        setProgramError(state, item, "This item had a different type to the previous items");
-                        return;
-                    } else if (len !== itemLen) {
-                        isValid = false;
-                        setProgramError(state, item, "This vector had a different length to the previous vectors");
-                        return;
-                    }
-                }
-
-                if (item.t === T_NUMBER_LITERAL) {
-                    const val = calculateNumberLiteralValue(item, state);
-                    if (val === undefined) {
-                        isValid = false;
-                        return;
-                    }
-                    values.push(val);
-                } else {
-                    dfs(item, dimIdx + 1);
-                }
+        if (i === 0) {
+            innerLen = rowLen;
+            innerT = result.t;
+            if (result.t === T_RESULT_HIGH_PERFORMANCE_MATRIX) {
+                innerShape = result.val.m.shape;
+            }
+        } else {
+            if (innerT !== result.t) {
+                setProgramError(state, expr.items[i], "This item had a different type to the previous items in the vector", result);
+                return null;
+            } else if (innerLen !== rowLen) {
+                setProgramError(state, expr.items[i], "This vector had a different length to the previous vectors", result);
+                return null;
             }
         }
     }
-    dfs(expr, 0);
 
-    if (!isValid) {
-        return;
-    }
-
-    // The number of values should have perfectly lined up with the shape, if we haven't set isValid=false.
-    // We must have done something wrong here
-    assert(getValueCount(shape) !== values.length);
+    const len = resultList.length;
+    const newShape = innerShape ? [len, ...innerShape] : [len];
 
     return {
         t: T_RESULT_HIGH_PERFORMANCE_MATRIX,
-        val: { m: { shape, values }, indexes: [] }
+        val: { m: { values, shape: newShape }, indexes: [],
+        }
     };
 }
 
@@ -1448,8 +1679,8 @@ function calculateBinaryOpNumberXNumber(
     l: ProgramResultNumber, 
     r: ProgramResultNumber, 
     expr: ProgramExpressionBinaryOperator, 
-    state: ProgramState,
-): ProgramResultNumber | ProgramResultRange | undefined {
+    state: ProgramOutputState,
+): ProgramResultNumber | ProgramResultRange | null {
     let num: number | undefined;
     let range: NumberRange | undefined;
 
@@ -1472,65 +1703,107 @@ function calculateBinaryOpNumberXNumber(
             assert(false)
     }
 
-    let result: ProgramResultNumber | ProgramResultRange | undefined;
+    let result: ProgramResultNumber | ProgramResultRange | null = null;
 
-    if (num) {
+    if (num !== undefined) {
         result = newNumberResult(num);
     } else if (range) {
         result = { t: T_RESULT_RANGE, val: range };
     }
 
-    return;
+    return result;
 }
 
-function interpretBinaryOp(expr: ProgramExpressionBinaryOperator, state: ProgramState, isTopLevelStatement: boolean): ProgramResult | undefined {
-    if (state.error) return;
+function interpretAssignment(expr: ProgramExpressionAssignment, state: ProgramOutputState): ProgramResult | null {
+    if (state.error) return null;
+
+    if (!expr.rhs) {
+        setProgramError(state, expr, "This assignment is incomplete, and cannot be evaluated");
+        return null;
+    }
+
+    if (expr.lhs.t !== T_DATA_INDEX_OP && expr.lhs.t !== T_IDENTIFIER) {
+        setProgramError(state, expr, "Can't assign to an expression of this type");
+        return null;
+    }
+
+    if (expr.lhs.t === T_DATA_INDEX_OP) {
+        // TODO: Implmement
+        setProgramError(state, expr, "Assigning to an index hasn't been implemented yet");
+        return null;
+    }
+
+    const rhs = interpretExpression(expr.rhs, state);
+    if (!rhs) {
+        return null;
+    }
+
+    assignIdentifier(state, expr.lhs, rhs);
+    if (state.error) {
+        return null;
+    }
+
+    return rhs;
+}
+
+function setLastResult(state: ProgramOutputState, value: ProgramResult | null) {
+    state.stack[state.stackIdx] = value;
+}
+
+function getLastResult(state: ProgramOutputState): ProgramResult | null {
+    return state.stack[state.stackIdx];
+}
+
+function assignIdentifier(state: ProgramOutputState, identifier: ProgramExpressionIdentifier, value: ProgramResult) {
+    if (!identifier.stackOffset) {
+        // TODO: move to parse state somehow
+        setProgramError(state, identifier, "The stack offset couldn't be determined at parse-time...");
+        return;
+    }
+
+    const varIdx = getVariableStackIndex(state, identifier.stackOffset);
+    assignAtStackPos(state, varIdx, value);
+}
+
+function max(a: number, b: number): number {
+    return a > b ? a : b;
+}
+
+function assignAtStackPos(state: ProgramOutputState, varIdx: number, value: ProgramResult | null) {
+    resizeStack(state, varIdx);
+
+    state.stack[varIdx] = value;
+    state.stackIdxMaxOffset = max(state.stackIdxMaxOffset, varIdx - state.stackIdx);
+}
+
+function resizeStack(state: ProgramOutputState, varIdx: number) {
+    // TODO: figure out how big a function's stack size is at parse time, instead of dynamically allocating like this
+    while (varIdx >= state.stack.length) {
+        state.stack.push(null);
+    }
+}
+
+
+function interpretBinaryOp(expr: ProgramExpressionBinaryOperator, state: ProgramOutputState): ProgramResult | null {
+    if (state.error) return null;
 
     if (!expr.rhs) {
         setProgramError(state, expr, "This expression is incomplete, and cannot be evaluated");
-        return;
+        return null;
     }
 
-    if (expr.op === BIN_OP_ASSIGNMENT) {
-        if (!isTopLevelStatement) {
-            setProgramError(state, expr.lhs, "Assignment may only be a top-level operation");
-            return;
-        }
 
-
-        if (expr.lhs.t !== T_IDENTIFIER && expr.lhs.t !== T_DATA_INDEX_OP) {
-            setProgramError(state, expr.lhs, "Curently, only identifiers, or indexation operations like identifier[index] can be assigned to.");
-            return;
-        }
-
-        const result = interpretExpression(expr.rhs, state);
-        if (!result) {
-            return;
-        }
-
-        if (expr.lhs.t === T_IDENTIFIER) {
-            const identifierName = getIdentifierName(expr.lhs);
-
-            const scope = getCurrentScope(state);
-            scope.variables.set(identifierName, result);
-            return result;
-        } 
-
-        setProgramError(state, expr, "TODO: implement assigning into a list or vector");
-        return;
-    }
-
-    const r = interpretExpression(expr.lhs, state);
+    const r = interpretExpression(expr.rhs, state);
     if (!r) {
-        return;
+        return null;
     }
 
-    const l = interpretExpression(expr.rhs, state);
+    const l = interpretExpression(expr.lhs, state);
     if (!l) {
-        return;
+        return null;
     }
 
-    let result: ProgramResult | undefined;
+    let result: ProgramResult | null = null;
 
     if (r.t === T_RESULT_NUMBER) {
         if (l.t === T_RESULT_NUMBER) {
@@ -1539,32 +1812,32 @@ function interpretBinaryOp(expr: ProgramExpressionBinaryOperator, state: Program
     }
 
     if (!result) {
-        setProgramError(state, expr, `We don't have a way to compute ${programResultTypeString(l)} ${binOpToString(expr.op)} ${programResultTypeString(r)} yet.`);
-        return;
+        setProgramError(state, expr, `We don't have a way to compute ${programResultTypeString(l)} ${binOpToOpString(expr.op)} ${programResultTypeString(r)} yet.`);
+        return null;
     }
 
     return result;
 }
 
-function interpretTernaryIf(expr: ProgramExpressionTernaryIf, state: ProgramState): ProgramResult | undefined {
-    if (state.error) return;
+function interpretTernaryIf(expr: ProgramExpressionTernaryIf, state: ProgramOutputState): ProgramResult | null {
+    if (state.error) return null;
 
     if (!expr.falseBranch) {
         setProgramError(state, expr, `Ternary needs a false path to be valid`);
-        return;
+        return null;
     }
 
     const conditionResult = interpretExpression(expr.query, state);
     if (!conditionResult) {
-        return;
+        return null;
     }
 
     if (conditionResult.t !== T_RESULT_NUMBER) {
         setProgramError(state, expr, `Ternary queries must always evaulate to numbers. 0 -> false, everything else -> true`);
-        return;
+        return null;
     }
 
-    let result: ProgramResult | undefined;
+    let result: ProgramResult | null;
     if (conditionResult.val === 0) {
         result = interpretExpression(expr.falseBranch, state);
     } else {
@@ -1574,14 +1847,14 @@ function interpretTernaryIf(expr: ProgramExpressionTernaryIf, state: ProgramStat
     return result;
 }
 
-function interpretWithScope(statements: ProgramExpression[], state: ProgramState, scope: ProgramScope): ProgramResult | undefined {
-    if (state.error) return;
+function interpretWithinCurrentScope(statements: ProgramExpression[], state: ProgramOutputState, isTopLevel: boolean): ProgramResult | null {
+    if (state.error) return null;
 
     for (let i = 0; i < statements.length; i++) {
         const expr = statements[i];
 
         const result = interpretExpression(expr, state, true);
-        scope.lastResult = result;
+        setLastResult(state, result);
 
         if (state.error) {
             break;
@@ -1589,163 +1862,143 @@ function interpretWithScope(statements: ProgramExpression[], state: ProgramState
 
         // When a result is not returned, an error must always be set
         assert(!!result);
+
+        if (isTopLevel) {
+            state.results.push(result);
+        }
     }
 
     if (state.error) {
-        return;
+        return null;
     }
 
-    const lastResult = scope.lastResult;
-
-    // For the same reason as above
-    assert(lastResult);
-
-   return lastResult;
+    return getLastResult(state);
 }
 
 
-function validateBlock(expr: ProgramExpressionBlock, state: ProgramState) {
+function validateBlock(expr: ProgramExpressionBlock, state: ProgramOutputState) {
     const statements = expr.statements;
     if (statements.length === 0) {
+        // TODO: figure out how to remove this error. Why cant I just do {}, ya know
         setProgramError(state, expr, "Blocks must always contain at least one statement");
     }
 }
 
-function interpretBlock(expr: ProgramExpressionBlock, state: ProgramState): ProgramResult | undefined {
-    if (state.error) return;
+function interpretBlock(expr: ProgramExpressionBlock, state: ProgramOutputState): ProgramResult | null {
+    if (state.error) return null;
 
     // Implementation here
 
     validateBlock(expr, state);
     if (state.error) {
-        return;
+        return null;
     }
 
-    const scope = getCurrentScope(state);
-    const result = interpretWithScope(expr.statements, state, scope);
+    const result = interpretWithinCurrentScope(expr.statements, state, false);
 
     return result;
 }
 
-function interpretRangeFor(expr: ProgramExpressionRangedFor, state: ProgramState): ProgramResult | undefined {
-    if (state.error) return;
+function interpretRangeFor(expr: ProgramExpressionRangedFor, state: ProgramOutputState): ProgramResult | null {
+    if (state.error) return null;
 
     const rangeResult = interpretExpression(expr.range, state);
     if (!rangeResult) {
-        return;
+        return null;
     }
 
     if (rangeResult.t !== T_RESULT_RANGE) {
         setProgramError(state, expr, `Result of range expression wasn't a range`, rangeResult);
-        return;
+        return null;
     }
 
-    const identifierName = getIdentifierName(expr.loopVar);
     const lo = rangeResult.val.lo;
     const hi = rangeResult.val.hi;
 
-    const scope = beginScope(state);
     const loopVar: ProgramResultNumber = { t: T_RESULT_NUMBER, val: 0 };
+    assignIdentifier(state, expr.loopVar, loopVar);
 
-    // TODO: think about: should the scope be cleared at the end of every loop?
     // TODO: think about: if this is the right abstraction. Should for-loops actually aggregate all their results as a kind of `map`?
-    scope.variables.set(identifierName, loopVar);
 
     if (lo <= hi) {
         for (let i = lo; i < hi; i++) {
             loopVar.val = i;
-            scope.lastResult = interpretExpression(expr, state);
+            const result = interpretExpression(expr.body, state);
+            setLastResult(state, result);
         }
     } else {
         for (let i = lo; i > hi; i--) {
             loopVar.val = i;
-            scope.lastResult = interpretExpression(expr, state);
+            const result = interpretExpression(expr.body, state);
+            setLastResult(state, result);
         }
     }
 
-    endScope(state);
+    const lastResult = getLastResult(state);
 
-    return scope.lastResult;
+    return lastResult;
 }
 
-function interpretFunction(expr: ProgramExpressionFn, state: ProgramState): ProgramResult | undefined {
-    if (state.error) return;
-
-    const scope = getCurrentScope(state);
-    const fnName = getIdentifierName(expr.fnName);
+function interpretFunction(expr: ProgramExpressionFn, state: ProgramOutputState): ProgramResult | null {
+    if (state.error) return null;
 
     if (expr.body) {
-        // Let's validate as much as we can about this function at declaration time,
-        // so that we don't have to wait till they actually call the function to error out
-
-        validateBlock(expr.body, state);
-        if (state.error) {
-            return;
-        }
-
-        const argNames: string[] = [];
-        for (let i = 0; i < expr.arguments.length; i++) {
-            const arg = expr.arguments[i];
-
-            if (arg.t !== T_IDENTIFIER) {
-                setProgramError(state, arg, "A function declaration's arguments list can only be identifiers");
-                return;
-            }
-
-            const name = getIdentifierName(arg);
-            for (const otherName of argNames) {
-                if (otherName === name) {
-                    setProgramError(state, arg, "This argument name matches the name of a previous argument");
-                    return;
-                }
-            }
-
-            argNames.push(name);
-        }
-
-        const result: ProgramResultFunctionDeclaration = { t: T_RESULT_FN, expr, argNames };
-        scope.variables.set(fnName, result);
-        return result;
+        assert(state.functions.get(expr.fnName.name) === expr);
+        return { t: T_RESULT_FN, expr };
     }
 
-    const decl = scope.variables.get(fnName);
+    const decl = state.functions.get(expr.fnName.name);
     if (!decl) {
         setProgramError(state, expr, "This function hasn't been declared yet");
-        return;
-    }
-
-    if (decl.t !== T_RESULT_FN) {
-        setProgramError(state, expr, "The variable we're referring to isn't a function", decl);
-        return;
-    }
-
-    if (decl.argNames.length !== expr.arguments.length) {
-        setProgramError(state, expr, `Number of arugments in declraration (${decl.expr.arguments.length}) doesn't match the number of arguments provided`, decl);
-        return;
+        return null;
     }
 
     // The way we knew to save this declaration in the first place was by checking
     // for the presence of the body field
-    assert(decl.expr.body);
+    assert(decl.body);
+    assert(decl.argumentNames);
 
-    const fnScope = beginScope(state);
-    for (let i = 0; i < decl.argNames.length; i++) {
-        const argName = decl.argNames[i];
+    if (decl.argumentNames.length !== expr.arguments.length) {
+        setProgramError(state, expr, `Number of arugments in declraration (${decl.arguments.length}) doesn't match the number of arguments provided`,
+            { t: T_RESULT_FN, expr: decl }
+        );
+        return null;
+    }
+
+
+    const initialMaxOffset = state.stackIdxMaxOffset;
+    // reserve space for 'last result'
+    state.stackIdxMaxOffset++;
+    // put the function arguments into this stack frame
+    for (let i = 0; i < decl.argumentNames.length; i++) {
         const argExpr = expr.arguments[i];
+
+        // We still need to interpret this while being in the current scope
         const result = interpretExpression(argExpr, state);
         if (!result) {
-            return;
+            return null;
         }
 
-        // We have allowed someone to define a function with multiple arguments of the same name, which is a bug
-        assert(!fnScope.variables.has(argName));
-
-        fnScope.variables.set(argName, result);
+        // we can add variables onto the 'next' scope before actually starting it
+        // by extending our current stack frame by 1 each time, and then resetting it before we begin the next scope
+        state.stackIdxMaxOffset++;
+        state.stack[state.stackIdx + state.stackIdxMaxOffset] = result;
     }
-    interpretBlock(decl.expr.body, state)
+
+    state.stackIdxMaxOffset = initialMaxOffset;
+    beginScope(state);
+
+    interpretBlock(decl.body, state)
+
+    const lastResult = getLastResult(state);
     endScope(state);
 
-    return fnScope.lastResult;
+    return lastResult;
+}
+
+function getLengthHpMatrix(val: HPMatrixIndex): number {
+    const dimension = val.indexes.length;
+    return val.m.shape[dimension];
 }
 
 function getLength(result: ProgramResult): number | undefined {
@@ -1753,33 +2006,30 @@ function getLength(result: ProgramResult): number | undefined {
         case T_RESULT_LIST: return result.values.length;
         case T_RESULT_STRING: return result.val.length;
         case T_RESULT_RANGE: return Math.abs(result.val.lo - result.val.hi);
-        case T_RESULT_HIGH_PERFORMANCE_MATRIX: {
-            const dimension = result.val.indexes.length;
-            return result.val.m.shape[dimension];
-        };
+        case T_RESULT_HIGH_PERFORMANCE_MATRIX: return getLengthHpMatrix(result.val);
     }
 }
 
 function indexIntoResult(
     result: ProgramResult, idx: number, 
     // These are for error reporting
-    state: ProgramState, exprIdx: ProgramExpression, idxExprResult: ProgramResultNumber, len: number
-): ProgramResult | undefined {
+    state: ProgramOutputState, exprIdx: ProgramExpression, idxExprResult: ProgramResultNumber, len: number
+): ProgramResult | null {
     // technically, some of these can be done before actually indexing int othe thing, so yeah.
 
     if (idx % 1) {
         setProgramError(state, exprIdx, "Indexing expressions cannot have a decimal component", idxExprResult);
-        return;
+        return null;
     }
 
     if (idx < 0) {
         setProgramError(state, exprIdx, "Indexing expression was less than zero", idxExprResult);
-        return;
+        return null;
     }
 
     if (idx >= len) {
         setProgramError(state, exprIdx, `Indexing expression ${idx} is out of bounds (${len})`);
-        return;
+        return null;
     }
 
     switch (result.t) {
@@ -1809,20 +2059,20 @@ function indexIntoResult(
     assert(false);
 }
 
-function interpretDataIndexOp(expr: ProgramExpressionDataIndex, state: ProgramState): ProgramResult | undefined {
-    if (state.error) return;
+function interpretDataIndexOp(expr: ProgramExpressionDataIndex, state: ProgramOutputState): ProgramResult | null {
+    if (state.error) return null;
 
     // we somehow parsed a data indexing op without finding any '[' braces or something. 
     assert(expr.indexes.length > 0);
 
     let result = interpretExpression(expr.lhs, state);
     if (!result) {
-        return;
+        return null;
     }
 
     for (let i = 0; i < expr.indexes.length; i++) {
         if (!result) {
-            return;
+            return null;
         }
 
         const exprIdx = expr.indexes[i];
@@ -1834,34 +2084,40 @@ function interpretDataIndexOp(expr: ProgramExpressionDataIndex, state: ProgramSt
             } else {
                 setProgramError(state, exprIdx, "This expression cannot be indexed any further", result);
             }
-            return;
+            return null;
         }
 
         const exprIdxResult = interpretExpression(exprIdx, state);
         if (!exprIdxResult) {
-            return;
+            return null;
         }
 
         if (exprIdxResult.t !== T_RESULT_NUMBER) {
             setProgramError(state, exprIdx, "Indexing expressions must evaluate to numbers");
-            return;
+            return null;
         }
 
         const idx = exprIdxResult.val;
 
         result = indexIntoResult(result, idx, state, exprIdx, exprIdxResult, resultLen);
         if (!result) {
-            return;
+            return null;
         }
     }
+
+    return null;
 }
 
-function interpretExpression(expr: ProgramExpression, state: ProgramState, isTopLevelStatement = false): ProgramResult | undefined {
-    if (state.error) return;
+function interpretNumberLiteral(expr: ProgramExpressionNumberLiteral, state: ProgramOutputState): ProgramResultNumber | null {
+    if (state.error) return null;
 
-    let result: ProgramResult | undefined;
+    return newNumberResult(expr.val);
+}
 
-    let typeString = expressionTypeToString(expr);
+function interpretExpression(expr: ProgramExpression, state: ProgramOutputState, isBlockLevelStatement: boolean = false): ProgramResult | null {
+    if (state.error) return null;
+
+    let result: ProgramResult | null = null;
 
     switch (expr.t) {
         case T_NUMBER_LITERAL: {
@@ -1879,15 +2135,17 @@ function interpretExpression(expr: ProgramExpression, state: ProgramState, isTop
             result = interpretListLiteral(expr, state);
         } break;
         case T_BINARY_OP: {
-            result = interpretBinaryOp(expr, state, isTopLevelStatement);
+            result = interpretBinaryOp(expr, state);
         } break;
         case T_TERNARY_IF: {
             result = interpretTernaryIf(expr, state);
         } break;
         case T_BLOCK: {
-            beginScope(state);
+            // Blocks no longer need their own scope - 
+            // the parse-stage will re-use addresses in the current function's stack frame 
+            // as needed. This way, blocks may access other variables in the same stack frame,
+            // instead of attempting to search up the stack frames or something like that.
             result = interpretBlock(expr, state);
-            endScope(state);
         } break;
         case T_RANGE_FOR: {
             result = interpretRangeFor(expr, state);
@@ -1898,24 +2156,31 @@ function interpretExpression(expr: ProgramExpression, state: ProgramState, isTop
         case T_DATA_INDEX_OP: {
             result = interpretDataIndexOp(expr, state);
         } break;
+        case T_ASSIGNMENT: {
+            result = interpretAssignment(expr, state);
+        } break;
         default: {
-            throw new Error("Unhandled type: " + typeString);
+            let typeString = expressionTypeToString(expr);
+            throw new Error("Unhandled type (Interpreter): " + typeString);
         }
     }
 
     return result;
 }
 
-export function interpret(program: ProgramParseResult): ProgramOutput {
-    const output: ProgramOutput = { results: [] };
+export function interpret(parseResult: ProgramParseResult): ProgramOutputState {
+    const state = newProgramState(parseResult); 
 
-    const state = newProgramState(); 
+    if (parseResult.errors.length > 0) {
+        state.error = parseResult.errors[0];
+        return state;
+    }
 
-    const scope = beginScope(state);
-    interpretWithScope(program.statements, state, scope); 
+    beginScope(state);
+    interpretWithinCurrentScope(parseResult.statements, state, true); 
 
     // no need to end the top-level scope.
 
-    return output;
+    return state;
 }
 

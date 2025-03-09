@@ -1,14 +1,13 @@
 import { EditableTextArea } from './components/text-area.ts';
 import {
     binOpToString,
-    getBinaryOperatorTypeOpString as binOpToSymbolString,
+    binOpToOpString as binOpToSymbolString,
     DiagnosticInfo,
     expressionTypeToString,
     getSliceText,
     interpret,
     parse,
     ProgramExpression,
-    ProgramOutput,
     programResultTypeString,
     ProgramParseResult,
     T_BINARY_OP,
@@ -22,7 +21,18 @@ import {
     T_NUMBER_LITERAL,
     T_RANGE_FOR,
     T_STRING_LITERAL,
-    T_TERNARY_IF
+    T_TERNARY_IF,
+    ProgramOutputState,
+    T_RESULT_NUMBER,
+    T_RESULT_STRING,
+    T_RESULT_LIST,
+    T_RESULT_HIGH_PERFORMANCE_MATRIX,
+    T_RESULT_RANGE,
+    T_RESULT_FN,
+    ProgramResult,
+    ProgramResultHPMatrix,
+    HPMatrixIndex,
+    T_ASSIGNMENT
 } from './program-parser.ts';
 import { GlobalState, loadState, saveState } from './state.ts';
 import "./styling.ts";
@@ -36,7 +46,7 @@ function newH3() {
 function newOutputState(): {
     lastText: string;
     lastPaseResult: ProgramParseResult | undefined;
-    lastOutput: ProgramOutput | undefined;
+    lastOutput: ProgramOutputState | undefined;
 } {
     return { lastText: "", lastOutput: undefined, lastPaseResult: undefined, };
 }
@@ -46,7 +56,7 @@ function textSpan(r: UIRoot, text: string) {
 }
 
 
-function textCode(r: UIRoot, text: string) {
+function codeSpan(r: UIRoot, text: string) {
     span(r, r => {
         if (r.isFirstRender) {
             r.c(cnApp.code)
@@ -57,8 +67,21 @@ function textCode(r: UIRoot, text: string) {
     });
 }
 
+function codeBlock(r: UIRoot, indent: number, fn: (r: UIRoot) => void) {
+    div(r, r => {
+        if (r.isFirstRender) {
+            r.c(cnApp.code)
+             .s("backgroundColor", cssVars.bg2)
+        }
 
-function ParserOutput(r: UIRoot, parseResult: ProgramParseResult | undefined) {
+        r.s("paddingLeft", (4 * indent) + "ch");
+
+        fn(r);
+    });
+}
+
+
+function renderParserOutput(r: UIRoot, parseResult: ProgramParseResult | undefined) {
     imIf(parseResult, r, (r, parseResult) => {
         imList(r, l => {
             function renderRow(title: string, type: string, depth: number, code?: string) {
@@ -70,7 +93,7 @@ function ParserOutput(r: UIRoot, parseResult: ProgramParseResult | undefined) {
                     textSpan(r, type);
                     imIf(code, r, (r, code) => {
                         textSpan(r, " ");
-                        textCode(r, code);
+                        codeSpan(r, code);
                     })
                 });
             }
@@ -86,10 +109,18 @@ function ParserOutput(r: UIRoot, parseResult: ProgramParseResult | undefined) {
                 let typeString = expressionTypeToString(expr);
                 switch (expr.t) {
                     case T_IDENTIFIER: {
-                        renderRow(title, typeString, depth, getSliceText(expr.slice));
+                        const offsetStr = "" + (expr.stackOffset ? (expr.stackOffset.offset +
+                            " [" + (expr.stackOffset.global ? "global" : "local") + "]") : "None!");
+
+                        renderRow(title, typeString, depth, getSliceText(expr.slice) + " offset=" + offsetStr);
                     } break;
                     case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: {
                         renderRow(title, typeString, depth);
+                    } break;
+                    case T_ASSIGNMENT: {
+                        renderRow(title, typeString, depth);
+                        dfs("lhs", expr.lhs, depth + 1);
+                        dfs("rhs", expr.rhs, depth + 1);
                     } break;
                     case T_BINARY_OP: {
                         const lhsText = getSliceText(expr.lhs.slice);
@@ -116,7 +147,10 @@ function ParserOutput(r: UIRoot, parseResult: ProgramParseResult | undefined) {
                         renderRow(title, typeString, depth, getSliceText(expr.slice));
                     } break;
                     case T_TERNARY_IF: {
-                        renderRow(title, typeString, depth, getSliceText(expr.slice));
+                        const queryText = getSliceText(expr.query.slice);
+                        const trueText = getSliceText(expr.trueBranch.slice);
+                        const falseText = expr.falseBranch ? getSliceText(expr.falseBranch.slice) : "";
+                        renderRow(title, typeString, depth, `(${queryText}) ? (${trueText}) : (${falseText})`);
 
                         dfs("query", expr.query, depth + 1);
                         dfs("trueBranch", expr.trueBranch, depth + 1);
@@ -200,24 +234,105 @@ function ParserOutput(r: UIRoot, parseResult: ProgramParseResult | undefined) {
     });
 }
 
-function CodeOuptut(r: UIRoot, output: ProgramOutput | undefined) {
+function renderCodeOuptut(r: UIRoot, output: ProgramOutputState | undefined) {
     imIf(output, r, (r, output) => {
+
+        const renderResult = (r: UIRoot, res: ProgramResult) => {
+            div(r, r => {
+                imList(r, l => {
+                    const r = l.get(res.t);
+                    const typeString = programResultTypeString(res)
+                    textSpan(r, typeString + " ");
+                    switch (res.t) {
+                        case T_RESULT_NUMBER:
+                            codeSpan(r, "" + res.val);
+                            break;
+                        case T_RESULT_STRING:
+                            codeSpan(r, res.val);
+                            break;
+                        case T_RESULT_LIST:
+                            codeBlock(r, 0, r => {
+                                codeSpan(r, "[");
+                                codeBlock(r, 1, r => {
+                                    imList(r, l => {
+                                        for (let i = 0; i < res.values.length; i++) {
+                                            const r = l.getNext();
+                                            renderResult(r, res.values[i]);
+                                            codeSpan(r, ", ");
+                                        }
+                                    })
+                                })
+                                codeSpan(r, "]L");
+                            })
+                            break;
+                        case T_RESULT_HIGH_PERFORMANCE_MATRIX:
+                            let idx = 0;
+                            const dfs = (r: UIRoot, dim: number, isLast: boolean) => {
+                                if (dim === res.val.m.shape.length) {
+                                    const val = res.val.m.values[idx];
+                                    idx++;
+
+                                    textSpan(r, "" + val);
+                                    imIf(!isLast, r, r => {
+                                        textSpan(r, ", ");
+                                    });
+                                    return;
+                                }
+
+                                const renderInner = (r: UIRoot) => {
+                                    textSpan(r, "[");
+                                    imList(r, l => {
+                                        const len = res.val.m.shape[dim];
+                                        for (let i = 0; i < len; i++) {
+                                            // This is because when the 'level' of the list changes, the depth itself changes,
+                                            // and the components we're rendering at a particular level will change. 
+                                            // so we need to re-key the list.
+                                            const r = l.get((res.val.m.shape.length - dim) + "-" + i);
+                                            dfs(r, dim + 1, i === len - 1);
+                                        }
+                                    });
+                                    textSpan(r, "]");
+                                }
+
+                                codeBlock(r, dim === 0 ? 0 : 1, renderInner);
+                            }
+                            dfs(r, 0, false);
+                            break;
+                        case T_RESULT_RANGE:
+                            codeSpan(r, "" + res.val.lo);
+                            codeSpan(r, " -> ");
+                            codeSpan(r, "" + res.val.hi);
+                            break;
+                        case T_RESULT_FN:
+                            codeSpan(r, res.expr.fnName.name);
+                            break;
+                        default:
+                            throw new Error("Unhandled result type: " + programResultTypeString(res));
+                    }
+                });
+            })
+        }
+
+
         imList(r, l => {
             for (const result of output.results) {
                 const r = l.getNext();
-                imList(r, l => {
-                    const r = l.get(result.t);
 
-                    switch(r) {
-                    default:
-                        throw new Error("Unhandled result type: " + programResultTypeString(result));
-                    }
-                });
+                renderResult(r, result);
             }
         });
         imElse(r, r => {
             textSpan(r, "No results yet");
         });
+
+        imIf(output.error, r, (r, error) => {
+            div(r, r => {
+                // TODO: display problmeatic result
+                textSpan(r, "line " + error.pos.line + " col " + error.pos.col + ": " + 
+                    error.problem);
+            });
+        });
+
     });
     imElse(r, r => {
         textSpan(r, "No code output yet");
@@ -265,14 +380,14 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
             ctx.state.collapseParserOutput = !ctx.state.collapseParserOutput;
         });
         imIf(!ctx.state.collapseParserOutput, r, r => {
-            ParserOutput(r, parseResult);
+            renderParserOutput(r, parseResult);
         });
 
         heading("Program output", ctx.state.collapseProgramOutput, () => {
             ctx.state.collapseProgramOutput = !ctx.state.collapseProgramOutput;
         });
         imIf(!ctx.state.collapseProgramOutput, r, r => {
-            CodeOuptut(r, programOutput);
+            renderCodeOuptut(r, programOutput);
         });
     });
 }
@@ -332,7 +447,7 @@ function saveStateDebounced(ctx: GlobalContext) {
     }, 1000);
 }
 
-export function App(r: UIRoot) {
+export function renderApp(r: UIRoot) {
     imRerenderable(r, (r, rerender) => {
         const ctx = imState(r, newGlobalContext);
         ctx.rerenderApp = rerender;

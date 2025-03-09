@@ -766,7 +766,7 @@ export class ListRenderer {
         result.rendered = true;
         this.current = result.root;
 
-        return result;
+        return result.root;
     }
 
     getNext() {
@@ -792,6 +792,7 @@ export class ListRenderer {
 
         this.appendRootResult(result);
         this.current = result;
+        this.builderIdx++;
 
         return result;
     }
@@ -801,7 +802,6 @@ export class ListRenderer {
         const currentDomRootIdx = result.domRoot.currentIdx;
         result.__begin(undefined);
         result.domRoot.currentIdx = currentDomRootIdx;
-        this.builderIdx++;
     }
 
     end() {
