@@ -1,15 +1,16 @@
 import { EditableTextArea } from './components/text-area.ts';
+import { ExecutionStep, interpret, ProgramInterpretResult, ProgramResult, programResultTypeString, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING } from './program-interpreter.ts';
 import {
+    binOpToOpString,
     binOpToString,
     binOpToOpString as binOpToSymbolString,
     DiagnosticInfo,
     expressionTypeToString,
     getSliceText,
-    interpret,
     parse,
     ProgramExpression,
-    programResultTypeString,
     ProgramParseResult,
+    T_ASSIGNMENT,
     T_BINARY_OP,
     T_BLOCK,
     T_DATA_INDEX_OP,
@@ -17,39 +18,21 @@ import {
     T_IDENTIFIER,
     T_IDENTIFIER_THE_RESULT_FROM_ABOVE,
     T_LIST_LITERAL,
-    T_VECTOR_LITERAL,
     T_NUMBER_LITERAL,
     T_RANGE_FOR,
     T_STRING_LITERAL,
     T_TERNARY_IF,
-    ProgramOutputState,
-    T_RESULT_NUMBER,
-    T_RESULT_STRING,
-    T_RESULT_LIST,
-    T_RESULT_HIGH_PERFORMANCE_MATRIX,
-    T_RESULT_RANGE,
-    T_RESULT_FN,
-    ProgramResult,
-    ProgramResultHPMatrix,
-    HPMatrixIndex,
-    T_ASSIGNMENT
+    T_VECTOR_LITERAL
 } from './program-parser.ts';
 import { GlobalState, loadState, saveState } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
-import { cn, div, el, imElse, imErrorBoundary, imIf, imList, imMemo, imOn, imRerenderable, imState, span, UIRoot } from './utils/im-dom-utils.ts';
+import { cn, div, el, imElse, imElseIf, imErrorBoundary, imIf, imList, imMemo, imOn, imRerenderable, imState, span, UIRoot } from './utils/im-dom-utils.ts';
 
 function newH3() {
     return document.createElement("h3");
 }
 
-function newOutputState(): {
-    lastText: string;
-    lastPaseResult: ProgramParseResult | undefined;
-    lastOutput: ProgramOutputState | undefined;
-} {
-    return { lastText: "", lastOutput: undefined, lastPaseResult: undefined, };
-}
 
 function textSpan(r: UIRoot, text: string) {
     span(r, r => r.text(text));
@@ -81,7 +64,7 @@ function codeBlock(r: UIRoot, indent: number, fn: (r: UIRoot) => void) {
 }
 
 
-function renderParserOutput(r: UIRoot, parseResult: ProgramParseResult | undefined) {
+function ParserOutput(r: UIRoot, parseResult: ProgramParseResult | undefined) {
     imIf(parseResult, r, (r, parseResult) => {
         imList(r, l => {
             function renderRow(title: string, type: string, depth: number, code?: string) {
@@ -109,10 +92,7 @@ function renderParserOutput(r: UIRoot, parseResult: ProgramParseResult | undefin
                 let typeString = expressionTypeToString(expr);
                 switch (expr.t) {
                     case T_IDENTIFIER: {
-                        const offsetStr = "" + (expr.stackOffset ? (expr.stackOffset.offset +
-                            " [" + (expr.stackOffset.global ? "global" : "local") + "]") : "None!");
-
-                        renderRow(title, typeString, depth, getSliceText(expr.slice) + " offset=" + offsetStr);
+                        renderRow(title, typeString, depth, getSliceText(expr.slice));
                     } break;
                     case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: {
                         renderRow(title, typeString, depth);
@@ -168,7 +148,8 @@ function renderParserOutput(r: UIRoot, parseResult: ProgramParseResult | undefin
                     case T_RANGE_FOR: {
                         renderRow(title, typeString, depth);
                         dfs("loop var", expr.loopVar, depth + 1);
-                        dfs("loop range", expr.range, depth + 1);
+                        dfs("loop hi", expr.hiExpr, depth + 1);
+                        dfs("loop lo", expr.loExpr, depth + 1);
                         dfs("loop body", expr.body, depth + 1);
                     } break;
                     case T_FN: {
@@ -204,39 +185,49 @@ function renderParserOutput(r: UIRoot, parseResult: ProgramParseResult | undefin
             textSpan(r, "Nothing parsed yet");
         });
 
-        // TODO: display these in the code editor itself. 
-
-        const displayInfo = (heading: string, info: DiagnosticInfo[], emptyText: string) => {
-            el(r, newH3, r => {
-                r.isFirstRender && r.s("padding", "10px 0");
-                textSpan(r, heading);
-            });
-            imList(r, l => {
-                for (const e of info) {
-                    const r = l.getNext();
-                    div(r, r => {
-                        textSpan(r, "Line " + e.pos.line + " Col " + (e.pos.col + 1) + " - " + e.problem);
-                    });
-                }
-            });
-            imIf(info.length === 0, r, r => {
-                div(r, r => {
-                    textSpan(r, emptyText);
-                });
-            })
-        }
-
-        displayInfo("Errors", parseResult.errors, "No parsing errors!");
-        displayInfo("Warnings", parseResult.warnings, "No parsing warnings");
+        renderDiagnosticInfo(r, "Errors", parseResult.errors, "No parsing errors!");
+        renderDiagnosticInfo(r, "Warnings", parseResult.warnings, "No parsing warnings");
     });
     imElse(r, r => {
         textSpan(r, "No parse results yet");
     });
 }
 
-function renderCodeOuptut(r: UIRoot, output: ProgramOutputState | undefined) {
-    imIf(output, r, (r, output) => {
+// TODO: display these above the code editor itself. 
+function renderDiagnosticInfo(r: UIRoot, heading: string, info: DiagnosticInfo[], emptyText: string) {
+    el(r, newH3, r => {
+        r.isFirstRender && r.s("padding", "10px 0");
+        textSpan(r, heading);
+    });
+    imList(r, l => {
+        for (const e of info) {
+            const r = l.getNext();
+            div(r, r => {
+                textSpan(r, "Line " + e.pos.line + " Col " + (e.pos.col + 1) + " - " + e.problem);
+            });
+        }
+    });
+    imIf(info.length === 0, r, r => {
+        div(r, r => {
+            textSpan(r, emptyText);
+        });
+    })
+}
 
+function newOutputState(): {
+    lastText: string;
+    lastPaseResult: ProgramParseResult | undefined;
+    lastInterpreterResult: ProgramInterpretResult | undefined;
+} {
+    return { 
+        lastText: "", 
+        lastPaseResult: undefined, 
+        lastInterpreterResult: undefined 
+    };
+}
+
+function ProgramResults(r: UIRoot, output: ProgramInterpretResult | undefined) {
+    imIf(output, r, (r, output) => {
         const renderResult = (r: UIRoot, res: ProgramResult) => {
             div(r, r => {
                 imList(r, l => {
@@ -265,7 +256,7 @@ function renderCodeOuptut(r: UIRoot, output: ProgramOutputState | undefined) {
                                 codeSpan(r, "]L");
                             })
                             break;
-                        case T_RESULT_HIGH_PERFORMANCE_MATRIX:
+                        case T_RESULT_MATRIX:
                             let idx = 0;
                             const dfs = (r: UIRoot, dim: number, isLast: boolean) => {
                                 if (dim === res.val.m.shape.length) {
@@ -325,33 +316,27 @@ function renderCodeOuptut(r: UIRoot, output: ProgramOutputState | undefined) {
             textSpan(r, "No results yet");
         });
 
-        imIf(output.error, r, (r, error) => {
-            div(r, r => {
-                // TODO: display problmeatic result
-                textSpan(r, "line " + error.pos.line + " col " + error.pos.col + ": " + 
-                    error.problem);
-            });
-        });
-
+        renderDiagnosticInfo(r, "Interpreting errors", output.errors, "No interpreting errors");
     });
     imElse(r, r => {
         textSpan(r, "No code output yet");
     });
 }
 
+
 function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
-    const outputState = imState(r, newOutputState);
+    const s = imState(r, newOutputState);
 
     const text = ctx.state.text;
 
-    if (outputState.lastText !== text) {
-        outputState.lastText = text;
-        outputState.lastPaseResult = parse(text);
-        outputState.lastOutput = interpret(outputState.lastPaseResult);
+    if (s.lastText !== text) {
+        s.lastText = text;
+        s.lastPaseResult = parse(text);
+        s.lastInterpreterResult = interpret(s.lastPaseResult);
     }
 
-    const parseResult = outputState.lastPaseResult;
-    const programOutput = outputState.lastOutput;
+    const parseResult = s.lastPaseResult;
+    // const programOutput = outputState.lastOutput;
 
     div(r, r => {
         if (r.isFirstRender) {
@@ -380,14 +365,100 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
             ctx.state.collapseParserOutput = !ctx.state.collapseParserOutput;
         });
         imIf(!ctx.state.collapseParserOutput, r, r => {
-            renderParserOutput(r, parseResult);
+            ParserOutput(r, parseResult);
         });
 
-        heading("Program output", ctx.state.collapseProgramOutput, () => {
+
+        heading("Instructions", ctx.state.collapseProgramOutput, () => {
             ctx.state.collapseProgramOutput = !ctx.state.collapseProgramOutput;
         });
+
+        const renderExecutionStep = (r: UIRoot, interpretResult: ProgramInterpretResult, step: ExecutionStep, i: number) => {
+            div(r, r => {
+                textSpan(r, i + " | ");
+
+                imIf(step.load, r, (r, value) => {
+                    textSpan(r, "Load " + value);
+                });
+                imIf(step.loadPrevious, r, (r) => {
+                    textSpan(r, "Load <the last result>");
+                });
+                imIf(step.set, r, (r, value) => {
+                    textSpan(r, "Set " + value);
+                });
+                imIf(step.binaryOperator, r, (r, value) => {
+                    textSpan(r, "Binary op: " + binOpToOpString(value) + " (" + binOpToString(value) + ")");
+                });
+                imIf(step.list, r, (r, value) => {
+                    textSpan(r, "List " + value);
+                });
+                imIf(step.vector, r, (r, value) => {
+                    textSpan(r, "Vector " + value);
+                });
+                imIf(step.number, r, (r, value) => {
+                    textSpan(r, "Number " + value);
+                });
+                imIf(step.string, r, (r, value) => {
+                    textSpan(r, "String " + value);
+                });
+                imIf(step.jump, r, (r, value) => {
+                    textSpan(r, "Jump: " + value);
+                });
+                imIf(step.jumpIfFalse, r, (r, value) => {
+                    textSpan(r, "Jump if false: " + value);
+                });
+                imIf(step.blockStatementEnd, r, (r, value) => {
+                    textSpan(r, "------------------");
+                });
+                imIf(step.call, r, (r, value) => {
+                    const fn = interpretResult.functions.get(value.fnName);
+                    textSpan(r, "Call " + value.fnName + "(" + (fn ? fn.args.length + " args" : "doesn't exist!") + ")");
+                });
+            });
+        }
+
+        const renderFunction = (r: UIRoot, interpretResult: ProgramInterpretResult, steps: ExecutionStep[], name: string) => {
+            el(r, newH3, r => {
+                textSpan(r, name);
+            });
+            imList(r, l => {
+                for (let i = 0; i < steps.length; i++) {
+                    const step = steps[i];
+                    const r = l.getNext();
+                    renderExecutionStep(r, interpretResult, step, i);
+                }
+            });
+            imElse(r, r => {
+                div(r, r => {
+                    textSpan(r, "no instructions present");
+                });
+            });
+        }
+
         imIf(!ctx.state.collapseProgramOutput, r, r => {
-            renderCodeOuptut(r, programOutput);
+            div(r, r => {
+                imIf(s.lastInterpreterResult, r, (r, interpretResult) => {
+                    ProgramResults(r, interpretResult);
+
+                    el(r, newH3, r => {
+                        textSpan(r, "Instructions");
+                    });
+
+                    renderFunction(r, interpretResult, interpretResult.entryPoint, "Entry point");
+                    imList(r, l => {
+                        for (const [name, fn] of interpretResult.functions) {
+                            const r = l.getNext();
+                            renderFunction(
+                                r,
+                                interpretResult,
+                                fn.steps,
+                                name + "(" + fn.args.map(a => a.name).join(", ") + ")"
+                            );
+                        }
+                    })
+
+                });
+            });
         });
     });
 }

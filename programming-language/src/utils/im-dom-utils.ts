@@ -1113,7 +1113,9 @@ export function span(r: UIRoot, next?: RenderFn<HTMLSpanElement>): UIRoot<HTMLSp
 }
 
 
-type Falsy = "" | 0 | null | undefined | false;
+/// NOTE: This doesn't include "" or 0, mainly to avoid various 'why isn't my thing showing up' bugs
+type ActualFalseyValues = null | undefined | false;
+
 /**
  * You'll need to use this, as well as {@link imElse} and {@link imElseIf} for (most) conditional rendering,
  * so that you're rendering the same amount of im-state entries to a UIRoot at a time.
@@ -1144,7 +1146,7 @@ type Falsy = "" | 0 | null | undefined | false;
  *
  * ```
  */
-export function imIf<V>(val: V | Falsy, r: UIRoot, next: (r: UIRoot, typeNarrowedVal: V) => void) {
+export function imIf<V>(val: V | ActualFalseyValues, r: UIRoot, next: (r: UIRoot, typeNarrowedVal: V) => void) {
     r.ifStatementOpen = true;
     imElseIf(val, r, next);
 }
@@ -1159,12 +1161,12 @@ export function imElse(r: UIRoot, next: (r: UIRoot, typeNarrowedVal: true) => vo
 /**
  * See {@link imIf}
  */
-export function imElseIf<V>(val: V | Falsy, rIn: UIRoot, next: (r: UIRoot, typeNarrowedVal: V) => void) {
+export function imElseIf<V>(val: V | ActualFalseyValues, rIn: UIRoot, next: (r: UIRoot, typeNarrowedVal: V) => void) {
     imList(rIn, l => {
         const domRootIdx = rIn.domRoot.currentIdx;
         const r = l.getNext();
 
-        if (rIn.ifStatementOpen && val) {
+        if (rIn.ifStatementOpen && (val || val === 0 || val === "")) {
             rIn.ifStatementOpen = false;
             next(r, val);
         } else {
