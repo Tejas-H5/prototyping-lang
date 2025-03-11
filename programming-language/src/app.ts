@@ -1,5 +1,5 @@
 import { EditableTextArea } from './components/text-area.ts';
-import { ExecutionStep, interpret, ProgramInterpretResult, ProgramResult, programResultTypeString, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING } from './program-interpreter.ts';
+import { ExecutionStep, ExecutionSteps, getCurrentCallstack, interpret, ProgramInterpretResult, ProgramResult, programResultTypeString, startInterpreting, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING } from './program-interpreter.ts';
 import {
     binOpToOpString,
     binOpToString,
@@ -24,10 +24,10 @@ import {
     T_TERNARY_IF,
     T_VECTOR_LITERAL
 } from './program-parser.ts';
-import { GlobalState, loadState, saveState } from './state.ts';
+import { GlobalContext, GlobalState, loadState, newGlobalContext, saveState } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
-import { cn, div, el, imElse, imElseIf, imErrorBoundary, imIf, imList, imMemo, imOn, imRerenderable, imState, span, UIRoot } from './utils/im-dom-utils.ts';
+import { assert, cn, div, el, imElse, imElseIf, imErrorBoundary, imIf, imList, imMemo, imOn, imRef, imRerenderable, imState, imStateInline, newCssBuilder, RenderFn, span, UIRoot } from './utils/im-dom-utils.ts';
 
 function newH3() {
     return document.createElement("h3");
@@ -216,127 +216,222 @@ function renderDiagnosticInfo(r: UIRoot, heading: string, info: DiagnosticInfo[]
 
 function newOutputState(): {
     lastText: string;
-    lastPaseResult: ProgramParseResult | undefined;
-    lastInterpreterResult: ProgramInterpretResult | undefined;
 } {
     return { 
         lastText: "", 
-        lastPaseResult: undefined, 
-        lastInterpreterResult: undefined 
     };
 }
 
-function ProgramResults(r: UIRoot, output: ProgramInterpretResult | undefined) {
-    imIf(output, r, (r, output) => {
-        const renderResult = (r: UIRoot, res: ProgramResult) => {
-            div(r, r => {
-                imList(r, l => {
-                    const r = l.get(res.t);
-                    const typeString = programResultTypeString(res)
-                    textSpan(r, typeString + " ");
-                    switch (res.t) {
-                        case T_RESULT_NUMBER:
-                            codeSpan(r, "" + res.val);
-                            break;
-                        case T_RESULT_STRING:
-                            codeSpan(r, res.val);
-                            break;
-                        case T_RESULT_LIST:
-                            codeBlock(r, 0, r => {
-                                codeSpan(r, "[");
-                                codeBlock(r, 1, r => {
-                                    imList(r, l => {
-                                        for (let i = 0; i < res.values.length; i++) {
-                                            const r = l.getNext();
-                                            renderResult(r, res.values[i]);
-                                            codeSpan(r, ", ");
-                                        }
-                                    })
-                                })
-                                codeSpan(r, "]L");
-                            })
-                            break;
-                        case T_RESULT_MATRIX:
-                            let idx = 0;
-                            const dfs = (r: UIRoot, dim: number, isLast: boolean) => {
-                                if (dim === res.val.m.shape.length) {
-                                    const val = res.val.m.values[idx];
-                                    idx++;
-
-                                    textSpan(r, "" + val);
-                                    imIf(!isLast, r, r => {
-                                        textSpan(r, ", ");
-                                    });
-                                    return;
-                                }
-
-                                const renderInner = (r: UIRoot) => {
-                                    textSpan(r, "[");
-                                    imList(r, l => {
-                                        const len = res.val.m.shape[dim];
-                                        for (let i = 0; i < len; i++) {
-                                            // This is because when the 'level' of the list changes, the depth itself changes,
-                                            // and the components we're rendering at a particular level will change. 
-                                            // so we need to re-key the list.
-                                            const r = l.get((res.val.m.shape.length - dim) + "-" + i);
-                                            dfs(r, dim + 1, i === len - 1);
-                                        }
-                                    });
-                                    textSpan(r, "]");
-                                }
-
-                                codeBlock(r, dim === 0 ? 0 : 1, renderInner);
-                            }
-                            dfs(r, 0, false);
-                            break;
-                        case T_RESULT_RANGE:
-                            codeSpan(r, "" + res.val.lo);
-                            codeSpan(r, " -> ");
-                            codeSpan(r, "" + res.val.hi);
-                            break;
-                        case T_RESULT_FN:
-                            codeSpan(r, res.expr.fnName.name);
-                            break;
-                        default:
-                            throw new Error("Unhandled result type: " + programResultTypeString(res));
-                    }
-                });
-            })
-        }
-
-
+function renderProgramResult(r: UIRoot, res: ProgramResult) {
+    div(r, r => {
         imList(r, l => {
-            for (const result of output.results) {
-                const r = l.getNext();
+            const r = l.get(res.t);
+            const typeString = programResultTypeString(res)
+            textSpan(r, typeString + " ");
+            switch (res.t) {
+                case T_RESULT_NUMBER:
+                    codeSpan(r, "" + res.val);
+                    break;
+                case T_RESULT_STRING:
+                    codeSpan(r, res.val);
+                    break;
+                case T_RESULT_LIST:
+                    codeBlock(r, 0, r => {
+                        codeSpan(r, "[");
+                        codeBlock(r, 1, r => {
+                            imList(r, l => {
+                                for (let i = 0; i < res.values.length; i++) {
+                                    const r = l.getNext();
+                                    renderProgramResult(r, res.values[i]);
+                                    codeSpan(r, ", ");
+                                }
+                            })
+                        })
+                        codeSpan(r, "]L");
+                    })
+                    break;
+                case T_RESULT_MATRIX:
+                    let idx = 0;
+                    const dfs = (r: UIRoot, dim: number, isLast: boolean) => {
+                        if (dim === res.val.m.shape.length) {
+                            const val = res.val.m.values[idx];
+                            idx++;
 
-                renderResult(r, result);
+                            textSpan(r, "" + val);
+                            imIf(!isLast, r, r => {
+                                textSpan(r, ", ");
+                            });
+                            return;
+                        }
+
+                        const renderInner = (r: UIRoot) => {
+                            textSpan(r, "[");
+                            imList(r, l => {
+                                const len = res.val.m.shape[dim];
+                                for (let i = 0; i < len; i++) {
+                                    // This is because when the 'level' of the list changes, the depth itself changes,
+                                    // and the components we're rendering at a particular level will change. 
+                                    // We need to re-key the list, so that we may render a different kind of component at this position.
+                                    const r = l.get((res.val.m.shape.length - dim) + "-" + i);
+                                    dfs(r, dim + 1, i === len - 1);
+                                }
+                            });
+                            textSpan(r, "]");
+                        }
+
+                        codeBlock(r, dim === 0 ? 0 : 1, renderInner);
+                    }
+                    dfs(r, 0, false);
+                    break;
+                case T_RESULT_RANGE:
+                    codeSpan(r, "" + res.val.lo);
+                    codeSpan(r, " -> ");
+                    codeSpan(r, "" + res.val.hi);
+                    break;
+                case T_RESULT_FN:
+                    codeSpan(r, res.expr.fnName.name);
+                    break;
+                default:
+                    throw new Error("Unhandled result type: " + programResultTypeString(res));
             }
         });
-        imElse(r, r => {
-            textSpan(r, "No results yet");
+    })
+}
+
+function renderProgramResults(r: UIRoot, output: ProgramInterpretResult | undefined) {
+}
+
+function collapsableHeading(r: UIRoot, heading: string, isCollapsed: boolean, toggle: () => void) {
+    el(r, newH3, r => {
+        r.isFirstRender && r.s("padding", "10px 0").s("userSelect", "none").s("cursor", "pointer");
+
+        textSpan(r, heading);
+        imIf(isCollapsed, r, r => {
+            textSpan(r, " (collapsed)");
         });
 
-        renderDiagnosticInfo(r, "Interpreting errors", output.errors, "No interpreting errors");
-    });
-    imElse(r, r => {
-        textSpan(r, "No code output yet");
+        imOn(r, "click", () => {
+            toggle();
+        });
     });
 }
 
+function renderExecutionStep(r: UIRoot, interpretResult: ProgramInterpretResult, step: ExecutionStep, i: number, isCurrentInstruction: boolean) {
+    div(r, r => {
+        textSpan(r, i + " | ");
 
-function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
+        imIf(step.load, r, (r, value) => {
+            textSpan(r, "Load " + value);
+        });
+        // imIf(step.loadPrevious, r, (r) => {
+        //     textSpan(r, "Load <the last result>");
+        // });
+        imIf(step.set, r, (r, value) => {
+            textSpan(r, "Set " + value);
+        });
+        imIf(step.binaryOperator, r, (r, value) => {
+            textSpan(r, "Binary op: " + binOpToOpString(value) + " (" + binOpToString(value) + ")");
+        });
+        imIf(step.list, r, (r, value) => {
+            textSpan(r, "List " + value);
+        });
+        imIf(step.vector, r, (r, value) => {
+            textSpan(r, "Vector " + value);
+        });
+        imIf(step.number, r, (r, value) => {
+            textSpan(r, "Number " + value);
+        });
+        imIf(step.string, r, (r, value) => {
+            textSpan(r, "String " + value);
+        });
+        imIf(step.jump, r, (r, value) => {
+            textSpan(r, "Jump: " + value);
+        });
+        imIf(step.jumpIfFalse, r, (r, value) => {
+            textSpan(r, "Jump if false: " + value);
+        });
+        imIf(step.blockStatementEnd !== undefined, r, (r, value) => {
+            textSpan(r, value ? "------------------" : "---");
+        });
+        imIf(step.call, r, (r, value) => {
+            const fn = interpretResult.functions.get(value.fnName);
+            textSpan(r, "Call " + value.fnName + "(" + (fn ? fn.args.length + " args" : "doesn't exist!") + ")");
+        });
+        imIf(step.incr, r, (r, value) => {
+            textSpan(r, "Increment var  " + value);
+        });
+        imIf(step.decr, r, (r, value) => {
+            textSpan(r, "Decrement var  " + value);
+        });
+
+        imIf(isCurrentInstruction, r, r => {
+            textSpan(r, " <----");
+        });
+    });
+}
+
+function renderFunction(r: UIRoot, interpretResult: ProgramInterpretResult, { name, steps }: ExecutionSteps) {
+    el(r, newH3, r => {
+        textSpan(r, name);
+    });
+
+    codeBlock(r, 0, r => {
+        imList(r, l => {
+            for (let i = 0; i < steps.length; i++) {
+                const step = steps[i];
+                const r = l.getNext();
+
+                const call = getCurrentCallstack(interpretResult);
+                const isCurrent = call?.code?.steps === steps
+                    && i === call.i;
+
+                renderExecutionStep(r, interpretResult, step, i, isCurrent);
+            }
+        });
+        imElse(r, r => {
+            div(r, r => {
+                textSpan(r, "no instructions present");
+            });
+        });
+    });
+}
+
+const cssb = newCssBuilder();
+
+const cnButton = cssb.cn("button", [
+    ` { user-select: none; cursor: pointer; border: 2px solid ${cssVars.fg}; border: 2px solid currentColor; border-radius: 8px; }`,
+    `:hover { background-color: ${cssVars.bg2} }`,
+    `:active { background-color: ${cssVars.mg} }`,
+]);
+
+function Button(r: UIRoot, text: string, onClick: () => void, toggled: boolean = false) {
+    div(r, r => {
+        if (r.isFirstRender) {
+            r.c(cnButton);
+            r.c(cn.row).c(cn.alignItemsCenter).c(cn.justifyContentCenter);
+        }
+
+        r.c(cnApp.inverted, toggled);
+
+        textSpan(r, text);
+        imOn(r, "click", onClick);
+    });
+}
+
+function renderAppCodeOutput(r: UIRoot, ctx: GlobalContext) {
     const s = imState(r, newOutputState);
 
     const text = ctx.state.text;
 
     if (s.lastText !== text) {
         s.lastText = text;
-        s.lastPaseResult = parse(text);
-        s.lastInterpreterResult = interpret(s.lastPaseResult);
+        ctx.lastParseResult = parse(text);
+        if (ctx.state.autorun) {
+            ctx.lastInterpreterResult = interpret(ctx.lastParseResult);
+        }
     }
 
-    const parseResult = s.lastPaseResult;
-    // const programOutput = outputState.lastOutput;
+    const parseResult = ctx.lastParseResult;
 
     div(r, r => {
         if (r.isFirstRender) {
@@ -345,125 +440,82 @@ function AppCodeOutput(r: UIRoot, ctx: GlobalContext) {
              .s("padding", "10px");
         }
 
-        const heading = (heading: string, isCollapsed: boolean, toggle: () => void) => {
-            el(r, newH3, r => {
-                r.isFirstRender && r.s("padding", "10px 0").s("userSelect", "none").s("cursor", "pointer");
-
-                textSpan(r, heading);
-                imIf(isCollapsed, r, r => {
-                    textSpan(r, " (collapsed)");
-                });
-
-                imOn(r, "click", () => {
-                    toggle();
-                    ctx.rerenderApp();
-                });
-            });
-        }
-
-        heading("Parser output", ctx.state.collapseParserOutput, () => {
+        collapsableHeading(r, "Parser output", ctx.state.collapseParserOutput, () => {
             ctx.state.collapseParserOutput = !ctx.state.collapseParserOutput;
+            ctx.rerenderApp();
         });
+
         imIf(!ctx.state.collapseParserOutput, r, r => {
             ParserOutput(r, parseResult);
         });
 
+        const message = imRef<string>(r);
 
-        heading("Instructions", ctx.state.collapseProgramOutput, () => {
-            ctx.state.collapseProgramOutput = !ctx.state.collapseProgramOutput;
+        Button(r, "Start debugging", () => {
+            ctx.lastParseResult = parse(ctx.state.text);
+
+            if (ctx.lastParseResult.errors.length > 0) {
+                message.val = "Fix parsing errors before you can start debugging";
+            } else {
+                ctx.lastInterpreterResult = startInterpreting(ctx.lastParseResult);
+                ctx.isDebugging = true;
+                message.val = "";
+            }
+            
+            ctx.rerenderApp();
         });
 
-        const renderExecutionStep = (r: UIRoot, interpretResult: ProgramInterpretResult, step: ExecutionStep, i: number) => {
-            div(r, r => {
-                textSpan(r, i + " | ");
+        div(r, r => {
+            textSpan(r, message.val ?? "");
+        });
 
-                imIf(step.load, r, (r, value) => {
-                    textSpan(r, "Load " + value);
-                });
-                imIf(step.loadPrevious, r, (r) => {
-                    textSpan(r, "Load <the last result>");
-                });
-                imIf(step.set, r, (r, value) => {
-                    textSpan(r, "Set " + value);
-                });
-                imIf(step.binaryOperator, r, (r, value) => {
-                    textSpan(r, "Binary op: " + binOpToOpString(value) + " (" + binOpToString(value) + ")");
-                });
-                imIf(step.list, r, (r, value) => {
-                    textSpan(r, "List " + value);
-                });
-                imIf(step.vector, r, (r, value) => {
-                    textSpan(r, "Vector " + value);
-                });
-                imIf(step.number, r, (r, value) => {
-                    textSpan(r, "Number " + value);
-                });
-                imIf(step.string, r, (r, value) => {
-                    textSpan(r, "String " + value);
-                });
-                imIf(step.jump, r, (r, value) => {
-                    textSpan(r, "Jump: " + value);
-                });
-                imIf(step.jumpIfFalse, r, (r, value) => {
-                    textSpan(r, "Jump if false: " + value);
-                });
-                imIf(step.blockStatementEnd, r, (r, value) => {
-                    textSpan(r, "------------------");
-                });
-                imIf(step.call, r, (r, value) => {
-                    const fn = interpretResult.functions.get(value.fnName);
-                    textSpan(r, "Call " + value.fnName + "(" + (fn ? fn.args.length + " args" : "doesn't exist!") + ")");
-                });
-            });
-        }
-
-        const renderFunction = (r: UIRoot, interpretResult: ProgramInterpretResult, steps: ExecutionStep[], name: string) => {
-            el(r, newH3, r => {
-                textSpan(r, name);
-            });
-            imList(r, l => {
-                for (let i = 0; i < steps.length; i++) {
-                    const step = steps[i];
-                    const r = l.getNext();
-                    renderExecutionStep(r, interpretResult, step, i);
-                }
-            });
-            imElse(r, r => {
-                div(r, r => {
-                    textSpan(r, "no instructions present");
-                });
-            });
-        }
+        collapsableHeading(r, "Interpreter output", ctx.state.collapseProgramOutput, () => {
+            ctx.state.collapseProgramOutput = !ctx.state.collapseProgramOutput;
+            ctx.rerenderApp();
+        });
 
         imIf(!ctx.state.collapseProgramOutput, r, r => {
             div(r, r => {
-                imIf(s.lastInterpreterResult, r, (r, interpretResult) => {
-                    ProgramResults(r, interpretResult);
+                imIf(ctx.lastInterpreterResult, r, (r, interpretResult) => {
+                    imList(r, l => {
+                        for (const result of interpretResult.results) {
+                            const r = l.getNext();
+                            renderProgramResult(r, result);
+                        }
+                    });
+                    imElse(r, r => {
+                        textSpan(r, "No results yet");
+                    });
+
+                    renderDiagnosticInfo(r, "Interpreting errors", interpretResult.errors, "No interpreting errors");
 
                     el(r, newH3, r => {
                         textSpan(r, "Instructions");
                     });
 
-                    renderFunction(r, interpretResult, interpretResult.entryPoint, "Entry point");
                     imList(r, l => {
+                        const r = l.getNext();
+                        renderFunction(r, interpretResult, interpretResult.entryPoint);
+
                         for (const [name, fn] of interpretResult.functions) {
                             const r = l.getNext();
                             renderFunction(
                                 r,
                                 interpretResult,
-                                fn.steps,
-                                name + "(" + fn.args.map(a => a.name).join(", ") + ")"
+                                fn.code, 
                             );
                         }
-                    })
-
+                    });
+                    imElse(r, r => {
+                        textSpan(r, "No code output yet");
+                    });
                 });
             });
         });
     });
 }
 
-function AppCodeEditor(r: UIRoot, ctx: GlobalContext) {
+function renderAppCodeEditor(r: UIRoot, ctx: GlobalContext) {
     const { state, rerenderApp } = ctx;
 
     function onInput(newText: string) {
@@ -495,16 +547,149 @@ function AppCodeEditor(r: UIRoot, ctx: GlobalContext) {
     });
 }
 
-export type GlobalContext = {
-    state: GlobalState;
-    rerenderApp: () => void;
-}
+function renderDebugMenu(r: UIRoot, ctx: GlobalContext, interpretResult: ProgramInterpretResult) {
+    renderDiagnosticInfo(r, "Interpreting errors", interpretResult.errors, "No interpreting errors");
 
-function newGlobalContext() {
-    return {
-        rerenderApp: () => {},
-        state: loadState(),
-    };
+    const message = imRef<string>(r);
+
+    imIf(message.val, r, (r, message) => {
+        div(r, r => {
+            textSpan(r, message);
+        });
+    });
+
+    div(r, r => {
+        Button(r, "Stop debugging", () => {
+            ctx.isDebugging = false;
+            ctx.rerenderApp();
+        });
+
+        Button(r, "Step", () => {
+            const result = stepProgram(interpretResult);
+            if (!result) {
+                message.val = "Program complete! you can stop debugging now.";
+            }
+
+            ctx.rerenderApp();
+        });
+
+        Button(r, "Reset", () => {
+            assert(ctx.lastParseResult);
+            ctx.lastInterpreterResult = startInterpreting(ctx.lastParseResult);
+            message.val = "";
+            ctx.rerenderApp();
+        });
+
+
+        assert(interpretResult);
+        const cs = getCurrentCallstack(interpretResult);
+        imIf(cs, r, (r, cs) => {
+            renderFunction(r, interpretResult, cs.code);
+        });
+
+        div(r, r => {
+            if (r.isFirstRender) {
+                r.c(cn.row);
+            }
+
+            div(r, r => {
+                if (r.isFirstRender) {
+                    r.c(cn.flex1);
+                }
+
+                imIf(cs, r, (r, cs) => {
+                    div(r, r => {
+                        div(r, r => {
+                            textSpan(r, "stack idx: " + interpretResult.stackIdx);
+                        });
+                        div(r, r => {
+                            textSpan(r, "callstack length: " + interpretResult.callStack.length);
+                        });
+                        div(r, r => {
+                            textSpan(r, "return address: " + cs.returnAddress);
+                        });
+                    });
+                });
+
+                el(r, newH3, r => {
+                    textSpan(r, "Stack");
+                });
+
+                imList(r, l => {
+                    let n = interpretResult.stack.length;
+                    while (n > 0) {
+                        n--;
+                        if (interpretResult.stack[n]) {
+                            break;
+                        }
+                    }
+
+                    for (let i = 0; i <= n; i++) {
+                        const res = interpretResult.stack[i];
+
+                        const r = l.getNext();
+                        div(r, r => {
+                            div(r, r => {
+                                if (r.isFirstRender) {
+                                    r.c(cn.row);
+                                }
+
+                                imIf(i === interpretResult.stackIdx, r, r => {
+                                    div(r, r => {
+                                        codeSpan(r, "-> ");
+                                    });
+                                });
+
+                                div(r, r => {
+                                    imIf(res, r, (r, res) => {
+                                        if (r.isFirstRender) {
+                                            r.c(cn.flex1);
+                                        }
+
+                                        renderProgramResult(r, res);
+                                    });
+                                    imElse(r, (r) => {
+                                        textSpan(r, "null");
+                                    });
+                                });
+                            });
+                        });
+                    }
+                });
+            });
+            div(r, r => {
+                if (r.isFirstRender) {
+                    r.c(cn.flex1);
+                }
+
+                el(r, newH3, r => {
+                    textSpan(r, "Variables");
+                });
+                imList(r, l => {
+                    for (const cs of interpretResult.callStack) {
+                        const r = l.getNext();
+
+                        div(r, r => {
+                            imList(r, l => {
+                                for (const [k, addr] of cs.variables) {
+                                    const r = l.getNext();
+
+                                    div(r, r => {
+                                        textSpan(r, k);
+                                    });
+                                    textSpan(r, " addr=" + addr);
+                                    const v = interpretResult.stack[addr];
+                                    imIf(v, r, (r, v) => {
+                                        renderProgramResult(r, v);
+                                    });
+                                }
+                            });
+                        });
+                    }
+                });
+            })
+        });
+    });
 }
 
 let saveTimeout = 0;
@@ -546,14 +731,21 @@ export function renderApp(r: UIRoot) {
                             r.c(cn.flex1);
                         }
 
-                        AppCodeEditor(r, ctx);
+                        renderAppCodeEditor(r, ctx);
                     });
                     div(r, r => {
                         if (r.isFirstRender) {
                             r.c(cn.flex1);
                         }
 
-                        AppCodeOutput(r, ctx);
+                        imIf(ctx.isDebugging, r, r => {
+                            const interpretResult = ctx.lastInterpreterResult;
+                            assert(interpretResult);
+                            renderDebugMenu(r, ctx, interpretResult);
+                        });
+                        imElse(r, r => {
+                            renderAppCodeOutput(r, ctx);
+                        });
                     });
                 });
 

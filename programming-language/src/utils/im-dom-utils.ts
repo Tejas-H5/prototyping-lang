@@ -843,8 +843,8 @@ export function newUiRoot<E extends ValidElement>(supplier: () => E): UIRoot<E> 
     return result;
 }
 
-type RenderFn<T extends ValidElement = ValidElement> = (r: UIRoot<T>) => void;
-type RenderFnArgs<A extends unknown[], T extends ValidElement = ValidElement> = (r: UIRoot<T>, ...args: A) => void;
+export type RenderFn<T extends ValidElement = ValidElement> = (r: UIRoot<T>) => void;
+export type RenderFnArgs<A extends unknown[], T extends ValidElement = ValidElement> = (r: UIRoot<T>, ...args: A) => void;
 
 export function beginList(r: UIRoot): ListRenderer {
     let result = imGetNext(r.items);
@@ -1154,7 +1154,7 @@ export function imIf<V>(val: V | ActualFalseyValues, r: UIRoot, next: (r: UIRoot
 /**
  * See {@link imIf}
  */
-export function imElse(r: UIRoot, next: (r: UIRoot, typeNarrowedVal: true) => void) {
+export function imElse(r: UIRoot, next: (r: UIRoot) => void) {
     imElseIf(true, r, next);
 }
 

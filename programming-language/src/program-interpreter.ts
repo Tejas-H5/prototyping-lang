@@ -5,6 +5,7 @@ import {
     binOpToString, 
     DiagnosticInfo, 
     expressionTypeToString, 
+    parse, 
     ProgramExpression,
     ProgramExpressionFn,
     ProgramExpressionIdentifier,
@@ -43,7 +44,7 @@ export type ProgramResultHPMatrix = {
 export type ProgramResultFunction = {
     t: typeof T_RESULT_FN;
     expr: ProgramExpressionFn;
-    steps: ExecutionStep[];
+    code: ExecutionSteps;
     args: ProgramExpressionIdentifier[];
 };
 
@@ -160,7 +161,14 @@ export type ExecutionStep = {
     // TODO: indices instead?
     load?: string;
     // Loads the last computed value in this block onto the stack
-    loadPrevious?: boolean;
+    // NOTE: turns out this is a pain to implement, so I'm removing it for now till I get the stack working. then it should be easy to re-add
+    // loadPrevious?: boolean;
+    // NOTE: same with this. they are related.
+    
+    // did this top level statement just end?
+    // yes if not undefined. true if it was a top-level statement.
+    blockStatementEnd?: boolean;
+
     // Pops the last stack value into the stack, assigns it to a variable, or indexing operation
     set?: string;
     // Pops the last two stack values, applies a binary operator to them
@@ -180,8 +188,12 @@ export type ExecutionStep = {
     // jumps the current instruction index to the step specified, if the last value is false.
     jumpIfFalse?: number;
 
-    // did this top level statement just end?
-    blockStatementEnd?: boolean;
+    // increments the given variable by 1
+    incr?: string;
+
+    // decr the given variable by 1
+    decr?: string;
+
 
     // pops several indexes, uses them to index into a datastructure
     index?: boolean;
@@ -190,13 +202,18 @@ export type ExecutionStep = {
     call?: { fnName: string };
 };
 
+export type ExecutionSteps = {
+    name: string;
+    steps: ExecutionStep[];
+}
+
 export function stepToString(interpretResult: ProgramInterpretResult, step: ExecutionStep) {
     if (step.load) {
         return ("Load " + step.load);
     }
-    if (step.loadPrevious) {
-        return ("Load <the last result>");
-    }
+    // if (step.loadPrevious) {
+    //     return ("Load <the last result>");
+    // }
     if (step.set) {
         return ("Set " + step.set);
     }
@@ -228,19 +245,31 @@ export function stepToString(interpretResult: ProgramInterpretResult, step: Exec
         const fn = interpretResult.functions.get(value.fnName);
         return ("Call " + value.fnName + "(" + (fn ? fn.args.length + " args" : "doesn't exist!") + ")");
     }
+    if (step.incr) {
+        return "increment " + step.incr;
+    } 
+    if (step.decr) {
+        return "decrement " + step.decr;
+    }
+    if (step.blockStatementEnd !== undefined) {
+        return step.blockStatementEnd ? "top level block statement end" : "normal block level statement end";
+    }
 }
 
 function newExecutionStep(expr: ProgramExpression): ExecutionStep {
     return { expr };
 }
 
+
 type ExecutionState = {
     lastBlockLevelResult: ProgramResult | null;
-    steps: ExecutionStep[];
+    code: ExecutionSteps;
     i: number;
+    argsCount: number;
     
     // TODO: replace with an array
-    variables: Map<string, ProgramResult>;
+    variables: Map<string, number>;
+    returnAddress: number;
 };
 
 export type ProgramInterpretResult = {
@@ -248,13 +277,13 @@ export type ProgramInterpretResult = {
 
     // Writing it like this instead should allow us to step through the program one step at a time,
     // so that we can see what's going on and fix bugs easier. 
-    entryPoint: ExecutionStep[];
+    entryPoint: ExecutionSteps;
 
     // TODO: replace with array
     functions: Map<string, ProgramResultFunction>;
 
     // Not how a real program does it. But I dont care (but everythign else is 100% accurate, right?)
-    stack: ProgramResult[];
+    stack: (ProgramResult | null)[];
     stackIdx: number;
     callStack: ExecutionState[];
 
@@ -286,7 +315,9 @@ function getExecutionSteps(
                 step.load = expr.name;
             } break;
             case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: {
-                step.loadPrevious = true;
+                result.errors.push({ pos: expr.pos, problem: "Ive not implemented it yet..." });
+                return;
+                // step.loadPrevious = true;
             } break;
             case T_ASSIGNMENT: {
                 if (!expr.rhs) {
@@ -367,8 +398,9 @@ function getExecutionSteps(
             } break;
             case T_BLOCK: {
                 noOp = true;
-                for (const statement of expr.statements) {
-                    dfs(statement);
+                for (const s of expr.statements) {
+                    dfs(s);
+                    steps.push({ expr: s, blockStatementEnd: false });
                 }
             } break;
             case T_RANGE_FOR: {
@@ -388,6 +420,7 @@ function getExecutionSteps(
 
                 const loopStartIdx = steps.length;
 
+                steps.push({ expr, load: expr.loopVar.name });
                 dfs(expr.hiExpr);
                 if (expr.ascending) {
                     steps.push({ expr, binaryOperator: BIN_OP_LESS_THAN });
@@ -397,6 +430,12 @@ function getExecutionSteps(
 
                 const jumpToLoopEndIfFalse = newExecutionStep(expr);
                 steps.push(jumpToLoopEndIfFalse);
+
+                if (expr.ascending) {
+                    steps.push({ expr, incr: expr.loopVar.name });
+                } else {
+                    steps.push({ expr, decr: expr.loopVar.name });
+                }
 
                 dfs(expr.body);
 
@@ -451,9 +490,52 @@ function getLength(result: ProgramResult): number | undefined {
     }
 }
 
-export function interpret(parseResult: ProgramParseResult): ProgramInterpretResult {
+function get(result: ProgramInterpretResult): ProgramResult | null {
+    return result.stack[result.stackIdx];
+}
+
+function pop(result: ProgramInterpretResult): ProgramResult {
+    // At this stage, we shouldn't even generate the instruction if we thought it was going to fail.
+    const val = get(result);
+    assert(val);
+    result.stackIdx--;
+    return val;
+}
+
+
+function addError(result: ProgramInterpretResult, step: ExecutionStep, problem: string) {
+    result.errors.push({ pos: step.expr.pos, problem });
+}
+
+function getVarExecutionState(result: ProgramInterpretResult, name: string): ExecutionState | null {
+    const current = result.callStack[result.callStack.length - 1];
+    if (current.variables.has(name)) {
+        return current;
+    }
+
+    const global = result.callStack[0];
+    if (global.variables.has(name)) {
+        return global;
+    }
+
+    return null;
+}
+
+function push(result: ProgramInterpretResult, val: ProgramResult, step: ExecutionStep) {
+    result.stackIdx++;
+    if (result.stackIdx >= result.stack.length) {
+        addError(result, step, "Stack overflow!!!");
+    }
+
+    result.stack[result.stackIdx] = val;
+}
+
+export function startInterpreting(parseResult: ProgramParseResult): ProgramInterpretResult {
     const result: ProgramInterpretResult = {
-        entryPoint: [],
+        entryPoint: {
+            name: "Entry point",
+            steps: [],
+        },
         errors: [],
         functions: new Map(),
 
@@ -463,48 +545,8 @@ export function interpret(parseResult: ProgramParseResult): ProgramInterpretResu
         results: [],
     };
 
-    const get = (): ProgramResult | null => {
-        return result.stack[result.stackIdx];
-    }
-
-    const pop = (): ProgramResult => {
-        // At this stage, we shouldn't even generate the instruction if we thought it was going to fail.
-        const val = get();
-        assert(val);
-        result.stackIdx--;
-        return val;
-    }
-
-    const addError = (step: ExecutionStep, problem: string) => {
-        result.errors.push({ pos: step.expr.pos, problem });
-    }
-
-    const getVarExecutionState = (name: string): ExecutionState | null => {
-        const current = result.callStack[result.callStack.length - 1];
-        if (current.variables.has(name)) {
-            return current;
-        }
-
-        const global = result.callStack[0];
-        if (global.variables.has(name)) {
-            return global;
-        }
-
-        return null;
-    }
-
-    const push = (val: ProgramResult, step: ExecutionStep) => {
-        result.stackIdx++;
-        if (result.stackIdx >= result.stack.length) {
-            addError(step, "Stack overflow!!!");
-        }
-
-        result.stack[result.stackIdx] = val;
-    }
-
     if (parseResult.errors.length > 0) {
         result.errors.push(...parseResult.errors);
-        return result;
     }
 
     // linearlize the tree, so we can actually step through things one at a time
@@ -515,239 +557,301 @@ export function interpret(parseResult: ProgramParseResult): ProgramInterpretResu
             assert(fn.body);
             assert(fn.argumentNames);
 
-            const steps: ExecutionStep[] = [];
-            getExecutionSteps(result, fn.body.statements, steps);
+            const code: ExecutionSteps = {
+                name: fn.fnName.name,
+                steps: [],
+            };
+            getExecutionSteps(result, fn.body.statements, code.steps);
 
             result.functions.set(name, {
                 t: T_RESULT_FN,
-                steps,
+                code,
                 args: fn.argumentNames,
                 expr: fn,
             });
         }
 
-        getExecutionSteps(result, parseResult.statements, result.entryPoint)
+        getExecutionSteps(result, parseResult.statements, result.entryPoint.steps)
+    }
+
+    result.callStack.push({ 
+        code: result.entryPoint, 
+        argsCount: 0,
+        i: 0, lastBlockLevelResult: null, variables: new Map(), 
+        returnAddress: -1
+    });
+
+    return result;
+};
+
+export function getCurrentCallstack(result: ProgramInterpretResult): ExecutionState | undefined {
+    return result.callStack[result.callStack.length - 1];
+}
+
+export function stepProgram(result: ProgramInterpretResult): boolean {
+    const call = getCurrentCallstack(result);
+    if (!call) {
+        return false;
+    }
+
+    const steps = call.code.steps;
+    if (call.i >= steps.length) {
+        if (call.i > steps.length) {
+            throw new Error("How did that happen");
+        }
+        return false;
+    }
+
+    const step = steps[call.i];
+
+    // TODO: use a switch here instead
+    if (step.load) {
+        const s = getVarExecutionState(result, step.load);
+        if (!s) {
+            addError(result, step, "This variable hasn't been set yet");
+            return false;
+        }
+
+        const addr = s.variables.get(step.load);
+        assert(addr != null);
+        const val = result.stack[addr];
+        assert(val);
+
+        push(result, val, step);
+    } 
+    // else if (step.loadPrevious) {
+    //     if (!call.lastBlockLevelResult) {
+    //         addError(result, step, "Can't refer to 'the previous result' when this block doesn't have any results yet");
+    //         return false;
+    //     }
+    //
+    //     push(result, call.lastBlockLevelResult, step);
+    // } 
+    else if (step.set) {
+        // NOTE: setting a variable doesn't remove it from the stack, because assignment will return the value that was assigned.
+        const val = get(result);
+        if (!val) {
+            addError(result, step, "Last wn pstep didn't generate any results")
+            return false;
+        }
+
+        const s = getVarExecutionState(result, step.set);
+        if (!s) {
+            assert(result.stackIdx === call.returnAddress + 1);
+            call.variables.set(step.set, result.stackIdx);
+            call.returnAddress++;
+        } else {
+            const addr = s.variables.get(step.set)!;
+            result.stack[addr] = val;
+        }
+    } else if (step.binaryOperator) {
+        const rhs = pop(result);
+        const lhs = pop(result);
+
+        let calcResult: ProgramResult | null = null;
+
+        if (lhs.t === T_RESULT_NUMBER) {
+            if (rhs.t == T_RESULT_NUMBER) {
+                calcResult = calculateBinaryOpNumberXNumber(rhs, lhs, step.binaryOperator);
+            }
+        }
+
+        if (!calcResult) {
+            addError(result, step, `We don't have a way to compute ${programResultTypeString(lhs)} ${binOpToOpString(step.binaryOperator)} ${programResultTypeString(rhs)} yet.`);
+            return false;
+        }
+
+        push(result, calcResult, step);
+    } else if (step.list !== undefined) {
+        result.stackIdx -= step.list;
+        const list: ProgramResult = { t: T_RESULT_LIST, values: [] };
+        for (let i = 0; i < step.list; i++) {
+            const val = result.stack[i];
+            assert(val);
+            list.values.push(val);
+        }
+
+        push(result, list, step);
+    } else if (step.vector !== undefined) {
+
+        result.stackIdx -= step.vector;
+
+        let innerLen = 0;
+        let innerT = 0;
+        let innerShape: number[] | undefined;
+        const values: number[] = [];
+
+        const len = step.vector;
+        for (let i = 0; i < len; i++) {
+            const val = result.stack[i];
+            assert(val);
+
+            if (val.t !== T_RESULT_NUMBER && val.t !== T_RESULT_MATRIX) {
+                addError(result, step, "Vectors/Matrices can only contain other vectors/matrices/numbers");
+                return false;
+            }
+
+            let rowLen;
+            if (val.t === T_RESULT_MATRIX) {
+                rowLen = getLengthHpMatrix(val.val);
+
+                // TODO: reserve the correct size based on matrix shape. flatmap...
+                values.push(...val.val.m.values);
+            } else {
+                values.push(val.val);
+                rowLen = 1;
+            }
+
+            if (i === 0) {
+                innerLen = rowLen;
+                innerT = val.t;
+                if (val.t === T_RESULT_MATRIX) {
+                    innerShape = val.val.m.shape;
+                }
+            } else {
+                if (innerT !== val.t) {
+                    addError(result, step, "This item had a different type to the previous items in the vector");
+                } else if (innerLen !== rowLen) {
+                    addError(result, step, "This vector had a different length to the previous vectors");
+                }
+                return false;
+            }
+        }
+
+        const newShape = innerShape ? [len, ...innerShape] : [len];
+
+        push(result, {
+            t: T_RESULT_MATRIX,
+            val: { m: { values, shape: newShape }, indexes: [] }
+        }, step);
+    } else if (step.number !== undefined) {
+        push(result, { t: T_RESULT_NUMBER, val: step.number }, step);
+    } else if (step.string !== undefined) {
+        push(result, { t: T_RESULT_STRING, val: step.string }, step);
+    } else if (step.jump !== undefined) {
+        assert(step.jump >= 0);
+        assert(step.jump < steps.length);
+        call.i = step.jump;
+        return true;
+    } else if (step.jumpIfFalse !== undefined) {
+        assert(step.jumpIfFalse >= 0);
+        assert(step.jumpIfFalse < steps.length);
+
+        const val = pop(result,);
+        if (val.t !== T_RESULT_NUMBER) {
+            // -0 is fine to be `true` imo.
+            // (Won't be a problem if we implement this in a real language with integer types);
+            addError(result, step, "True/false queries must be numbers. You can get a 0/1 number by using logical ops like ==, <=, etc, but that is not the only way to do so.");
+            return false;
+        }
+
+        if (val.val === 0) {
+            call.i = step.jumpIfFalse;
+            return true;
+        }
+    } else if (step.call) {
+        const value = step.call;
+        const fn = result.functions.get(value.fnName);
+        assert(fn);
+
+        const variables = new Map<string, number>();
+        for (let i = 0; i < fn.args.length; i++) {
+            const argIdx = result.stackIdx - fn.args.length + i + 1;
+            variables.set(fn.args[i].name, argIdx);
+        }
+        result.callStack.push({ 
+            code: fn.code, 
+            argsCount: fn.args.length,
+            i: 0, lastBlockLevelResult: null, variables, 
+            // TODO: verify that this is correct, it prob isn't
+            returnAddress: call.returnAddress + fn.args.length,
+        });
+        call.i++;
+        return true;
+    }
+    else if (step.blockStatementEnd !== undefined) {
+        // need this to clean up after the last 'statement', actually.
+        const val = get(result);
+        result.stackIdx = call.returnAddress;
+        if (step.blockStatementEnd === true && val) {
+            result.results.push({ ...val });
+        }
+    } 
+    else if (step.index) {
+        const idxResult = pop(result);
+
+        if (idxResult.t !== T_RESULT_NUMBER) {
+            addError(result, step, "Indexers must be numbers");
+            return false;
+        }
+
+        const idx = idxResult.val;
+        if ((idx % 1) !== 0) {
+            addError(result, step, "Indexers can't have a decimal component");
+            return false;
+        }
+
+        if (idx < 0) {
+            addError(result, step, "Indexers can't be negative");
+            return false;
+        }
+
+        const data = pop(result);
+        if (data.t === T_RESULT_LIST) {
+            if (idx >= data.values.length) {
+                addError(result, step, "Index was out of bounds");
+                return false;
+            }
+
+            push(result, data.values[idx], step);
+        }
+
+        if (data.t === T_RESULT_MATRIX) {
+            // TODO: implement
+            addError(result, step, "I haven't implemented this  yet :/");
+            return false;
+        }
+
+        addError(result, step, "Can't index this datatype");
+        return false;
+    } else if (step.incr) {
+        const addr = call.variables.get(step.incr);
+        assert(addr !== undefined);
+        const val = result.stack[addr];
+        assert(val);
+        assert(val.t === T_RESULT_NUMBER);
+        val.val++;
+    } else if (step.decr) {
+        const addr = call.variables.get(step.decr);
+        assert(addr !== undefined);
+        const val = result.stack[addr];
+        assert(val);
+        assert(val.t === T_RESULT_NUMBER);
+        val.val--;
+    }
+
+    call.i++;
+    if (call.code.steps.length === call.i) {
+        // this was the thing we last computed
+        const val = result.stack[result.stackIdx + 1];
+        result.stackIdx = call.returnAddress - call.argsCount + 1;
+        result.stack[result.stackIdx] = val;
+        result.callStack.pop();
+    }
+    return result.callStack.length > 0;
+}
+
+export function interpret(parseResult: ProgramParseResult): ProgramInterpretResult {
+    const result = startInterpreting(parseResult);
+    if (result.errors.length > 0) {
+        return result;
     }
 
     // step through the code...
-    {
-        result.callStack.push({ steps: result.entryPoint, i: 0, lastBlockLevelResult: null, variables: new Map() });
-
-        outer: while (result.callStack.length > 0) {
-            let call = result.callStack[result.callStack.length - 1];
-            if (call.i >= call.steps.length) {
-                if (call.i > call.steps.length) {
-                    throw new Error("How did that happen");
-                }
-                break;
-            }
-
-            while(call.i < call.steps.length) {
-                const step = call.steps[call.i];
-
-                // TODO: use a switch here instead
-                if (step.load) {
-                    const s = getVarExecutionState(step.load);
-                    if (!s) {
-                        addError(step, "This variable hasn't been set yet");
-                        break outer;
-                    }
-
-                    const val = s.variables.get(step.load);
-                    assert(val);
-
-                    push(val, step);
-                } else if (step.loadPrevious) {
-                    if (!call.lastBlockLevelResult) {
-                        addError(step, "Can't refer to 'the previous result' when this block doesn't have any results yet");
-                        break outer;
-                    }
-
-                    result.stack.push(call.lastBlockLevelResult);
-                } else if (step.set) {
-                    // NOTE: setting a variable doesn't remove it from the stack, because assignment will return the value that was assigned.
-                    const val = get();
-                    if (!val) {
-                        addError(step, "Last wn pstep didn't generate any results")
-                        break outer;
-                    }
-
-                    const s = getVarExecutionState(step.set);
-                    if (!s) {
-                        call.variables.set(step.set, val);
-                    } else {
-                        s.variables.set(step.set, val);
-                    }
-                } else if (step.binaryOperator) {
-                    const rhs = pop();
-                    const lhs = pop();
-
-                    let calcResult: ProgramResult | null = null;
-
-                    if (lhs.t === T_RESULT_NUMBER) {
-                        if (rhs.t == T_RESULT_NUMBER) {
-                            calcResult = calculateBinaryOpNumberXNumber(rhs, lhs, step.binaryOperator);
-                        }
-                    }
-
-                    if (!calcResult) {
-                        addError(step, `We don't have a way to compute ${programResultTypeString(lhs)} ${binOpToOpString(step.binaryOperator)} ${programResultTypeString(rhs)} yet.`);
-                        break outer;
-                    }
-
-                    push(calcResult, step);
-                } else if (step.list !== undefined) {
-                    result.stackIdx -= step.list;
-                    const list: ProgramResult = { t: T_RESULT_LIST, values: [] };
-                    for (let i = 0; i < step.list; i++) {
-                        list.values.push(result.stack[i]);
-                    }
-
-                    push(list, step);
-                } else if (step.vector !== undefined) {
-
-                    result.stackIdx -= step.vector;
-
-                    let innerLen = 0;
-                    let innerT = 0;
-                    let innerShape: number[] | undefined;
-                    const values: number[] = [];
-
-                    const len = step.vector;
-                    for (let i = 0; i < len; i++) {
-                        const val = result.stack[i];
-
-                        if (val.t !== T_RESULT_NUMBER && val.t !== T_RESULT_MATRIX) {
-                            addError(step, "Vectors/Matrices can only contain other vectors/matrices/numbers");
-                            break outer;
-                        }
-
-                        let rowLen;
-                        if (val.t === T_RESULT_MATRIX) {
-                            rowLen = getLengthHpMatrix(val.val);
-
-                            // TODO: reserve the correct size based on matrix shape. flatmap...
-                            values.push(...val.val.m.values);
-                        } else {
-                            values.push(val.val);
-                            rowLen = 1;
-                        }
-
-                        if (i === 0) {
-                            innerLen = rowLen;
-                            innerT = val.t;
-                            if (val.t === T_RESULT_MATRIX) {
-                                innerShape = val.val.m.shape;
-                            }
-                        } else {
-                            if (innerT !== val.t) {
-                                addError(step, "This item had a different type to the previous items in the vector");
-                            } else if (innerLen !== rowLen) {
-                                addError(step, "This vector had a different length to the previous vectors");
-                            }
-                            break outer;
-                        }
-                    }
-
-                    const newShape = innerShape ? [len, ...innerShape] : [len];
-
-                    push({
-                        t: T_RESULT_MATRIX,
-                        val: { m: { values, shape: newShape }, indexes: [] }
-                    }, step);
-                } else if (step.number !== undefined) {
-                    push({ t: T_RESULT_NUMBER, val: step.number }, step);
-                } else if (step.string !== undefined) {
-                    push({ t: T_RESULT_STRING, val: step.string }, step);
-                } else if (step.jump !== undefined) {
-                    assert(step.jump >= 0);
-                    assert(step.jump < call.steps.length);
-
-                    call.i = step.jump;
-                    continue;
-                } else if (step.jumpIfFalse !== undefined) {
-                    assert(step.jumpIfFalse >= 0);
-                    assert(step.jumpIfFalse < call.steps.length);
-
-                    const val = pop();
-                    if (val.t !== T_RESULT_NUMBER) {
-                        // -0 is fine to be `true` imo.
-                        // (Won't be a problem if we implement this in a real language with integer types);
-                        addError(step, "True/false queries must be numbers. You can get a 0/1 number by using logical ops like ==, <=, etc, but that is not the only way to do so.");
-                        break outer;
-                    }
-
-                    if (val.val !== 0) {
-                        call.i = step.jumpIfFalse;
-                        continue;
-                    }
-                } else if (step.call !== undefined) {
-                    const value = step.call;
-                    const fn = result.functions.get(value.fnName);
-
-                    
-                    const variables = new Map<string, ProgramResult>();
-                    for (let i = fn.args.length - 1; i >= 0; i--) {
-                        const val = pop();
-                        variables.set(fn.args[i].name, val);
-                    }
-                    call = { steps: fn.steps, i: 0, lastBlockLevelResult: null, variables };
-                    result.callStack.push(call);
-                    continue;
-                } else if (step.blockStatementEnd !== undefined) {
-                    const val = get();
-                    if (!val) {
-                        addError(step, "Last step didn't generate any results")
-                        break outer;
-                    }
-
-                    result.results.push(val);
-                } else if (step.index) {
-                    const idxResult = pop();
-
-                    if (idxResult.t !== T_RESULT_NUMBER) {
-                        addError(step, "Indexers must be numbers");
-                        break outer;
-                    }
-
-                    const idx = idxResult.val;
-                    if ((idx % 1) !== 0) {
-                        addError(step, "Indexers can't have a decimal component");
-                        break outer;
-                    }
-
-                    if (idx < 0) {
-                        addError(step, "Indexers can't be negative");
-                        break outer;
-                    }
-
-                    const data = pop();
-                    if (data.t === T_RESULT_LIST) {
-                        if (idx >= data.values.length) {
-                            addError(step, "Index was out of bounds");
-                            break outer;
-                        }
-
-                        push(data.values[idx], step);
-                    }
-
-                    if (data.t === T_RESULT_MATRIX) {
-                        // TODO: implement
-                        addError(step, "I haven't implemented this  yet :/");
-                        break outer;
-                    }
-
-                    addError(step, "Can't index this datatype");
-                    break outer;
-                }
-
-                call.i++;
-            }
-
-            const prevCall = result.callStack.pop();
-            if (prevCall) {
-                call = prevCall;
-            }
+    while (result.callStack.length > 0) {
+        let res = stepProgram(result);
+        if (!res) {
+            break;
         }
     }
 

@@ -536,9 +536,6 @@ function computeStringForStringLiteral(expr: ProgramExpressionStringLiteral): [s
                 case "t":
                     sb.push("\t");
                     break;
-                case "n":
-                    sb.push("\n");
-                    break;
                 case "\\":
                     sb.push("\\");
                     break;

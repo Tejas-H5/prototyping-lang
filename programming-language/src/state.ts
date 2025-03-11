@@ -1,15 +1,39 @@
+import { ProgramInterpretResult } from "./program-interpreter";
+import { ProgramParseResult } from "./program-parser";
 
 export type GlobalState = {
     text: string;
     collapseParserOutput: boolean;
     collapseProgramOutput: boolean;
+    autorun: boolean;
 };
 
+
+export type GlobalContext = {
+    isDebugging: boolean;
+    lastParseResult: ProgramParseResult | undefined;
+    lastInterpreterResult: ProgramInterpretResult | undefined;
+    rerenderApp: () => void;
+
+    // This stuff is actually saved and persisted between runs
+    state: GlobalState;
+}
+
+export function newGlobalContext(): GlobalContext {
+    return {
+        rerenderApp: () => {},
+        state: loadState(),
+        isDebugging: false,
+        lastParseResult: undefined, 
+        lastInterpreterResult: undefined 
+    };
+}
 export function newGlobalState(): GlobalState {
     return {
         text: "",
         collapseParserOutput: false,
         collapseProgramOutput: false,
+        autorun: false,
     };
 }
 

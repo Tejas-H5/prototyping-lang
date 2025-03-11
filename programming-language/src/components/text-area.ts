@@ -21,7 +21,7 @@ textarea.${cnEditableTextArea} {
     white-space: pre-wrap; padding: 5px; 
     caret-color: ${CSSVARS_FG};
 };
-textarea.${cnEditableTextArea}:focus { background-color: ${CSSVARS_FOCUS}; };
+textarea.${cnEditableTextArea}:focus { background-color: ${CSSVARS_FOCUS}; }
 `);
 
 export type EditableTextAreaArgs = {
