@@ -5,7 +5,6 @@ import {
     binOpToString, 
     DiagnosticInfo, 
     expressionTypeToString, 
-    parse, 
     ProgramExpression,
     ProgramExpressionFn,
     ProgramExpressionIdentifier,
@@ -302,9 +301,9 @@ function getExecutionSteps(
         result.errors.push({ pos: expr.pos, problem: "Found an incomplete expression" });
     }
 
-    const dfs = (expr: ProgramExpression) => {
+    const dfs = (expr: ProgramExpression): boolean => {
         if (result.errors.length > 0) {
-            return;
+            return false;
         }
 
         const step = newExecutionStep(expr);
@@ -317,18 +316,18 @@ function getExecutionSteps(
             } break;
             case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: {
                 result.errors.push({ pos: expr.pos, problem: "Ive not implemented it yet..." });
-                return;
+                return !noOp;
                 // step.loadPrevious = true;
             } break;
             case T_ASSIGNMENT: {
                 if (!expr.rhs) {
                     incompleteExpressionError(expr);
-                    return;
+                    return !noOp;
                 }
 
                 if (expr.lhs.t !== T_IDENTIFIER && expr.lhs.t !== T_DATA_INDEX_OP) {
                     result.errors.push({ pos: expr.pos, problem: "This expression currently cannot be assigned to" });
-                    return;
+                    return !noOp;
                 }
 
                 if (expr.lhs.t === T_DATA_INDEX_OP) {
@@ -346,11 +345,11 @@ function getExecutionSteps(
             case T_BINARY_OP: {
                 if (!expr.rhs) {
                     incompleteExpressionError(expr);
-                    return;
+                    return !noOp;
                 }
 
-                dfs(expr.rhs);
                 dfs(expr.lhs);
+                dfs(expr.rhs);
                 step.binaryOperator = expr.op;
             } break;
             case T_VECTOR_LITERAL: 
@@ -373,7 +372,7 @@ function getExecutionSteps(
             case T_TERNARY_IF: {
                 if (!expr.falseBranch) {
                     incompleteExpressionError(expr);
-                    return;
+                    return !noOp;
                 }
 
                 alreadyPushed = true;
@@ -469,11 +468,14 @@ function getExecutionSteps(
         if (!alreadyPushed && !noOp) {
             steps.push(step);
         }
+
+        return !noOp;
     }
 
     for (const s of statements) {
-        dfs(s);
-        steps.push({ expr: s, blockStatementEnd: topLevel });
+        if (dfs(s)) {
+            steps.push({ expr: s, blockStatementEnd: topLevel });
+        }
     }
 }
 
@@ -589,6 +591,159 @@ export function getCurrentCallstack(result: ProgramInterpretResult): ExecutionSt
     return result.callStack[result.callStack.length - 1];
 }
 
+
+function max(a: number, b: number): number {
+    return a > b ? a : b;
+}
+
+function min (a: number, b: number): number {
+    return a < b ? a : b;
+}
+
+function evaluateBuiltinFunction(step: ExecutionStep, program: ProgramInterpretResult, call: ExecutionState): ProgramResult | undefined {
+    assert(step.call);
+    const name = step.call.fnName;
+
+    const getNumber = (offset: number): ProgramResultNumber | undefined => {
+        const idx = program.stackIdx - offset;
+        if (idx < call.returnAddress || idx < 0) {
+            // This error should be caught higher up the chian, ideally.
+            addError(program, step, "Builtin function needs more arguments than were supplied");
+            return;
+        }
+
+        const val = program.stack[idx];
+        assert(val);
+
+        if (val.t !== T_RESULT_NUMBER) {
+            addError(program, step, "Builtin function argument " + offset + "should be a number");
+            return;
+        }
+
+        return val;
+    }
+
+
+    let result: ProgramResult | undefined;
+
+    // TODO: use numeric enum. It appears that the string comparisons _are_ slower than number comparisons.
+    switch (name) {
+        case "abs": {
+            const a1 = getNumber(0);
+            if (a1) {
+                result = newNumberResult(Math.abs(a1.val));
+            }
+        } break;
+        case "acos": {
+            const a1 = getNumber(0);
+            if (a1) {
+                result = newNumberResult(Math.acos(a1.val));
+            }
+        } break;
+        case "asin": {
+            const a1 = getNumber(0);
+            if (a1) {
+                result = newNumberResult(Math.asin(a1.val));
+            }
+        } break;
+        case "atan": {
+            const a1 = getNumber(0);
+            if (a1) {
+                result = newNumberResult(Math.atan(a1.val));
+            }
+        } break;
+        case "atan2": {
+            const a1 = getNumber(1);
+            const a2 = getNumber(0);
+            if (a1 && a2) {
+                result = newNumberResult(Math.atan2(a1.val, a2.val));
+            }
+        } break;
+        case "ceil": {
+            const a1 = getNumber(0);
+            if (a1) {
+                result = newNumberResult(Math.ceil(a1.val));
+            }
+        } break;
+        case "cos": {
+            const a1 = getNumber(0);
+            if (a1) {
+                result = newNumberResult(Math.cos(a1.val));
+            }
+        } break;
+        // I'd rather have code like E ** (PI * i)
+        // instead of a dedicated function to raise e to a thing
+        // case "exp": {
+        //     const a1 = getNumber(0);
+        //     const a2 = getNumber(1);
+        //     if (a1 && a2) {
+        //         result = newNumberResult(Math.exp(a1.val, a2.val));
+        //     }
+        // } break;
+        case "floor": {
+            const a1 = getNumber(0);
+            if (a1) {
+                result = newNumberResult(Math.floor(a1.val));
+            }
+        } break;
+        case "log": {
+            const a1 = getNumber(0);
+            if (a1) {
+                result = newNumberResult(Math.log(a1.val));
+            }
+        } break;
+        case "max": {
+            const a1 = getNumber(1);
+            const a2 = getNumber(0);
+            if (a1 && a2) {
+                result = newNumberResult(max(a1.val, a2.val));
+            }
+        } break;
+        case "min": {
+            const a1 = getNumber(1);
+            const a2 = getNumber(0);
+            if (a1 && a2) {
+                result = newNumberResult(min(a1.val, a2.val));
+            }
+        } break;
+        case "pow": {
+            const a1 = getNumber(1);
+            const a2 = getNumber(0);
+            if (a1 && a2) {
+                result = newNumberResult(Math.pow(a1.val, a2.val));
+            }
+        } break;
+        case "random": {
+            result = newNumberResult(Math.random());
+        } break;
+        case "round": {
+            const a1 = getNumber(0);
+            if (a1) {
+                result = newNumberResult(Math.round(a1.val));
+            }
+        } break;
+        case "sin": {
+            const a1 = getNumber(0);
+            if (a1) {
+                result = newNumberResult(Math.sin(a1.val));
+            }
+        } break;
+        case "sqrt": {
+            const a1 = getNumber(0);
+            if (a1) {
+                result = newNumberResult(Math.sqrt(a1.val));
+            }
+        } break;
+        case "tan": {
+            const a1 = getNumber(0); if (a1) {
+                result = newNumberResult(Math.tan(a1.val));
+            }
+        } break;
+    };
+
+    return result;
+}
+
 export function stepProgram(result: ProgramInterpretResult): boolean {
     const call = getCurrentCallstack(result);
     if (!call) {
@@ -620,6 +775,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
 
         push(result, val, step);
     } 
+
     // else if (step.loadPrevious) {
     //     if (!call.lastBlockLevelResult) {
     //         addError(result, step, "Can't refer to 'the previous result' when this block doesn't have any results yet");
@@ -726,7 +882,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
             val: { m: { values, shape: newShape }, indexes: [] }
         }, step);
     } else if (step.number !== undefined) {
-        push(result, { t: T_RESULT_NUMBER, val: step.number }, step);
+        push(result, newNumberResult(step.number), step);
     } else if (step.string !== undefined) {
         push(result, { t: T_RESULT_STRING, val: step.string }, step);
     } else if (step.jump !== undefined) {
@@ -736,7 +892,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         return true;
     } else if (step.jumpIfFalse !== undefined) {
         assert(step.jumpIfFalse >= 0);
-        assert(step.jumpIfFalse < steps.length);
+        assert(step.jumpIfFalse <= steps.length);
 
         const val = pop(result,);
         if (val.t !== T_RESULT_NUMBER) {
@@ -751,27 +907,37 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
             return true;
         }
     } else if (step.call) {
-        const value = step.call;
-        const fn = result.functions.get(value.fnName);
-        if (!fn) {
-            addError(result, step, "Function doesn't exist yet");
+        const res = evaluateBuiltinFunction(step, result, call);
+        if (result.errors.length > 0) {
             return false;
         }
 
-        const variables = new Map<string, number>();
-        for (let i = 0; i < fn.args.length; i++) {
-            const argIdx = result.stackIdx - fn.args.length + i + 1;
-            variables.set(fn.args[i].name, argIdx);
+        if (res) {
+            result.stackIdx = call.returnAddress + 1;
+            result.stack[result.stackIdx] = res;
+        } else {
+            const value = step.call;
+            const fn = result.functions.get(value.fnName);
+            if (!fn) {
+                addError(result, step, "Function doesn't exist yet");
+                return false;
+            }
+
+            const variables = new Map<string, number>();
+            for (let i = 0; i < fn.args.length; i++) {
+                const argIdx = result.stackIdx - fn.args.length + i + 1;
+                variables.set(fn.args[i].name, argIdx);
+            }
+            result.callStack.push({
+                code: fn.code,
+                argsCount: fn.args.length,
+                i: 0, lastBlockLevelResult: null, variables,
+                // TODO: verify that this is correct, it prob isn't
+                returnAddress: call.returnAddress + fn.args.length,
+            });
+            call.i++;
+            return true;
         }
-        result.callStack.push({ 
-            code: fn.code, 
-            argsCount: fn.args.length,
-            i: 0, lastBlockLevelResult: null, variables, 
-            // TODO: verify that this is correct, it prob isn't
-            returnAddress: call.returnAddress + fn.args.length,
-        });
-        call.i++;
-        return true;
     }
     else if (step.blockStatementEnd !== undefined) {
         // need this to clean up after the last 'statement', actually.
@@ -838,11 +1004,16 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
     if (call.code.steps.length === call.i) {
         // this was the thing we last computed
         const val = result.stack[result.stackIdx + 1];
+        // this is the previous call frame's return address
         result.stackIdx = call.returnAddress - call.argsCount + 1;
         result.stack[result.stackIdx] = val;
         result.callStack.pop();
     }
     return result.callStack.length > 0;
+}
+
+function newNumberResult(val: number): ProgramResultNumber {
+    return { t: T_RESULT_NUMBER, val };
 }
 
 export function interpret(parseResult: ProgramParseResult): ProgramInterpretResult {
@@ -852,11 +1023,26 @@ export function interpret(parseResult: ProgramParseResult): ProgramInterpretResu
     }
 
     // step through the code...
+    let safetyCounter = 0;
+    const MAX_ITERATIONS = 10 * 1000 * 1000;
     while (result.callStack.length > 0) {
+        safetyCounter++;
+        if (safetyCounter > MAX_ITERATIONS) {
+            // prevent infinite loops
+            break;
+        }
         let res = stepProgram(result);
         if (!res) {
             break;
         }
+    }
+
+    if (safetyCounter === MAX_ITERATIONS) {
+        const call = getCurrentCallstack(result);
+        assert(call);
+        const step = call.code.steps[call.i];
+        // TODO: allow user to override or disable this.
+        addError(result, step, "The program terminated here, because it reached the maximum number of iterations (" + MAX_ITERATIONS + ")");
     }
 
     return result;

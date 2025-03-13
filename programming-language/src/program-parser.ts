@@ -570,6 +570,11 @@ function parseBlock(ctx: ParserContext): ProgramExpressionBlock | undefined {
         return;
     }
 
+    if (statements.length === 0) {
+        addErrorAtCurrentPosition(ctx, "All blocks must contain at least 1 statement");
+        return;
+    }
+
     advance(ctx);
 
     return {
