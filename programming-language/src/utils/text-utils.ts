@@ -5,6 +5,11 @@
  * easily substringed in O(1).
  */
 export function getLineBeforePos(text: string, pos: number): string {
+    const i = getLineStartPos(text, pos);
+    return text.substring(i, pos);
+}
+
+export function getLineStartPos(text: string, pos: number): number {
     let i = pos;
     if (text[i] === "\r" || text[i] === "\n") {
         i--;
@@ -18,9 +23,28 @@ export function getLineBeforePos(text: string, pos: number): string {
     }
 
     if (pos < i) {
-        return "";
+        return 0;
     }
 
-    return text.substring(i, pos);
+    return i;
 }
 
+export function getLineEndPos(text: string, pos: number): number {
+    let i = pos;
+    if (text[i] === "\r" || text[i] === "\n") {
+        i++;
+    }
+
+    for (; i < text.length; i++) {
+        if (text[i] === "\r" || text[i] === "\n") {
+            i++
+            break;
+        }
+    }
+
+    if (i < pos) {
+        return text.length;
+    }
+
+    return i;
+}

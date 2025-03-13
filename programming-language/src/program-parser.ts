@@ -612,7 +612,7 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
 
     const loExpr = parseExpression(ctx);
     if (!loExpr) {
-        addErrorAtCurrentPosition(ctx, `Expected the lower portion of the range-expression here`);
+        addErrorAtCurrentPosition(ctx, `Expected a range expression to begin here, e.g for i in 0 -> 100`);
         return undefined;
     }
 
@@ -620,7 +620,7 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
     const ascending = compareCurrent(ctx, "->");
     const descending = compareCurrent(ctx, "<-");
     if (!ascending && !descending) {
-        addErrorAtCurrentPosition(ctx, `Expected the ranged for-loop operator <- or -> here (we need to know which way to loop at parse time for reasons...)`);
+        addErrorAtCurrentPosition(ctx, `Expected the ranged for-loop operator <- or -> here (we need to know which way to loop at compile-time, so that we can generate the right instructions)`);
         return undefined;
     }
     for (let i = 0; i < 2; i++) {
@@ -829,7 +829,7 @@ function computeNumberForNumberExpression(expr: ProgramExpressionNumberLiteral):
 // - assignment (used to be done with precedence, but then I had a whole
 // bunch of code everywhere checking that it was only happening as a 'block level' statement. also makes the
 // stack frame stuff easier to implement when we make it it's own thing like this
-function parseIdentifierAndFollowOns(ctx: ParserContext): ProgramExpression | undefined {
+function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boolean): ProgramExpression | undefined {
     const pos = getParserPosition(ctx);
     let result: ProgramExpression = parseIdentifierOrPreviousResultOp(ctx);
 
@@ -846,7 +846,7 @@ function parseIdentifierAndFollowOns(ctx: ParserContext): ProgramExpression | un
         };
 
         while (currentChar(ctx) === "[" && advance(ctx)) {
-            const expr = parseExpressionOrMoveToNextLine(ctx);
+            const expr = parseExpressionOrMoveToNextLine(ctx, canParseAssignment);
             if (expr) {
                 result.indexes.push(expr);
             } else {
@@ -886,8 +886,6 @@ function parseIdentifierAndFollowOns(ctx: ParserContext): ProgramExpression | un
         parseWhitespace(ctx);
 
         if (currentChar(ctx) === "{") {
-            ctx.parseResult.functions.set(result.fnName.name, result);
-
             const argNames: ProgramExpressionIdentifier[] = [];
             for (let i = 0; i < result.arguments.length; i++) {
                 const arg = result.arguments[i];
@@ -917,10 +915,20 @@ function parseIdentifierAndFollowOns(ctx: ParserContext): ProgramExpression | un
             }
 
             result.body = block;
+            if (ctx.parseResult.functions.has(result.fnName.name)) {
+                addErrorAtPosition(ctx, result.fnName.pos, "A function with this name already exists");
+                return;
+            }
+            ctx.parseResult.functions.set(result.fnName.name, result);
         }
 
         result.slice.end = ctx.pos.i;
     } else if (currentChar(ctx) === "=" && currentChar(ctx, 1) !== "=") {
+        if (!canParseAssignment) {
+            addErrorAtPosition(ctx, result.pos, "Assignments may only be done at the root of an expression");
+            return;
+        }
+
         advance(ctx);
         parseWhitespace(ctx);
 
@@ -1070,7 +1078,7 @@ function parseBinaryOperatorIncreasingPrecedence(ctx: ParserContext, lhs: Progra
     const endOfLhs = ctx.pos.i;
 
     parseWhitespace(ctx);
-    const rhs = parseExpression(ctx, prec);
+    const rhs = parseExpression(ctx, false, prec);
 
     return {
         t: T_BINARY_OP,
@@ -1082,7 +1090,7 @@ function parseBinaryOperatorIncreasingPrecedence(ctx: ParserContext, lhs: Progra
     };
 }
 
-function parseExpression(ctx: ParserContext, maxPrec: number = MAX_PRECEDENCE): ProgramExpression | undefined {
+function parseExpression(ctx: ParserContext, canParseAssignment: boolean = false, maxPrec: number = MAX_PRECEDENCE): ProgramExpression | undefined {
     if (reachedEnd(ctx)) return undefined;
 
     assert(!isWhitespace(currentChar(ctx)));
@@ -1094,7 +1102,7 @@ function parseExpression(ctx: ParserContext, maxPrec: number = MAX_PRECEDENCE): 
         if (compareCurrent(ctx, "for")) {
             res = parseRangedFor(ctx);
         } else {
-            res = parseIdentifierAndFollowOns(ctx);
+            res = parseIdentifierAndFollowOns(ctx, canParseAssignment);
         }
     } else if (canParseNumberLiteral(ctx)) {
         res = parseNumberLiteral(ctx);
@@ -1105,7 +1113,7 @@ function parseExpression(ctx: ParserContext, maxPrec: number = MAX_PRECEDENCE): 
     } else if (c === "(") {
         advance(ctx);
         parseWhitespace(ctx);
-        res = parseExpressionOrMoveToNextLine(ctx);
+        res = parseExpressionOrMoveToNextLine(ctx, false);
         if (res) {
             parseWhitespace(ctx);
 
@@ -1167,22 +1175,31 @@ function getParserPosition(ctx: ParserContext): TextPosition {
     return { ...ctx.pos };
 }
 
-function parseExpressionOrMoveToNextLine(ctx: ParserContext): ProgramExpression | undefined {
+function parseExpressionOrMoveToNextLine(ctx: ParserContext, canParseAssignments: boolean): ProgramExpression | undefined {
     parseWhitespace(ctx);
     if (reachedEnd(ctx)) {
         return;
     }
 
-    const statement = parseExpression(ctx);
+    const startPos = getParserPosition(ctx);
+
+    const statement = parseExpression(ctx, canParseAssignments);
     if (statement) {
         return statement;
     } 
 
-    addErrorAtCurrentPosition(ctx, "Couldn't figure out how to parse this expression.");
+    if (ctx.parseResult.errors.length === 0) {
+        if (currentChar(ctx) === "=") {
+            addErrorAtPosition(ctx, startPos, "Only identifiers can be assigned to");
+        } else {
+            addErrorAtCurrentPosition(ctx, "Couldn't figure out how to parse this expression.");
+        }
+    }
 
     // Let's just get to the next line, and continue from there.
     advanceToNextNewLine(ctx);
     advance(ctx);
+
 
     return;
 }
@@ -1205,12 +1222,14 @@ function parseStatements(ctx: ParserContext, statements: ProgramExpression[], cl
 
         const thisLine = ctx.pos.line;
 
-        const expr = parseExpressionOrMoveToNextLine(ctx);
+        const lineStartPos = getParserPosition(ctx);
+
+        const expr = parseExpressionOrMoveToNextLine(ctx, true);
         if (expr) {
 
             if (thisLine === lastLine) {
                 ctx.parseResult.warnings.push({
-                    pos: getParserPosition(ctx),
+                    pos: lineStartPos,
                     problem: "You've put multiple statements on the same line, which may be hard to read."
                 });
             }

@@ -294,6 +294,7 @@ function getExecutionSteps(
     result: ProgramInterpretResult,
     statements: ProgramExpression[],
     steps: ExecutionStep[],
+    topLevel: boolean,
 ) {
 
     const incompleteExpressionError = (expr: ProgramExpression) => {
@@ -472,7 +473,7 @@ function getExecutionSteps(
 
     for (const s of statements) {
         dfs(s);
-        steps.push({ expr: s, blockStatementEnd: true });
+        steps.push({ expr: s, blockStatementEnd: topLevel });
     }
 }
 
@@ -561,7 +562,7 @@ export function startInterpreting(parseResult: ProgramParseResult): ProgramInter
                 name: fn.fnName.name,
                 steps: [],
             };
-            getExecutionSteps(result, fn.body.statements, code.steps);
+            getExecutionSteps(result, fn.body.statements, code.steps, false);
 
             result.functions.set(name, {
                 t: T_RESULT_FN,
@@ -571,7 +572,7 @@ export function startInterpreting(parseResult: ProgramParseResult): ProgramInter
             });
         }
 
-        getExecutionSteps(result, parseResult.statements, result.entryPoint.steps)
+        getExecutionSteps(result, parseResult.statements, result.entryPoint.steps, true)
     }
 
     result.callStack.push({ 
@@ -613,7 +614,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         }
 
         const addr = s.variables.get(step.load);
-        assert(addr != null);
+        assert(addr !== undefined);
         const val = result.stack[addr];
         assert(val);
 
@@ -752,7 +753,10 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
     } else if (step.call) {
         const value = step.call;
         const fn = result.functions.get(value.fnName);
-        assert(fn);
+        if (!fn) {
+            addError(result, step, "Function doesn't exist yet");
+            return false;
+        }
 
         const variables = new Map<string, number>();
         for (let i = 0; i < fn.args.length; i++) {

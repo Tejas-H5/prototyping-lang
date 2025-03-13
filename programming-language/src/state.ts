@@ -1,5 +1,5 @@
-import { ProgramInterpretResult } from "./program-interpreter";
-import { ProgramParseResult } from "./program-parser";
+import { ProgramInterpretResult, startInterpreting } from "./program-interpreter";
+import { parse, ProgramParseResult } from "./program-parser";
 
 export type GlobalState = {
     text: string;
@@ -17,6 +17,18 @@ export type GlobalContext = {
 
     // This stuff is actually saved and persisted between runs
     state: GlobalState;
+}
+
+export function startDebugging(ctx: GlobalContext): string {
+    ctx.lastParseResult = parse(ctx.state.text);
+
+    if (ctx.lastParseResult.errors.length > 0) {
+        return "Fix parsing errors before you can start debugging";
+    } 
+
+    ctx.lastInterpreterResult = startInterpreting(ctx.lastParseResult);
+    ctx.isDebugging = true;
+    return "";
 }
 
 export function newGlobalContext(): GlobalContext {

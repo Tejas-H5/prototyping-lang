@@ -1,5 +1,5 @@
 import { cssVars } from "src/styling";
-import { cn, div, el, setInputValue, imOn, newCssBuilder, span, UIRoot, newDomElement, imState, imIf } from "src/utils/im-dom-utils";
+import { cn, div, el, setInputValue, imOn, newCssBuilder, span, UIRoot, newDomElement, imState, imIf, RenderFn, Ref } from "src/utils/im-dom-utils";
 import { getLineBeforePos } from "src/utils/text-utils";
 
 const CSSVARS_FOCUS = cssVars.bg;
@@ -31,6 +31,8 @@ export type EditableTextAreaArgs = {
     onInput(text: string, textArea: HTMLTextAreaElement): void;
     onInputKeyDown(e: KeyboardEvent, textArea: HTMLTextAreaElement): void;
     config: EditableTextAreaConfig;
+    textAreaRef?: Ref<HTMLTextAreaElement>;
+    overlays?: RenderFn;
 };
 
 type EditableTextAreaConfig = {
@@ -55,6 +57,8 @@ export function EditableTextArea(r: UIRoot, {
     onInput,
     onInputKeyDown,
     config,
+    overlays,
+    textAreaRef,
 }: EditableTextAreaArgs) {
     const state = imState(r, newEditableTextAreaState);
 
@@ -69,6 +73,10 @@ export function EditableTextArea(r: UIRoot, {
 
         imIf(isEditing, r, r => {
             el(r, newTextArea, r => {
+                if (textAreaRef) {
+                    textAreaRef.val = r.root;
+                }
+
                 if (r.isFirstRender) {
                     r.c(cn.allUnset)
                      .c(cnEditableTextArea)
@@ -125,6 +133,8 @@ export function EditableTextArea(r: UIRoot, {
                 }
             });
         });
+
+        overlays?.(r);
     });
 
     return root;

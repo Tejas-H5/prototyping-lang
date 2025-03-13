@@ -568,7 +568,7 @@ export type UIChildRootItem = {
 };
 export type ListRendererItem = {
     t: typeof ITEM_LIST;
-    v: ListRenderer;
+    v: ListRenderer<ValidElement>;
 };
 export type StateItem  = {
     t: typeof ITEM_STATE;
@@ -632,6 +632,11 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     }
 
     isFirstRenderCall = true;
+    /**
+     * NOTE: if the component errored out, this will still be true on the second render,
+     * untill it renders without erroring. If you need true idempotency,
+     * use an imRef, and set it to a value when it is null.
+     */
     get isFirstRender() {
         return this.isFirstRenderCall;
     }
@@ -727,14 +732,14 @@ export class UIRoot<E extends ValidElement = ValidElement> {
 
 // TODO: keyed list renderer. It will be super useful, for type narrowing with switch statements.
 
-export class ListRenderer {
-    uiRoot: UIRoot;
-    keys = new Map<string | number, { root: UIRoot, rendered: boolean }>();
-    builders: UIRoot[] = [];
+export class ListRenderer<T extends ValidElement> {
+    uiRoot: UIRoot<T>;
+    keys = new Map<string | number, { root: UIRoot<T>, rendered: boolean }>();
+    builders: UIRoot<T>[] = [];
     builderIdx = 0;
-    current: UIRoot | null = null;
+    current: UIRoot<T> | null = null;
 
-    constructor(root: UIRoot) {
+    constructor(root: UIRoot<T>) {
         this.uiRoot = root;
     }
 
@@ -846,7 +851,7 @@ export function newUiRoot<E extends ValidElement>(supplier: () => E): UIRoot<E> 
 export type RenderFn<T extends ValidElement = ValidElement> = (r: UIRoot<T>) => void;
 export type RenderFnArgs<A extends unknown[], T extends ValidElement = ValidElement> = (r: UIRoot<T>, ...args: A) => void;
 
-export function beginList(r: UIRoot): ListRenderer {
+export function beginList<T extends ValidElement>(r: UIRoot<T>): ListRenderer<T> {
     let result = imGetNext(r.items);
     if (!result) {
         result = imPush(r.items, { t: ITEM_LIST, v: new ListRenderer(r) });
@@ -859,7 +864,7 @@ export function beginList(r: UIRoot): ListRenderer {
 
     result.v.__begin();
 
-    return result.v;
+    return result.v as ListRenderer<T>;
 }
 
 /**
@@ -911,7 +916,7 @@ export function beginList(r: UIRoot): ListRenderer {
  * and because you're keying the list on the type, you can be sure that subsequent renders
  * on the same root will always be with the same component.
  */
-export function imList(r: UIRoot, listRenderFn: (l: ListRenderer) => void) {
+export function imList<T extends ValidElement>(r: UIRoot<T>, listRenderFn: (l: ListRenderer<T>) => void) {
     const list = beginList(r);
     listRenderFn(list);
     list.end();
@@ -1316,7 +1321,7 @@ export function imErrorBoundary(
     });
 }
 
-type Ref<T> = { val: T | null; }
+export type Ref<T> = { val: T | null; }
 function newRef<T>(): Ref<T> {
     return { val: null };
 }
@@ -1358,8 +1363,8 @@ class Memoizer{
         let existing = imGetNext(this.items);
         if (!existing) {
             existing = imPush(this.items, [val]);
-        }
-        if (val !== existing[0]) {
+            this.isSame = false;
+        } else if (val !== existing[0]) {
             this.isSame = false;
         }
         existing[0] = val;
