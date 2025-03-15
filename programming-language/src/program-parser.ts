@@ -119,7 +119,7 @@ export function binOpToOpString(op: BinaryOperatorType): string {
     }
 }
 
-export function isUnreachable(t: never): never {
+export function isUnreachable(): never {
     throw new Error("This code is unreachable!");
 }
 
@@ -1009,7 +1009,6 @@ function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
 
     const c = currentChar(ctx);
     const c2 = currentChar(ctx, 1);
-    const c3 = currentChar(ctx, 2);
     switch(c) {
         case "=": 
             if (c2 === "=") {

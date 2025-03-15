@@ -313,7 +313,7 @@ function collapsableHeading(heading: string, isCollapsed: boolean, toggle: () =>
     } end();
 }
 
-function renderExecutionStep(interpretResult: ProgramInterpretResult, step: ExecutionStep, i: number, isCurrentInstruction: boolean) {
+function renderExecutionStep(step: ExecutionStep, i: number, isCurrentInstruction: boolean) {
     const result = div(); {
         textSpan(i + " | ");
 
@@ -351,8 +351,12 @@ function renderExecutionStep(interpretResult: ProgramInterpretResult, step: Exec
             textSpan(value ? "------------------" : "---");
         });
         imIf(step.call, (value) => {
-            const fn = interpretResult.functions.get(value.fnName);
-            textSpan("Call " + value.fnName + "(" + (fn ? fn.args.length + " args" : "doesn't exist!") + ")");
+            const fn = value.fn;
+            textSpan("Call " + fn.expr.fnName.name + "(" + fn.args.length + "args)");
+        });
+        imIf(step.builtinCall, (value) => {
+            const fn = value.fn;
+            textSpan("[builtin] Call " + fn.name + "(" + fn.args.length + "args)");
         });
         imIf(step.incr, (value) => {
             textSpan("Increment var  " + value);
@@ -395,7 +399,7 @@ function renderFunction(interpretResult: ProgramInterpretResult, { name, steps }
                             const isCurrent = call?.code?.steps === steps
                                 && i === call.i;
 
-                            const r1 = renderExecutionStep(interpretResult, step, i, isCurrent);
+                            const r1 = renderExecutionStep(step, i, isCurrent);
                             if (isCurrent) {
                                 rCurrent = r1;
                             }
@@ -718,9 +722,9 @@ function renderDebugMenu(ctx: GlobalContext, interpretResult: ProgramInterpretRe
                                         });
 
                                         div(); {
-                                            imIf(res, (res) => {
-                                                init() && setAttributes({ class: [cn.flex1] });
+                                            init() && setAttributes({ class: [cn.flex1] });
 
+                                            imIf(res, (res) => {
                                                 renderProgramResult(res);
                                             });
                                             imElse(() => {

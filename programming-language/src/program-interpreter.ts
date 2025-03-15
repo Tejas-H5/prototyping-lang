@@ -197,8 +197,11 @@ export type ExecutionStep = {
     // pops several indexes, uses them to index into a datastructure
     index?: boolean;
 
-    // calls a function. this function pops however many things it needs.
-    call?: { fnName: string };
+    // calls a user function with some number of args.
+    call?: { fn: ProgramResultFunction; numArgs: number; };
+
+    // calls a builtin function with some number of args.
+    builtinCall?: { fn: BuiltinFunction; numArgs: number; };
 };
 
 export type ExecutionSteps = {
@@ -206,7 +209,7 @@ export type ExecutionSteps = {
     steps: ExecutionStep[];
 }
 
-export function stepToString(interpretResult: ProgramInterpretResult, step: ExecutionStep) {
+export function stepToString(step: ExecutionStep) {
     if (step.load) {
         return ("Load " + step.load);
     }
@@ -241,8 +244,14 @@ export function stepToString(interpretResult: ProgramInterpretResult, step: Exec
     }
     if (step.call) {
         const value = step.call;
-        const fn = interpretResult.functions.get(value.fnName);
-        return ("Call " + value.fnName + "(" + (fn ? fn.args.length + " args" : "doesn't exist!") + ")");
+        const fn = value.fn;
+        const name = fn.expr.fnName.name;
+        return ("Call " +  name + "(" + value.numArgs + " args) ");
+    }
+    if (step.builtinCall) {
+        const value = step.builtinCall;
+        const name = value.fn.name
+        return ("[builtin] Call " +  name + "(" + value.numArgs + " args) ");
     }
     if (step.incr) {
         return "increment " + step.incr;
@@ -318,7 +327,7 @@ function getExecutionSteps(
                 result.errors.push({ pos: expr.pos, problem: "Ive not implemented it yet..." });
                 return !noOp;
                 // step.loadPrevious = true;
-            } break;
+            } 
             case T_ASSIGNMENT: {
                 if (!expr.rhs) {
                     incompleteExpressionError(expr);
@@ -454,12 +463,28 @@ function getExecutionSteps(
                         dfs(arg);
                     }
 
-                    step.call = { fnName: expr.fnName.name };
+                    const fn = result.functions.get(expr.fnName.name);
+                    let isValid = false;
+                    if (fn) {
+                        step.call = { fn, numArgs: expr.arguments.length };
+                        isValid = true;
+                    } else {
+                        const fn = getBuiltinFunction(expr.fnName.name);
+                        if (fn) {
+                            step.builtinCall = { fn, numArgs: expr.arguments.length };
+                            isValid = true;
+                        }
+                    }
+
+                    if (!isValid) {
+                        result.errors.push({ pos: expr.pos, problem: "Couldn't resolve this function" });
+                        return !noOp;
+                    }
                 }
             } break;
             case T_DATA_INDEX_OP: {
                 throw new Error("TODO: Implement data indexing");
-            } break;
+            } 
             default: {
                 throw new Error("Unhandled type: " + expressionTypeToString(expr));
             }
@@ -493,8 +518,8 @@ function getLength(result: ProgramResult): number | undefined {
     }
 }
 
-function get(result: ProgramInterpretResult): ProgramResult | null {
-    return result.stack[result.stackIdx];
+function get(result: ProgramInterpretResult, offset = 0): ProgramResult | null {
+    return result.stack[result.stackIdx + offset];
 }
 
 function pop(result: ProgramInterpretResult): ProgramResult {
@@ -600,148 +625,155 @@ function min (a: number, b: number): number {
     return a < b ? a : b;
 }
 
-function evaluateBuiltinFunction(step: ExecutionStep, program: ProgramInterpretResult, call: ExecutionState): ProgramResult | undefined {
-    assert(step.call);
-    const name = step.call.fnName;
+type BuiltinFunctionArgDesc = {
+    name: string;
+};
 
-    const getNumber = (offset: number): ProgramResultNumber | undefined => {
-        const idx = program.stackIdx - offset;
-        if (idx < call.returnAddress || idx < 0) {
-            // This error should be caught higher up the chian, ideally.
-            addError(program, step, "Builtin function needs more arguments than were supplied");
-            return;
+type BuiltinFunction = {
+    name: string;
+    fn: (...results: ProgramResult[]) => ProgramResult | undefined;
+    args: BuiltinFunctionArgDesc[];
+};
+
+function newArg(name: string): BuiltinFunctionArgDesc {
+    return { name };
+}
+
+function newBuiltinFunction(
+    name: string, 
+    args: BuiltinFunctionArgDesc[], 
+    fn: (...results: ProgramResult[]) => ProgramResult | undefined
+): BuiltinFunction {
+    return { name, fn, args };
+}
+
+const builtinMathFuncs = new Map([
+    newBuiltinFunction("sin", [newArg("t")], (val: ProgramResult) => {
+        if (val.t === T_RESULT_NUMBER) {
+            return newNumberResult(Math.sin(val.val));
         }
-
-        const val = program.stack[idx];
-        assert(val);
-
-        if (val.t !== T_RESULT_NUMBER) {
-            addError(program, step, "Builtin function argument " + offset + "should be a number");
-            return;
+    }),
+    newBuiltinFunction("cos", [newArg("t")], (val: ProgramResult) => {
+        if (val.t === T_RESULT_NUMBER) {
+            return newNumberResult(Math.cos(val.val));
         }
+    }),
+    newBuiltinFunction("tan", [newArg("t")], (val: ProgramResult) => {
+        if (val.t === T_RESULT_NUMBER) {
+            return newNumberResult(Math.tan(val.val));
+        }
+    }),
+    newBuiltinFunction("asin", [newArg("t")], (val: ProgramResult) => {
+        if (val.t === T_RESULT_NUMBER) {
+            return newNumberResult(Math.asin(val.val));
+        }
+    }),
+    newBuiltinFunction("acos", [newArg("t")], (val: ProgramResult) => {
+        if (val.t === T_RESULT_NUMBER) {
+            return newNumberResult(Math.acos(val.val));
+        }
+    }),
+    newBuiltinFunction("atan", [newArg("t")], (val: ProgramResult) => {
+        if (val.t === T_RESULT_NUMBER) {
+            return newNumberResult(Math.atan(val.val));
+        }
+    }),
+    newBuiltinFunction("atan2", [newArg("y"), newArg("x")], (y: ProgramResult, x: ProgramResult) => {
+        if (y.t === T_RESULT_NUMBER && x.t === T_RESULT_NUMBER) {
+            return newNumberResult(Math.atan2(y.val, x.val));
+        }
+    }),
+    newBuiltinFunction("abs", [newArg("x")], (val: ProgramResult) => {
+        if (val.t === T_RESULT_NUMBER) {
+            return newNumberResult(Math.abs(val.val));
+        }
+    }),
+    newBuiltinFunction("ceil", [newArg("x")], (val: ProgramResult) => {
+        if (val.t === T_RESULT_NUMBER) {
+            return newNumberResult(Math.ceil(val.val));
+        }
+    }),
+    newBuiltinFunction("floor", [newArg("x")], (val: ProgramResult) => {
+        if (val.t === T_RESULT_NUMBER) {
+            return newNumberResult(Math.floor(val.val));
+        }
+    }),
+    newBuiltinFunction("round", [newArg("x")], (val: ProgramResult) => {
+        if (val.t === T_RESULT_NUMBER) {
+            return newNumberResult(Math.round(val.val));
+        }
+    }),
+    newBuiltinFunction("log", [newArg("x")], (val: ProgramResult) => {
+        if (val.t === T_RESULT_NUMBER) {
+            return newNumberResult(Math.log(val.val));
+        }
+    }),
+    newBuiltinFunction("max", [newArg("a"),  newArg("b")], (a: ProgramResult, b: ProgramResult) => {
+        if (a.t === T_RESULT_NUMBER && b.t === T_RESULT_NUMBER) {
+            return newNumberResult(max(a.val, b.val));
+        }
+    }),
+    newBuiltinFunction("min", [newArg("a"), newArg("b")], (a: ProgramResult, b: ProgramResult) => {
+        if (a.t === T_RESULT_NUMBER && b.t === T_RESULT_NUMBER) {
+            return newNumberResult(min(a.val, b.val));
+        }
+    }),
+    newBuiltinFunction("rand", [], () => {
+        return newNumberResult(Math.random());
+    }),
+    newBuiltinFunction("pow", [newArg("x"), newArg("n")], (x: ProgramResult, n: ProgramResult) => {
+        if (x.t === T_RESULT_NUMBER && n.t === T_RESULT_NUMBER) {
+            return newNumberResult(Math.pow(x.val, n.val));
+        }
+    }),
+].map(f => [f.name, f]));
 
-        return val;
+function getBuiltinFunction(name: string): BuiltinFunction | undefined {
+    return builtinMathFuncs.get(name);
+}
+
+function evaluateBuiltinFunction(
+    fn: BuiltinFunction, 
+    program: ProgramInterpretResult, 
+    step: ExecutionStep
+): ProgramResult | undefined {
+    // If only there were a better way...
+
+    if (fn.args.length === 0) {
+        return fn.fn();
     }
 
+    if (fn.args.length === 1) {
+        const arg1 = get(program);
+        if (arg1) {
+            return fn.fn(arg1);
+        }
+        addError(program, step, "Expected 1 argument");
+        return;
+    }
+    
+    if (fn.args.length === 2) {
+        const arg1 = get(program, -1);
+        const arg2 = get(program);
+        if (arg1 && arg2) {
+            return fn.fn(arg1, arg2);
+        }
+        addError(program, step, "Expected 2 arguments");
+        return;
+    }
 
-    let result: ProgramResult | undefined;
+    if (fn.args.length === 3) {
+        const arg1 = get(program, -2);
+        const arg2 = get(program, -1);
+        const arg3 = get(program);
+        if (arg1 && arg2 && arg3) {
+            return fn.fn(arg1, arg2, arg3);
+        }
+        addError(program, step, "Expected 3 arguments");
+        return;
+    }
 
-    // TODO: use numeric enum. It appears that the string comparisons _are_ slower than number comparisons.
-    switch (name) {
-        case "abs": {
-            const a1 = getNumber(0);
-            if (a1) {
-                result = newNumberResult(Math.abs(a1.val));
-            }
-        } break;
-        case "acos": {
-            const a1 = getNumber(0);
-            if (a1) {
-                result = newNumberResult(Math.acos(a1.val));
-            }
-        } break;
-        case "asin": {
-            const a1 = getNumber(0);
-            if (a1) {
-                result = newNumberResult(Math.asin(a1.val));
-            }
-        } break;
-        case "atan": {
-            const a1 = getNumber(0);
-            if (a1) {
-                result = newNumberResult(Math.atan(a1.val));
-            }
-        } break;
-        case "atan2": {
-            const a1 = getNumber(1);
-            const a2 = getNumber(0);
-            if (a1 && a2) {
-                result = newNumberResult(Math.atan2(a1.val, a2.val));
-            }
-        } break;
-        case "ceil": {
-            const a1 = getNumber(0);
-            if (a1) {
-                result = newNumberResult(Math.ceil(a1.val));
-            }
-        } break;
-        case "cos": {
-            const a1 = getNumber(0);
-            if (a1) {
-                result = newNumberResult(Math.cos(a1.val));
-            }
-        } break;
-        // I'd rather have code like E ** (PI * i)
-        // instead of a dedicated function to raise e to a thing
-        // case "exp": {
-        //     const a1 = getNumber(0);
-        //     const a2 = getNumber(1);
-        //     if (a1 && a2) {
-        //         result = newNumberResult(Math.exp(a1.val, a2.val));
-        //     }
-        // } break;
-        case "floor": {
-            const a1 = getNumber(0);
-            if (a1) {
-                result = newNumberResult(Math.floor(a1.val));
-            }
-        } break;
-        case "log": {
-            const a1 = getNumber(0);
-            if (a1) {
-                result = newNumberResult(Math.log(a1.val));
-            }
-        } break;
-        case "max": {
-            const a1 = getNumber(1);
-            const a2 = getNumber(0);
-            if (a1 && a2) {
-                result = newNumberResult(max(a1.val, a2.val));
-            }
-        } break;
-        case "min": {
-            const a1 = getNumber(1);
-            const a2 = getNumber(0);
-            if (a1 && a2) {
-                result = newNumberResult(min(a1.val, a2.val));
-            }
-        } break;
-        case "pow": {
-            const a1 = getNumber(1);
-            const a2 = getNumber(0);
-            if (a1 && a2) {
-                result = newNumberResult(Math.pow(a1.val, a2.val));
-            }
-        } break;
-        case "random": {
-            result = newNumberResult(Math.random());
-        } break;
-        case "round": {
-            const a1 = getNumber(0);
-            if (a1) {
-                result = newNumberResult(Math.round(a1.val));
-            }
-        } break;
-        case "sin": {
-            const a1 = getNumber(0);
-            if (a1) {
-                result = newNumberResult(Math.sin(a1.val));
-            }
-        } break;
-        case "sqrt": {
-            const a1 = getNumber(0);
-            if (a1) {
-                result = newNumberResult(Math.sqrt(a1.val));
-            }
-        } break;
-        case "tan": {
-            const a1 = getNumber(0); if (a1) {
-                result = newNumberResult(Math.tan(a1.val));
-            }
-        } break;
-    };
-
-    return result;
+    addError(program, step, "Too many arguments...");
 }
 
 export function stepProgram(result: ProgramInterpretResult): boolean {
@@ -907,39 +939,33 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
             return true;
         }
     } else if (step.call) {
-        const res = evaluateBuiltinFunction(step, result, call);
+        const fn = step.call.fn
+
+        const variables = new Map<string, number>();
+        for (let i = 0; i < fn.args.length; i++) {
+            const argIdx = result.stackIdx - fn.args.length + i + 1;
+            variables.set(fn.args[i].name, argIdx);
+        }
+        result.callStack.push({
+            code: fn.code,
+            argsCount: fn.args.length,
+            i: 0, lastBlockLevelResult: null, variables,
+            // TODO: verify that this is correct, it prob isn't
+            returnAddress: call.returnAddress + fn.args.length,
+        });
+        call.i++;
+        return true;
+    } else if (step.builtinCall) {
+        const res = evaluateBuiltinFunction(step.builtinCall.fn, result, step);
         if (result.errors.length > 0) {
             return false;
         }
+        // Should always push an error if we're returning undefined
+        assert(res);
 
-        if (res) {
-            result.stackIdx = call.returnAddress + 1;
-            result.stack[result.stackIdx] = res;
-        } else {
-            const value = step.call;
-            const fn = result.functions.get(value.fnName);
-            if (!fn) {
-                addError(result, step, "Function doesn't exist yet");
-                return false;
-            }
-
-            const variables = new Map<string, number>();
-            for (let i = 0; i < fn.args.length; i++) {
-                const argIdx = result.stackIdx - fn.args.length + i + 1;
-                variables.set(fn.args[i].name, argIdx);
-            }
-            result.callStack.push({
-                code: fn.code,
-                argsCount: fn.args.length,
-                i: 0, lastBlockLevelResult: null, variables,
-                // TODO: verify that this is correct, it prob isn't
-                returnAddress: call.returnAddress + fn.args.length,
-            });
-            call.i++;
-            return true;
-        }
-    }
-    else if (step.blockStatementEnd !== undefined) {
+        result.stackIdx -= step.builtinCall.numArgs;
+        push(result, res, step);
+    } else if (step.blockStatementEnd !== undefined) {
         // need this to clean up after the last 'statement', actually.
         const val = get(result);
         result.stackIdx = call.returnAddress;
