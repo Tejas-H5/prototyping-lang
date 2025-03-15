@@ -1,5 +1,6 @@
 import { cssVars } from "src/styling";
-import { cn, div, el, setInputValue, imOn, newCssBuilder, span, UIRoot, newDomElement, imState, imIf, RenderFn, Ref } from "src/utils/im-dom-utils";
+import { execCommand } from "src/utils/depracated-dom-api-wrappers";
+import { cn, div, el, end, imIf, imOn, imState, init, newCssBuilder, newDomElement, Ref, setAttributes, setClass, setInputValue, span, textNode } from "src/utils/im-dom-utils";
 import { getLineBeforePos } from "src/utils/text-utils";
 
 const CSSVARS_FOCUS = cssVars.bg;
@@ -32,7 +33,7 @@ export type EditableTextAreaArgs = {
     onInputKeyDown(e: KeyboardEvent, textArea: HTMLTextAreaElement): void;
     config: EditableTextAreaConfig;
     textAreaRef?: Ref<HTMLTextAreaElement>;
-    overlays?: RenderFn;
+    overlays?: () => void;
 };
 
 type EditableTextAreaConfig = {
@@ -50,7 +51,7 @@ function newEditableTextAreaState() {
 
 // NOTE: this text area has a tonne of minor things wrong with it. we should fix them at some point.
 //   - When I have a lot of empty newlines, and then click off, the empty lines go away 'as needed' 
-export function EditableTextArea(r: UIRoot, {
+export function EditableTextArea({
     text,
     isEditing,
     isOneLine,
@@ -60,35 +61,30 @@ export function EditableTextArea(r: UIRoot, {
     overlays,
     textAreaRef,
 }: EditableTextAreaArgs) {
-    const state = imState(r, newEditableTextAreaState);
+    const state = imState(newEditableTextAreaState);
 
     const wasEditing = state.isEditing;
     state.isEditing = isEditing;
 
-    const root = div(r, r => {
-        if (r.isFirstRender) {
-            r.c(cn.flex1).c(cn.row).c(cn.h100).c(cn.relative)
-             .s("overflowY", "hidden");
-        }
+    const root = div(); {
+        init() && setAttributes({
+            class: [cn.flex1, cn.row, cn.h100, cn.relative],
+            style: "overflow-y: hidden",
+        });
 
-        imIf(isEditing, r, r => {
-            el(r, newTextArea, r => {
+        imIf(isEditing, () => {
+            const textArea = el(newTextArea).root; {
                 if (textAreaRef) {
-                    textAreaRef.val = r.root;
+                    textAreaRef.val = textArea;
                 }
 
-                if (r.isFirstRender) {
-                    r.c(cn.allUnset)
-                     .c(cnEditableTextArea)
-                     .c(cn.absolute).c(cn.preWrap).c(cn.w100).c(cn.h100)
-                     .s("backgroundColor", "transparent")
-                     .s("color", "transparent")
-                     .s("overflowY", "hidden")
-                     .s("padding", "0")
-                }
+                init() && setAttributes({
+                    class: [cnEditableTextArea, cn.allUnset, cn.absolute, cn.preWrap, cn.w100, cn.h100],
+                    style: "background-color: transparent; color: transparent; overflow-y: hidden; padding: 0px",
+                });
 
                 if (!wasEditing) {
-                    r.root.focus({ preventScroll: true });
+                    textArea.focus({ preventScroll: true });
                 }
 
 
@@ -97,45 +93,49 @@ export function EditableTextArea(r: UIRoot, {
                     // for some reason, we need to render this thing again when we start editing - perhaps
                     // setting the input value doesn't work if it isn't visible...
                     state.lastIsEditing = isEditing;
-                    setInputValue(r.root, text);
+                    setInputValue(textArea, text);
                 }
 
-                imOn(r, "input", () => {
-                    onInput(r.root.value, r.root);
+                imOn("input", () => {
+                    onInput(textArea.value, textArea);
                 });
 
-                imOn(r, "keydown", (e) => {
-                    if (!handleTextAreaKeyboardInput(e, r.root, config)) {
-                        onInputKeyDown(e, r.root);
+                imOn("keydown", (e) => {
+                    if (!handleTextAreaKeyboardInput(e, textArea, config)) {
+                        onInputKeyDown(e, textArea);
                     }
                 });
-            });
+            } end();
         });
 
         // This is now always present.
-        div(r, r => {
-            r.c(cn.handleLongWords)
-             .c(cn.preWrap, !isOneLine)
-             .c(cn.pre, !!isOneLine)
-             .c(cn.overflowHidden, isOneLine)
-             .c(cn.noWrap, !!isOneLine);
+        div(); {
+            init() && setAttributes({
+                class: [cn.handleLongWords]
+            });
+
+            setClass(cn.preWrap, !isOneLine)
+            setClass(cn.pre, !!isOneLine)
+            setClass(cn.overflowHidden, isOneLine)
+            setClass(cn.noWrap, !!isOneLine);
 
             // This is a facade that gives the text area the illusion of auto-sizing!
             // but it only works if the text doesn't end in whitespace....
-            span(r, r => {
-                r.text(text);
-            });
+            span(); {
+                textNode(text);
+            } end();
 
             // This full-stop at the end of the text is what prevents the text-area from collapsing in on itself
-            span(r, r => {
-                if (r.isFirstRender) {
-                    r.s("color", "transparent").text(".");
+            span(); {
+                if (init()) {
+                    setAttributes({ style: "color: transparent" });
+                    textNode(".");
                 }
-            });
-        });
+            } end();
+        } end();
 
-        overlays?.(r);
-    });
+        overlays?.();
+    } end();
 
     return root;
 }
@@ -195,7 +195,7 @@ function handleTextAreaKeyboardInput(e: KeyboardEvent, textArea: HTMLTextAreaEle
             if (spacesToRemove) {
                 e.preventDefault();
                 for (let i = 0; i < spacesToRemove; i++) {
-                    document.execCommand("delete", false, undefined);
+                    execCommand("delete", false, undefined);
                 }
             }
         }
@@ -228,7 +228,7 @@ function handleTextAreaKeyboardInput(e: KeyboardEvent, textArea: HTMLTextAreaEle
                     const spacesToRemove = getSpacesToRemove(col2);
                     for (let i = 0; i < spacesToRemove; i++) {
                         // cursor implicitly moves back 1 for each deletion.
-                        document.execCommand("delete", false, undefined);
+                        execCommand("delete", false, undefined);
                         newEnd--;
                     }
                 }
@@ -243,7 +243,7 @@ function handleTextAreaKeyboardInput(e: KeyboardEvent, textArea: HTMLTextAreaEle
                 const col = getLineBeforePos(text, start);
                 const indentation = getIndentation(col);
                 e.preventDefault();
-                document.execCommand("insertText", false, indentation);
+                execCommand("insertText", false, indentation);
             } else {
                 e.preventDefault();
 
@@ -267,7 +267,8 @@ function handleTextAreaKeyboardInput(e: KeyboardEvent, textArea: HTMLTextAreaEle
                     const indentation = getIndentation(col2);
                     textArea.selectionStart = pos;
                     textArea.selectionEnd = pos;
-                    document.execCommand("insertText", false, indentation);
+
+                    execCommand("insertText", false, indentation);
                     newEnd += indentation.length;
 
                     i -= col.length;
