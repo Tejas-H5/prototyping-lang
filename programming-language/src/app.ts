@@ -1,12 +1,11 @@
 import { EditableTextArea } from './components/text-area.ts';
-import { ExecutionStep, ExecutionSteps, getCurrentCallstack, interpret, ProgramInterpretResult, ProgramResult, programResultTypeString, startInterpreting, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING } from './program-interpreter.ts';
+import { ExecutionStep, ExecutionSteps, executionStepToString, getCurrentCallstack, interpret, ProgramInterpretResult, ProgramOutputs, ProgramResult, programResultTypeString, startInterpreting, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING } from './program-interpreter.ts';
 import {
-    binOpToOpString,
     binOpToString,
     binOpToOpString as binOpToSymbolString,
     DiagnosticInfo,
+    expressionToString,
     expressionTypeToString,
-    getSliceText,
     parse,
     ProgramExpression,
     ProgramParseResult,
@@ -27,7 +26,7 @@ import {
 import { GlobalContext, GlobalState, newGlobalContext, saveState, startDebugging } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
-import { assert, beginList, cn, div, el, end, getComponentStackSize, imElse, imIf, imMemo, imOn, imRef, imRerenderable, imState, imTryCatch, init, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setStyle, span, textNode, textSpan, UIRoot } from './utils/im-dom-utils.ts';
+import { assert, beginList, cn, div, el, end, endList, getComponentStackSize, imElse, imIf, imMemo, imOn, imRef, imRerenderable, imState, imTryCatch, init, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setStyle, span, textNode, textSpan, UIRoot } from './utils/im-dom-utils.ts';
 import { getLineBeforePos, getLineEndPos, getLineStartPos } from './utils/text-utils.ts';
 
 function newH3() {
@@ -47,6 +46,7 @@ function codeSpan(text: string) {
     return root;
 }
 
+// Don't forget to call end()
 function beginCodeBlock(indent: number) {
     const root = div(); { 
         init() && setAttributes({
@@ -55,7 +55,7 @@ function beginCodeBlock(indent: number) {
         });
 
         setStyle("paddingLeft", (4 * indent) + "ch");
-    }
+    } 
 
     return root;
 }
@@ -91,7 +91,7 @@ function ParserOutput(parseResultOrUndefined: ProgramParseResult | undefined) {
                 let typeString = expressionTypeToString(expr);
                 switch (expr.t) {
                     case T_IDENTIFIER: {
-                        renderRow(title, typeString, depth, getSliceText(expr.slice));
+                        renderRow(title, typeString, depth, expressionToString(expr));
                     } break;
                     case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: {
                         renderRow(title, typeString, depth);
@@ -102,8 +102,8 @@ function ParserOutput(parseResultOrUndefined: ProgramParseResult | undefined) {
                         dfs("rhs", expr.rhs, depth + 1);
                     } break;
                     case T_BINARY_OP: {
-                        const lhsText = getSliceText(expr.lhs.slice);
-                        const rhsText = expr.rhs ? getSliceText(expr.rhs.slice) : INCOMPLETE;
+                        const lhsText = expressionToString(expr.lhs);
+                        const rhsText = expr.rhs ? expressionToString(expr.rhs) : INCOMPLETE;
                         const opSymbol = binOpToSymbolString(expr.op);
                         const text = `(${lhsText}) ${opSymbol} (${rhsText})`;
                         renderRow(title, binOpToString(expr.op), depth, text);
@@ -113,22 +113,22 @@ function ParserOutput(parseResultOrUndefined: ProgramParseResult | undefined) {
                     } break;
                     case T_LIST_LITERAL: 
                     case T_VECTOR_LITERAL: {
-                        renderRow(title, typeString, depth, getSliceText(expr.slice));
+                        renderRow(title, typeString, depth, expressionToString(expr));
 
                         for (let i = 0; i < expr.items.length; i++) {
                             dfs("[" + i + "]", expr.items[i], depth + 1);
                         }
                     } break;
                     case T_NUMBER_LITERAL: {
-                        renderRow(title, typeString, depth, getSliceText(expr.slice));
+                        renderRow(title, typeString, depth, expressionToString(expr));
                     } break;
                     case T_STRING_LITERAL: {
-                        renderRow(title, typeString, depth, getSliceText(expr.slice));
+                        renderRow(title, typeString, depth, expressionToString(expr));
                     } break;
                     case T_TERNARY_IF: {
-                        const queryText = getSliceText(expr.query.slice);
-                        const trueText = getSliceText(expr.trueBranch.slice);
-                        const falseText = expr.falseBranch ? getSliceText(expr.falseBranch.slice) : "";
+                        const queryText = expressionToString(expr.query);
+                        const trueText = expressionToString(expr.trueBranch);
+                        const falseText = expr.falseBranch ? expressionToString(expr.falseBranch) : "";
                         renderRow(title, typeString, depth, `(${queryText}) ? (${trueText}) : (${falseText})`);
 
                         dfs("query", expr.query, depth + 1);
@@ -179,7 +179,7 @@ function ParserOutput(parseResultOrUndefined: ProgramParseResult | undefined) {
                 const statement = statements[i];
                 dfs("Statement " + (i + 1), statement, 0);
             }
-        } end();
+        } endList();
         imElse(() => {
             textSpan("Nothing parsed yet");
         });
@@ -206,7 +206,7 @@ function renderDiagnosticInfo(heading: string, info: DiagnosticInfo[], emptyText
             } end();
         } end();
     }
-    end();
+    endList();
     imIf(info.length === 0, () => {
         div(); {
             textSpan(emptyText);
@@ -240,7 +240,7 @@ function renderProgramResult(res: ProgramResult) {
                                     renderProgramResult(res.values[i]);
                                 } end();
                             }
-                            end();
+                            endList();
                         } end();
                         codeSpan("]L");
                     } end();
@@ -272,7 +272,7 @@ function renderProgramResult(res: ProgramResult) {
                                         dfs(dim + 1, i === len - 1);
                                     } end();
                                 }
-                            } end();
+                            } endList();
                             textSpan("]");
                         } end();
                     }
@@ -289,7 +289,7 @@ function renderProgramResult(res: ProgramResult) {
                 default:
                     throw new Error("Unhandled result type: " + programResultTypeString(res));
             } end();
-        } end();
+        } endList();
     } end();
 }
 
@@ -313,63 +313,10 @@ function collapsableHeading(heading: string, isCollapsed: boolean, toggle: () =>
     } end();
 }
 
-function renderExecutionStep(step: ExecutionStep, i: number, isCurrentInstruction: boolean) {
-    const result = div(); {
-        textSpan(i + " | ");
-
-        imIf(step.load, (value) => {
-            textSpan("Load " + value);
-        });
-        // imIf(step.loadPrevious, r, (r) => {
-        //     textSpan(r, "Load <the last result>");
-        // });
-        imIf(step.set, (value) => {
-            textSpan("Set " + value);
-        });
-        imIf(step.binaryOperator, (value) => {
-            textSpan("Binary op: " + binOpToOpString(value) + " (" + binOpToString(value) + ")");
-        });
-        imIf(step.list, (value) => {
-            textSpan("List " + value);
-        });
-        imIf(step.vector, (value) => {
-            textSpan("Vector " + value);
-        });
-        imIf(step.number, (value) => {
-            textSpan("Number " + value);
-        });
-        imIf(step.string, (value) => {
-            textSpan("String " + value);
-        });
-        imIf(step.jump, (value) => {
-            textSpan("Jump: " + value);
-        });
-        imIf(step.jumpIfFalse, (value) => {
-            textSpan("Jump if false: " + value);
-        });
-        imIf(step.blockStatementEnd !== undefined, (value) => {
-            textSpan(value ? "------------------" : "---");
-        });
-        imIf(step.call, (value) => {
-            const fn = value.fn;
-            textSpan("Call " + fn.expr.fnName.name + "(" + fn.args.length + "args)");
-        });
-        imIf(step.builtinCall, (value) => {
-            const fn = value.fn;
-            textSpan("[builtin] Call " + fn.name + "(" + fn.args.length + "args)");
-        });
-        imIf(step.incr, (value) => {
-            textSpan("Increment var  " + value);
-        });
-        imIf(step.decr, (value) => {
-            textSpan("Decrement var  " + value);
-        });
-        imIf(isCurrentInstruction, () => {
-            textSpan(" <----");
-        });
+function renderExecutionStep(step: ExecutionStep) {
+    span(); {
+        textNode(executionStepToString(step));
     } end();
-
-    return result;
 }
 
 function renderFunction(interpretResult: ProgramInterpretResult, { name, steps }: ExecutionSteps) {
@@ -387,7 +334,7 @@ function renderFunction(interpretResult: ProgramInterpretResult, { name, steps }
                 class: [cn.flex1, cn.overflowAuto]
             });
 
-            let rCurrent: UIRoot<HTMLDivElement> | undefined;
+            let rCurrent: UIRoot<HTMLElement> | undefined;
 
             beginCodeBlock(0); {
                 beginList(); {
@@ -399,13 +346,23 @@ function renderFunction(interpretResult: ProgramInterpretResult, { name, steps }
                             const isCurrent = call?.code?.steps === steps
                                 && i === call.i;
 
-                            const r1 = renderExecutionStep(step, i, isCurrent);
+                            const currentStepDiv = div(); {
+                                textSpan(i + " | ");
+
+                                renderExecutionStep(step);
+
+                                imIf(isCurrent, () => {
+                                    textSpan(" <----");
+                                });
+                            } end();
+
                             if (isCurrent) {
-                                rCurrent = r1;
+                                rCurrent = currentStepDiv;
+
                             }
                         } end();
                     }
-                } end();
+                } endList();
                 imElse(() => {
                     div(); {
                         textSpan("no instructions present");
@@ -488,18 +445,6 @@ function renderAppCodeOutput(ctx: GlobalContext) {
 
             div(); {
                 imIf(ctx.lastInterpreterResult, (interpretResult) => {
-                    beginList();
-                    for (const result of interpretResult.results) {
-                        nextRoot(); {
-                            renderProgramResult(result);
-                        } end();
-                    }
-                    end();
-
-                    imElse(() => {
-                        textSpan("No results yet");
-                    });
-
                     renderDiagnosticInfo("Interpreting errors", interpretResult.errors, "No interpreting errors");
 
                     el(newH3); {
@@ -516,10 +461,12 @@ function renderAppCodeOutput(ctx: GlobalContext) {
                                 renderFunction(interpretResult, fn.code);
                             } end();
                         } 
-                    } end();
+                    } endList();
                     imElse(() => {
                         textSpan("No code output yet");
                     });
+
+                    renderOutputs(interpretResult.outputs);
                 });
             } end();
         });
@@ -575,8 +522,7 @@ function renderDiagnosticInfoOverlay(
                 } end();
             } end();
         } end();
-    }
-    end();
+    } endList();
 }
 
 function renderAppCodeEditor({
@@ -735,7 +681,7 @@ function renderDebugMenu(ctx: GlobalContext, interpretResult: ProgramInterpretRe
                                 } end();
                             } end();
                         }
-                    } end();
+                    } endList();
                 } end();
                 div(); {
                     init() && setAttributes({ class: [cn.flex1] });
@@ -743,9 +689,15 @@ function renderDebugMenu(ctx: GlobalContext, interpretResult: ProgramInterpretRe
                     el(newH3); {
                         textSpan("Variables");
                     } end();
+
                     beginList(); 
-                    for (const cs of interpretResult.callStack) {
+                    for (let i = 0; i < interpretResult.callStack.length; i++) {
+                        const cs = interpretResult.callStack[i];
                         nextRoot(); {
+                            div(); {
+                                textSpan("Call stack " + i);
+                            } end();
+
                             div(); {
                                 beginList(); 
                                 for (const [k, addr] of cs.variables) {
@@ -759,26 +711,61 @@ function renderDebugMenu(ctx: GlobalContext, interpretResult: ProgramInterpretRe
                                             renderProgramResult(v);
                                         });
                                     } end();
-                                } 
-                                end();
+                                } endList();
                             } end();
                         } end();
-                    }
-                    end();
+                    } endList();
                 } end();
             } end();
         } end();
-        beginList(); 
-        for (const result of interpretResult.results) {
-            nextRoot(); {
-                renderProgramResult(result);
-            } end();
-        };
-        end();
-        imElse(() => {
-            textSpan("No results yet");
-        });
+        renderOutputs(interpretResult.outputs);
     } end();
+}
+
+function renderOutputs(outputs: ProgramOutputs) {
+    beginList();
+    for (const result of outputs.prints) {
+        nextRoot(); {
+            div(); {
+                init() && setAttributes({ 
+                    class: [cn.row], 
+                    style: "gap: 5px",
+                })
+
+                div(); { 
+                    init() && setAttributes({ style: `padding-top: 5px;` });
+
+                    beginCodeBlock(0); {
+                        init() && setAttributes({ style: `padding: 5px;` });
+
+                        textNode(
+                            expressionToString(result.expr)
+                        )
+                    } end();
+                } end();
+
+                div(); {
+                    init() && setAttributes({ 
+                        style: `width: 5px; background-color: ${cssVars.fg};`
+                    });
+                } end();
+
+                div(); {
+                    init() && setAttributes({ 
+                        class: [cn.flex1], 
+                        style: `padding-top: 5px;`
+                    });
+
+                    renderProgramResult(result.val);
+                } end();
+            } end();
+
+        } end();
+    };
+    endList();
+    imElse(() => {
+        textSpan("No results yet");
+    });
 }
 
 let saveTimeout = 0;

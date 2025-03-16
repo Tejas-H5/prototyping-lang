@@ -201,7 +201,7 @@ export type ExecutionStep = {
     call?: { fn: ProgramResultFunction; numArgs: number; };
 
     // calls a builtin function with some number of args.
-    builtinCall?: { fn: BuiltinFunction; numArgs: number; };
+    builtinCall?: { fn: BuiltinFunction; expr: ProgramExpressionFn; numArgs: number; };
 };
 
 export type ExecutionSteps = {
@@ -209,59 +209,61 @@ export type ExecutionSteps = {
     steps: ExecutionStep[];
 }
 
-export function stepToString(step: ExecutionStep) {
-    if (step.load) {
+export function executionStepToString(step: ExecutionStep) {
+    if (step.load !== undefined) {
         return ("Load " + step.load);
     }
-    // if (step.loadPrevious) {
-    //     return ("Load <the last result>");
-    // }
-    if (step.set) {
+    if (step.blockStatementEnd !== undefined) {
+        return step.blockStatementEnd ? "end block <top level>" : "end block";
+    }
+    if (step.set !== undefined) {
         return ("Set " + step.set);
     }
-    if (step.binaryOperator) {
+    if (step.binaryOperator !== undefined) {
         return ("Binary op: " + binOpToOpString(step.binaryOperator) + " (" + binOpToString(step.binaryOperator) + ")");
     }
-    if (step.list) {
+    if (step.list !== undefined) {
         return ("List " + step.list);
     }
-    if (step.vector) {
+    if (step.vector !== undefined) {
         return ("Vector " + step.vector);
     }
-    if (step.number) {
+    if (step.number !== undefined) {
         return ("Number " + step.number);
     }
-    if (step.string) {
+    if (step.string !== undefined) {
         return ("String " + step.string);
     }
-    if (step.jump) {
+    if (step.jump !== undefined) {
         const value = step.jump;
         return ("jump to idx=" + value);
     }
-    if (step.jumpIfFalse) {
+    if (step.jumpIfFalse !== undefined) {
         const value = step.jump;
         return ("jump (if false) to idx=" + value);
     }
-    if (step.call) {
+    if (step.incr !== undefined) {
+        return "increment " + step.incr;
+    } 
+    if (step.decr !== undefined) {
+        return "decrement " + step.decr;
+    }
+    if (step.index !== undefined) {
+        return "index op";
+    }
+    if (step.call !== undefined) {
         const value = step.call;
         const fn = value.fn;
         const name = fn.expr.fnName.name;
         return ("Call " +  name + "(" + value.numArgs + " args) ");
     }
-    if (step.builtinCall) {
+    if (step.builtinCall !== undefined) {
         const value = step.builtinCall;
         const name = value.fn.name
         return ("[builtin] Call " +  name + "(" + value.numArgs + " args) ");
     }
-    if (step.incr) {
-        return "increment " + step.incr;
-    } 
-    if (step.decr) {
-        return "decrement " + step.decr;
-    }
-    if (step.blockStatementEnd !== undefined) {
-        return step.blockStatementEnd ? "top level block statement end" : "normal block level statement end";
-    }
+
+    return "Unhandled step";
 }
 
 function newExecutionStep(expr: ProgramExpression): ExecutionStep {
@@ -295,8 +297,19 @@ export type ProgramInterpretResult = {
     stackIdx: number;
     callStack: ExecutionState[];
 
-    results: ProgramResult[];
+    outputs: ProgramOutputs;
 }
+
+export type ProgramPrintOutput = {
+    step: ExecutionStep;
+    expr: ProgramExpression;
+    val: ProgramResult;
+}
+
+export type ProgramOutputs = {
+    prints: ProgramPrintOutput[];
+};
+
 
 function getExecutionSteps(
     result: ProgramInterpretResult,
@@ -420,8 +433,10 @@ function getExecutionSteps(
                 // if we don't know whether the range expression is looping upwards or downards, so 
                 // I'll have to introduce two new operators that range upwards and downards...
 
-                dfs(expr.loExpr);
-                if (!expr.ascending) {
+                if (expr.ascending) {
+                    dfs(expr.loExpr);
+                } else {
+                    dfs(expr.hiExpr);
                     steps.push({ expr, number: 1 });
                     steps.push({ expr, binaryOperator: BIN_OP_SUBTRACT });
                 }
@@ -430,23 +445,24 @@ function getExecutionSteps(
                 const loopStartIdx = steps.length;
 
                 steps.push({ expr, load: expr.loopVar.name });
-                dfs(expr.hiExpr);
                 if (expr.ascending) {
+                    dfs(expr.hiExpr);
                     steps.push({ expr, binaryOperator: BIN_OP_LESS_THAN });
                 } else {
+                    dfs(expr.loExpr);
                     steps.push({ expr, binaryOperator: BIN_OP_GREATER_THAN_EQ });
                 }
 
                 const jumpToLoopEndIfFalse = newExecutionStep(expr);
                 steps.push(jumpToLoopEndIfFalse);
 
+                dfs(expr.body);
+
                 if (expr.ascending) {
                     steps.push({ expr, incr: expr.loopVar.name });
                 } else {
                     steps.push({ expr, decr: expr.loopVar.name });
                 }
-
-                dfs(expr.body);
 
                 steps.push({ expr, jump: loopStartIdx });
 
@@ -471,7 +487,7 @@ function getExecutionSteps(
                     } else {
                         const fn = getBuiltinFunction(expr.fnName.name);
                         if (fn) {
-                            step.builtinCall = { fn, numArgs: expr.arguments.length };
+                            step.builtinCall = { fn, numArgs: expr.arguments.length, expr };
                             isValid = true;
                         }
                     }
@@ -570,7 +586,10 @@ export function startInterpreting(parseResult: ProgramParseResult): ProgramInter
         stack: Array(64).fill(null),
         stackIdx: -1,
         callStack: [],
-        results: [],
+
+        outputs: {
+            prints: []
+        }
     };
 
     if (parseResult.errors.length > 0) {
@@ -631,105 +650,131 @@ type BuiltinFunctionArgDesc = {
 
 type BuiltinFunction = {
     name: string;
-    fn: (...results: ProgramResult[]) => ProgramResult | undefined;
+    fn: BuiltinFunctionSignature;
     args: BuiltinFunctionArgDesc[];
 };
+type BuiltinFunctionSignature = (result: ProgramInterpretResult, step: ExecutionStep, ...results: ProgramResult[]) => ProgramResult | undefined;
 
 function newArg(name: string): BuiltinFunctionArgDesc {
     return { name };
 }
 
+const builtinFunctions = new Map<string, BuiltinFunction>();
+
 function newBuiltinFunction(
     name: string, 
-    args: BuiltinFunctionArgDesc[], 
-    fn: (...results: ProgramResult[]) => ProgramResult | undefined
-): BuiltinFunction {
-    return { name, fn, args };
+    args: BuiltinFunctionArgDesc[],
+    fn: BuiltinFunctionSignature,
+) {
+    if (builtinFunctions.has(name)) {
+        throw new Error("We already have a function called " + name);
+    }
+
+    builtinFunctions.set(name, { name, fn, args });
 }
 
-const builtinMathFuncs = new Map([
-    newBuiltinFunction("sin", [newArg("t")], (val: ProgramResult) => {
+// initialize builtin funcs
+{
+    newBuiltinFunction("sin", [newArg("t")], (_result, _step, val) => {
         if (val.t === T_RESULT_NUMBER) {
             return newNumberResult(Math.sin(val.val));
         }
-    }),
-    newBuiltinFunction("cos", [newArg("t")], (val: ProgramResult) => {
+    })
+    newBuiltinFunction("cos", [newArg("t")], (_result, _step, val) => {
         if (val.t === T_RESULT_NUMBER) {
             return newNumberResult(Math.cos(val.val));
         }
-    }),
-    newBuiltinFunction("tan", [newArg("t")], (val: ProgramResult) => {
+    })
+    newBuiltinFunction("tan", [newArg("t")], ( _result, _step, val) => {
         if (val.t === T_RESULT_NUMBER) {
             return newNumberResult(Math.tan(val.val));
         }
-    }),
-    newBuiltinFunction("asin", [newArg("t")], (val: ProgramResult) => {
+    })
+    newBuiltinFunction("asin", [newArg("t")], (_result, _step, val) => {
         if (val.t === T_RESULT_NUMBER) {
             return newNumberResult(Math.asin(val.val));
         }
-    }),
-    newBuiltinFunction("acos", [newArg("t")], (val: ProgramResult) => {
+    })
+    newBuiltinFunction("acos", [newArg("t")], (_result, _step, val) => {
         if (val.t === T_RESULT_NUMBER) {
             return newNumberResult(Math.acos(val.val));
         }
-    }),
-    newBuiltinFunction("atan", [newArg("t")], (val: ProgramResult) => {
+    })
+    newBuiltinFunction("atan", [newArg("t")], (_result, _step, val) => {
         if (val.t === T_RESULT_NUMBER) {
             return newNumberResult(Math.atan(val.val));
         }
-    }),
-    newBuiltinFunction("atan2", [newArg("y"), newArg("x")], (y: ProgramResult, x: ProgramResult) => {
+    })
+    newBuiltinFunction("atan2", [newArg("y"), newArg("x")], (_result, _step, y, x) => {
         if (y.t === T_RESULT_NUMBER && x.t === T_RESULT_NUMBER) {
             return newNumberResult(Math.atan2(y.val, x.val));
         }
-    }),
-    newBuiltinFunction("abs", [newArg("x")], (val: ProgramResult) => {
+    })
+    newBuiltinFunction("abs", [newArg("x")], (_result, _step, val) => {
         if (val.t === T_RESULT_NUMBER) {
             return newNumberResult(Math.abs(val.val));
         }
-    }),
-    newBuiltinFunction("ceil", [newArg("x")], (val: ProgramResult) => {
+    })
+    newBuiltinFunction("ceil", [newArg("x")], (_result, _step, val) => {
         if (val.t === T_RESULT_NUMBER) {
             return newNumberResult(Math.ceil(val.val));
         }
-    }),
-    newBuiltinFunction("floor", [newArg("x")], (val: ProgramResult) => {
+    })
+    newBuiltinFunction("floor", [newArg("x")], (_result, _step, val) => {
         if (val.t === T_RESULT_NUMBER) {
             return newNumberResult(Math.floor(val.val));
         }
-    }),
-    newBuiltinFunction("round", [newArg("x")], (val: ProgramResult) => {
+    })
+    newBuiltinFunction("round", [newArg("x")], (_result, _step, val) => {
         if (val.t === T_RESULT_NUMBER) {
             return newNumberResult(Math.round(val.val));
         }
-    }),
-    newBuiltinFunction("log", [newArg("x")], (val: ProgramResult) => {
+    })
+    newBuiltinFunction("log", [newArg("x")], (_result, _step, val) => {
         if (val.t === T_RESULT_NUMBER) {
             return newNumberResult(Math.log(val.val));
         }
-    }),
-    newBuiltinFunction("max", [newArg("a"),  newArg("b")], (a: ProgramResult, b: ProgramResult) => {
+    })
+    newBuiltinFunction("max", [newArg("a"), newArg("b")], (_result, _step, a, b) => {
         if (a.t === T_RESULT_NUMBER && b.t === T_RESULT_NUMBER) {
             return newNumberResult(max(a.val, b.val));
         }
-    }),
-    newBuiltinFunction("min", [newArg("a"), newArg("b")], (a: ProgramResult, b: ProgramResult) => {
+    })
+    newBuiltinFunction("min", [newArg("a"), newArg("b")], (_result, _step, a, b) => {
         if (a.t === T_RESULT_NUMBER && b.t === T_RESULT_NUMBER) {
             return newNumberResult(min(a.val, b.val));
         }
-    }),
+    })
     newBuiltinFunction("rand", [], () => {
         return newNumberResult(Math.random());
-    }),
-    newBuiltinFunction("pow", [newArg("x"), newArg("n")], (x: ProgramResult, n: ProgramResult) => {
+    })
+    newBuiltinFunction("pow", [newArg("x"), newArg("n")], (_result, _step, x, n) => {
         if (x.t === T_RESULT_NUMBER && n.t === T_RESULT_NUMBER) {
             return newNumberResult(Math.pow(x.val, n.val));
         }
-    }),
-].map(f => [f.name, f]));
+    })
+    newBuiltinFunction("ln", [newArg("x")], (_result, _step, val) => {
+        if (val.t === T_RESULT_NUMBER) {
+            return newNumberResult(Math.log(val.val));
+        }
+    })
+    newBuiltinFunction("print", [newArg("x")], (result, step, val) => {
+        assert(step.builtinCall);
+        result.outputs.prints.push({ 
+            step, 
+            expr: step.builtinCall.expr.arguments[0], 
+            val: { ...val }
+        });
+
+        // can't be variadic, because print needs to return something...
+        // That's ok, just put the args in a list, lol
+        return val;
+    })
+}
+
 
 function getBuiltinFunction(name: string): BuiltinFunction | undefined {
-    return builtinMathFuncs.get(name);
+    return builtinFunctions.get(name);
 }
 
 function evaluateBuiltinFunction(
@@ -737,40 +782,36 @@ function evaluateBuiltinFunction(
     program: ProgramInterpretResult, 
     step: ExecutionStep
 ): ProgramResult | undefined {
-    // If only there were a better way...
-
-    if (fn.args.length === 0) {
-        return fn.fn();
-    }
-
-    if (fn.args.length === 1) {
-        const arg1 = get(program);
-        if (arg1) {
-            return fn.fn(arg1);
-        }
-        addError(program, step, "Expected 1 argument");
-        return;
-    }
+    // Bob c martin verse 1 chapter 4 - thoust function mustth hath only 3 args at most
     
-    if (fn.args.length === 2) {
-        const arg1 = get(program, -1);
-        const arg2 = get(program);
-        if (arg1 && arg2) {
-            return fn.fn(arg1, arg2);
-        }
-        addError(program, step, "Expected 2 arguments");
-        return;
-    }
+    switch(fn.args.length) {
+        case 0: return fn.fn(program, step);
+        case 1: {
+            const arg1 = get(program);
+            if (arg1) {
+                return fn.fn(program, step, arg1);
+            }
+            addError(program, step, "Expected 1 argument");
 
-    if (fn.args.length === 3) {
-        const arg1 = get(program, -2);
-        const arg2 = get(program, -1);
-        const arg3 = get(program);
-        if (arg1 && arg2 && arg3) {
-            return fn.fn(arg1, arg2, arg3);
-        }
-        addError(program, step, "Expected 3 arguments");
-        return;
+        } return;
+        case 2: {
+            const arg1 = get(program, -1);
+            const arg2 = get(program);
+            if (arg1 && arg2) {
+                return fn.fn(program, step, arg1, arg2);
+            }
+            addError(program, step, "Expected 2 arguments");
+            
+        } return;
+        case 3: {
+            const arg1 = get(program, -2);
+            const arg2 = get(program, -1);
+            const arg3 = get(program);
+            if (arg1 && arg2 && arg3) {
+                return fn.fn(program, step, arg1, arg2, arg3);
+            }
+            addError(program, step, "Expected 3 arguments");
+        } return;
     }
 
     addError(program, step, "Too many arguments...");
@@ -806,17 +847,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         assert(val);
 
         push(result, val, step);
-    } 
-
-    // else if (step.loadPrevious) {
-    //     if (!call.lastBlockLevelResult) {
-    //         addError(result, step, "Can't refer to 'the previous result' when this block doesn't have any results yet");
-    //         return false;
-    //     }
-    //
-    //     push(result, call.lastBlockLevelResult, step);
-    // } 
-    else if (step.set) {
+    } else if (step.set) {
         // NOTE: setting a variable doesn't remove it from the stack, because assignment will return the value that was assigned.
         const val = get(result);
         if (!val) {
@@ -966,12 +997,8 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         result.stackIdx -= step.builtinCall.numArgs;
         push(result, res, step);
     } else if (step.blockStatementEnd !== undefined) {
-        // need this to clean up after the last 'statement', actually.
-        const val = get(result);
+        // need this to clean up after the last 'statement'.
         result.stackIdx = call.returnAddress;
-        if (step.blockStatementEnd === true && val) {
-            result.results.push({ ...val });
-        }
     } 
     else if (step.index) {
         const idxResult = pop(result);
@@ -1050,10 +1077,11 @@ export function interpret(parseResult: ProgramParseResult): ProgramInterpretResu
 
     // step through the code...
     let safetyCounter = 0;
-    const MAX_ITERATIONS = 10 * 1000 * 1000;
+    // const MAX_ITERATIONS = 10 * 1000 * 1000;
+    const MAX_ITERATIONS = 1000; // TODO: revert in prod
     while (result.callStack.length > 0) {
         safetyCounter++;
-        if (safetyCounter > MAX_ITERATIONS) {
+        if (safetyCounter >= MAX_ITERATIONS) {
             // prevent infinite loops
             break;
         }

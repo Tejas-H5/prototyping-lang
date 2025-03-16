@@ -464,14 +464,22 @@ export function getCurrentNumAnimations() {
 
 ///////// Immediate-mode array datastructure, for use with the immediate mode renderer
 
-// An immediate-mode array datastructure is an array 
-// that starts off being variable length, and then locks
-// it's own size at some point during a 'frame boundary'.
-// The idea is that by adding strict element count preconditions,
-// An immediate mode renderer can be written that has better
-// performance charactaristics by avoiding the need for a diffing algorithm.
-// It's certainly easier to code on my end.
-
+/**
+ * An immediate-mode array datastructure is an array 
+ * that starts off being variable length, and then locks
+ * it's own size at some point during a 'frame boundary'.
+ *
+ * This allows subsequent 'rerenders' to assume that the exact same things
+ * are being rerendered in the same position. This sounded similar to 
+ * 'hooks' from React, so I may have accidentally called them 'hooks' 
+ * in some places in this codebase, when I meant to say 'immediate mode state'. 
+ *
+ * Unlike React, every DOM node is also rendered as immediate-mode state.
+ *
+ * You might now be wondering how to do conditional rendering, or list rendering.
+ * See the docuemntation for {@link imIf}, {@link imSwitch}, {@link beginList} for more info.
+ * See the {@link UIRoot} docs for more info on what a 'UIRoot' even is, what it's limitations are, and how to effectively (re)-use them.
+ */
 type ImmediateModeArray<T> = {
     items: T[];
     expectedLength: number;
@@ -893,7 +901,7 @@ export type RenderFnArgs<A extends unknown[], T extends ValidElement = ValidElem
  * UI Roots that aren't rendered in subsequent renders get removed from the dom when you `end()` a list.
  *
  * See {@link nextRoot} for more info.
- *
+ * See the {@link UIRoot} docs for more info on what a 'UIRoot' even is, what it's limitations are, and how to effectively (re)-use them.
  *
  * Normal usage:
  * ```ts
@@ -918,7 +926,7 @@ export type RenderFnArgs<A extends unknown[], T extends ValidElement = ValidElem
  * end();
  * ```
  */
-export function beginList(isConditional = false): ListRenderer {
+export function beginList(): ListRenderer {
     const r = getCurrentRootInternal();
 
     let result = imGetNext(r.items);
@@ -933,11 +941,6 @@ export function beginList(isConditional = false): ListRenderer {
 
     result.v.__begin();
 
-    if (!isConditional && result.v.current === null) {
-        // by default, open an if-statement for an `else` if we rendered zero items.
-        r.ifStatementOpen = true;
-    }
-
     return result.v as ListRenderer;
 }
 
@@ -949,7 +952,7 @@ export function beginList(isConditional = false): ListRenderer {
  * If a key is present, the same UIRoot that was rendered for that particular key will be re-used. Make sure
  *      to not reuse the same key twice.
  *
- * See the {@link UIRoot} docs for more info on what a 'UIRoot' even is, and how to effectively (re)-use them.
+ * See the {@link UIRoot} docs for more info on what a 'UIRoot' even is, what it's limitations are, and how to effectively (re)-use them.
  */
 export function nextRoot(key?: ValidKey) {
     const l = getCurrentListRendererInternal();
@@ -1096,14 +1099,20 @@ export function getCurrentStackItemInternal() {
 // You probably don't want to use this, if you can help it
 export function getCurrentRootInternal(): UIRoot {
     const val = getCurrentStackItemInternal();
+
+    /** Can't call this method without opening a new UI root. A common mistake is to use end() instead of endList() to end lists */
     assert(val instanceof UIRoot);
+
     return val;
 }
 
 // You probably don't want to use this, if you can help it
 export function getCurrentListRendererInternal(): ListRenderer {
     const val = getCurrentStackItemInternal();
+
+    /** Can't call this method without opening a new list renderer (see {@link beginList}) */
     assert(val instanceof ListRenderer);
+
     return val;
 }
 
@@ -1164,8 +1173,20 @@ export function el<E extends ValidElement = ValidElement>(elementSupplier: () =>
 } 
 
 export function end() {
-    const val = currentStack[currentStack.length - 1];
+    const val = getCurrentRootInternal();
     val.__end();
+}
+
+export function endList(isConditional=false) {
+    const val = getCurrentListRendererInternal();
+    val.__end();
+
+    const r = getCurrentRootInternal();
+
+    if (!isConditional) {
+        // by default, open an if-statement for an `else` if we rendered zero items.
+        r.ifStatementOpen = val.current === null;
+    }
 }
 
 function setAttribute(e: ValidElement, attr: string, val: string | null) {
@@ -1322,7 +1343,7 @@ export function imElse(next: () => void) {
  */
 export function imElseIf<V>(val: V | ActualFalseyValues, next: (typeNarrowedVal: V) => void) {
     const rIn = getCurrentRootInternal();
-    beginList(true); {
+    beginList(); {
         if (rIn.ifStatementOpen && (val || val === 0 || val === "")) {
             rIn.ifStatementOpen = false;
             nextRoot(); {
@@ -1331,7 +1352,7 @@ export function imElseIf<V>(val: V | ActualFalseyValues, next: (typeNarrowedVal:
             end();
         }
     }
-    end();
+    endList(true);
 }
 
 /**
@@ -1348,7 +1369,7 @@ export function imElseIf<V>(val: V | ActualFalseyValues, next: (typeNarrowedVal:
 export function imSwitch(key: string | number, switchFn: () => void) {
     beginList(); nextRoot(key);
     switchFn();
-    end(); end();
+    end(); endList();
 };
 
 function canAnimate(r: UIRoot) {
@@ -1494,7 +1515,7 @@ export function imTryCatch({
             };
             end();
         } finally {
-            end();
+            endList();
         }
     });
 }
@@ -1625,6 +1646,7 @@ export function init(): boolean {
  * ```ts
  * function Component() {
  *      div(); {
+ *          // can optionally put it behind 'init' if you don't want to allocate objects every render.
  *          init() && setAttributes({ 
  *              class: [cn.row, cn.alignItemsCenter, cn.justifyContentCenter],
  *              anythingReally: "some value"

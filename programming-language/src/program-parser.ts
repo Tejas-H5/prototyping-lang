@@ -5,7 +5,9 @@ import { assert } from "./utils/im-dom-utils";
 
 
 export type TextSlice = {
+    // Don't serialize this :D
     fullText: string;
+
     start: number;
     end: number;
 }
@@ -172,6 +174,10 @@ export type ProgramExpressionBase = {
     slice: TextSlice;
     pos: TextPosition;
 };
+
+export function expressionToString(expr: ProgramExpression): string {
+    return getSliceText(expr.slice);
+}
 
 // An identifier is just something that refers to a thing in the program.
 // It could be a variable name, or varName[i]. It is any lvalue.
