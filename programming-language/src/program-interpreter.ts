@@ -159,6 +159,10 @@ export type ExecutionStep = {
     // Loads a variable onto the stack
     // TODO: indices instead?
     load?: string;
+
+    // loads the last block result onto the stack. complains if it doesn't exist.
+    loadLastBlockResult?: boolean;
+
     // Loads the last computed value in this block onto the stack
     // NOTE: turns out this is a pain to implement, so I'm removing it for now till I get the stack working. then it should be easy to re-add
     // loadPrevious?: boolean;
@@ -167,6 +171,10 @@ export type ExecutionStep = {
     // did this top level statement just end?
     // yes if not undefined. true if it was a top-level statement.
     blockStatementEnd?: boolean;
+
+    // Should we clear the current block statement?
+    // (prevents leaking implementation details of for-loops)
+    clearLastBlockResult?: boolean;
 
     // Pops the last stack value into the stack, assigns it to a variable, or indexing operation
     set?: string;
@@ -213,8 +221,14 @@ export function executionStepToString(step: ExecutionStep) {
     if (step.load !== undefined) {
         return ("Load " + step.load);
     }
+    if (step.loadLastBlockResult !== undefined) {
+        return "Load last block result";
+    }
     if (step.blockStatementEnd !== undefined) {
         return step.blockStatementEnd ? "end block <top level>" : "end block";
+    }
+    if (step.clearLastBlockResult !== undefined) {
+        return "Clear last block result";
     }
     if (step.set !== undefined) {
         return ("Set " + step.set);
@@ -235,12 +249,10 @@ export function executionStepToString(step: ExecutionStep) {
         return ("String " + step.string);
     }
     if (step.jump !== undefined) {
-        const value = step.jump;
-        return ("jump to idx=" + value);
+        return ("jump to idx=" + step.jump);
     }
     if (step.jumpIfFalse !== undefined) {
-        const value = step.jump;
-        return ("jump (if false) to idx=" + value);
+        return ("jump (if false) to idx=" + step.jumpIfFalse);
     }
     if (step.incr !== undefined) {
         return "increment " + step.incr;
@@ -272,7 +284,6 @@ function newExecutionStep(expr: ProgramExpression): ExecutionStep {
 
 
 type ExecutionState = {
-    lastBlockLevelResult: ProgramResult | null;
     code: ExecutionSteps;
     i: number;
     argsCount: number;
@@ -318,9 +329,12 @@ function getExecutionSteps(
     topLevel: boolean,
 ) {
 
+    const addError = (expr: ProgramExpression, problem: string) => {
+        result.errors.push({ pos: expr.pos, problem });
+    }
+
     const incompleteExpressionError = (expr: ProgramExpression) => {
-        // TODO: add the actual expression here
-        result.errors.push({ pos: expr.pos, problem: "Found an incomplete expression" });
+        addError(expr, "Found an incomplete expression");
     }
 
     const dfs = (expr: ProgramExpression): boolean => {
@@ -337,10 +351,8 @@ function getExecutionSteps(
                 step.load = expr.name;
             } break;
             case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: {
-                result.errors.push({ pos: expr.pos, problem: "Ive not implemented it yet..." });
-                return !noOp;
-                // step.loadPrevious = true;
-            } 
+                step.loadLastBlockResult = true;
+            } break;
             case T_ASSIGNMENT: {
                 if (!expr.rhs) {
                     incompleteExpressionError(expr);
@@ -348,7 +360,7 @@ function getExecutionSteps(
                 }
 
                 if (expr.lhs.t !== T_IDENTIFIER && expr.lhs.t !== T_DATA_INDEX_OP) {
-                    result.errors.push({ pos: expr.pos, problem: "This expression currently cannot be assigned to" });
+                    addError(expr, "This expression currently cannot be assigned to");
                     return !noOp;
                 }
 
@@ -456,6 +468,8 @@ function getExecutionSteps(
                 const jumpToLoopEndIfFalse = newExecutionStep(expr);
                 steps.push(jumpToLoopEndIfFalse);
 
+                steps.push({ expr, clearLastBlockResult: true });
+
                 dfs(expr.body);
 
                 if (expr.ascending) {
@@ -482,18 +496,29 @@ function getExecutionSteps(
                     const fn = result.functions.get(expr.fnName.name);
                     let isValid = false;
                     if (fn) {
+                        if (expr.arguments.length !== fn.expr.arguments.length) {
+                            addError(expr, "Expected " + fn.expr.arguments.length + " arguments, got " + expr.arguments.length);
+                            return false;
+                        }
+
                         step.call = { fn, numArgs: expr.arguments.length };
+
                         isValid = true;
                     } else {
                         const fn = getBuiltinFunction(expr.fnName.name);
                         if (fn) {
+                            if (expr.arguments.length !== fn.args.length) {
+                                addError(expr, "Expected " + fn.args.length + " arguments, got " + expr.arguments.length);
+                                return false;
+                            }
+
                             step.builtinCall = { fn, numArgs: expr.arguments.length, expr };
                             isValid = true;
                         }
                     }
 
                     if (!isValid) {
-                        result.errors.push({ pos: expr.pos, problem: "Couldn't resolve this function" });
+                        addError(expr, "Couldn't resolve this function");
                         return !noOp;
                     }
                 }
@@ -571,7 +596,8 @@ function push(result: ProgramInterpretResult, val: ProgramResult, step: Executio
         addError(result, step, "Stack overflow!!!");
     }
 
-    result.stack[result.stackIdx] = val;
+    // TODO: rewrite in a language with struct value types
+    result.stack[result.stackIdx] = { ...val };
 }
 
 export function startInterpreting(parseResult: ProgramParseResult): ProgramInterpretResult {
@@ -624,8 +650,8 @@ export function startInterpreting(parseResult: ProgramParseResult): ProgramInter
     result.callStack.push({ 
         code: result.entryPoint, 
         argsCount: 0,
-        i: 0, lastBlockLevelResult: null, variables: new Map(), 
-        returnAddress: -1
+        i: 0, variables: new Map(), 
+        returnAddress: 0
     });
 
     return result;
@@ -847,6 +873,13 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         assert(val);
 
         push(result, val, step);
+    } else if (step.loadLastBlockResult) {
+        const val = result.stack[call.returnAddress];
+        if (!val) {
+            addError(result, step, "This block doesn't have any results in it yet");
+            return false;
+        }
+        push(result, val, step);
     } else if (step.set) {
         // NOTE: setting a variable doesn't remove it from the stack, because assignment will return the value that was assigned.
         const val = get(result);
@@ -857,7 +890,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
 
         const s = getVarExecutionState(result, step.set);
         if (!s) {
-            assert(result.stackIdx === call.returnAddress + 1);
+            assert(result.stackIdx === call.returnAddress);
             call.variables.set(step.set, result.stackIdx);
             call.returnAddress++;
         } else {
@@ -977,12 +1010,12 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
             const argIdx = result.stackIdx - fn.args.length + i + 1;
             variables.set(fn.args[i].name, argIdx);
         }
+        result.stackIdx++;
         result.callStack.push({
             code: fn.code,
             argsCount: fn.args.length,
-            i: 0, lastBlockLevelResult: null, variables,
-            // TODO: verify that this is correct, it prob isn't
-            returnAddress: call.returnAddress + fn.args.length,
+            i: 0, variables,
+            returnAddress: result.stackIdx,
         });
         call.i++;
         return true;
@@ -998,9 +1031,17 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         push(result, res, step);
     } else if (step.blockStatementEnd !== undefined) {
         // need this to clean up after the last 'statement'.
+        const val = get(result)
+        if (!val) {
+            addError(result, step, "This block-level statement didn't return a result");
+            return false;
+        }
+
+        result.stack[call.returnAddress] = val;
         result.stackIdx = call.returnAddress;
-    } 
-    else if (step.index) {
+    } else if (step.clearLastBlockResult) {
+        result.stack[call.returnAddress] = null;
+    } else if (step.index) {
         const idxResult = pop(result);
 
         if (idxResult.t !== T_RESULT_NUMBER) {
@@ -1056,11 +1097,14 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
     call.i++;
     if (call.code.steps.length === call.i) {
         // this was the thing we last computed
-        const val = result.stack[result.stackIdx + 1];
-        // this is the previous call frame's return address
-        result.stackIdx = call.returnAddress - call.argsCount + 1;
-        result.stack[result.stackIdx] = val;
+        const val = result.stack[result.stackIdx];
+
         result.callStack.pop();
+        const current = getCurrentCallstack(result);
+
+        // this is the previous call frame's return address
+        result.stackIdx = current ? current.returnAddress : 0;
+        result.stack[result.stackIdx] = val;
     }
     return result.callStack.length > 0;
 }
@@ -1077,8 +1121,7 @@ export function interpret(parseResult: ProgramParseResult): ProgramInterpretResu
 
     // step through the code...
     let safetyCounter = 0;
-    // const MAX_ITERATIONS = 10 * 1000 * 1000;
-    const MAX_ITERATIONS = 1000; // TODO: revert in prod
+    const MAX_ITERATIONS = 10 * 1000 * 1000;
     while (result.callStack.length > 0) {
         safetyCounter++;
         if (safetyCounter >= MAX_ITERATIONS) {
@@ -1095,6 +1138,9 @@ export function interpret(parseResult: ProgramParseResult): ProgramInterpretResu
         const call = getCurrentCallstack(result);
         assert(call);
         const step = call.code.steps[call.i];
+
+        // Could do the funniest thing here - "Log in and purchase a premium account to unlock more iterations"
+        
         // TODO: allow user to override or disable this.
         addError(result, step, "The program terminated here, because it reached the maximum number of iterations (" + MAX_ITERATIONS + ")");
     }

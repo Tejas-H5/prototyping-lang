@@ -638,7 +638,7 @@ export type RerenderPoint =  {
 export class UIRoot<E extends ValidElement = ValidElement> {
     readonly root: E;
     readonly domRoot: DomRoot<E>;
-    // If there was no supplier, then this root is probably attached to the same DOM element as another UI root.
+    // If there was no supplier, then this root is attached to the same DOM element as another UI root that does have a supplier.
     readonly elementSupplier: (() => ValidElement) | null;
 
     readonly items = newImArray<UIRootItem>();
@@ -658,8 +658,12 @@ export class UIRoot<E extends ValidElement = ValidElement> {
         this.elementSupplier = elementFactory;
     }
 
-    /** Used by the {@link init} to run just once per element */
-    init = false;
+    /**
+     * NOTE: if the component errors out before __end is called,
+     * this won't be updated to false. Hence, don't use this for real idempotency, use an imRef 
+     * that you check for null and set just once manually.
+     */
+    isInInitPhase = true;
 
     // TODO: think of how we can remove this, from user code at the very least.
     __begin(rp?: RerenderPoint) {
@@ -691,6 +695,8 @@ export class UIRoot<E extends ValidElement = ValidElement> {
         // You may have forgotten to call end();
         assert(val === this);
 
+        this.isInInitPhase = false;
+
         if (this.items.expectedLength === -1) {
             imLockSize(this.items);
             return;
@@ -713,6 +719,11 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     // NOTE: the effect of this method will persist accross renders
     setClass(val: string, enabled: boolean = true) {
         this.assertNotDerived();
+
+        const has = this.root.classList.contains(val);
+        if (has === enabled) {
+            return;
+        }
 
         if (enabled) {
             this.root.classList.add(val);
@@ -746,7 +757,7 @@ export class UIRoot<E extends ValidElement = ValidElement> {
 
     assertNotDerived() {
         // When elementSupplier is null, this is because the root is not the 'owner' of a particular DOM element - 
-        // rather, we got it from a ListRenderer somehow - setting attributes on these roots is usually a mistake
+        // rather, we got it from a ListRenderer somehow - setting attributes on these React.fragment type roots is always a mistake
         assert(this.elementSupplier !== null);
     }
 
@@ -1633,13 +1644,15 @@ export function getComponentStackSize() {
     return currentStack.length;
 }
 
+/**
+ * Use this for micro-optimization of calling `setAttributes` just once, and 
+ * not for actual idempotency. See {@link UIRoot#isInInitPhase} to know why.
+ *
+ * If you want real idempotency, use {@link imRef} or something similar
+ */
 export function init(): boolean {
     const r = getCurrentRootInternal();
-    if (!r.init) {
-        r.init = true;
-        return true;
-    }
-    return false;
+    return r.isInInitPhase;
 }
 
 /**
@@ -1654,6 +1667,7 @@ export function init(): boolean {
  *      } end();
  * }
  * ```
+ * @deprecated
  */
 export function setAttributes(attrs: Attrs, r = getCurrentRootInternal()) {
     // When elementSupplier is null, this is because the root is not the 'owner' of a particular DOM element - 
@@ -1661,6 +1675,13 @@ export function setAttributes(attrs: Attrs, r = getCurrentRootInternal()) {
     assert(r.elementSupplier !== null);
 
     setAttributesInternal(r.root, attrs);
+}
+
+export function addClasses(classes: string[]) {
+    const r = getCurrentRootInternal();
+    for (const c of classes) {
+        r.c(c);
+    }
 }
 
 export function setAttr<T extends keyof Attrs>(k: T, v: string | null) {

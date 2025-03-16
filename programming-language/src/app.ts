@@ -26,7 +26,7 @@ import {
 import { GlobalContext, GlobalState, newGlobalContext, saveState, startDebugging } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
-import { assert, beginList, cn, div, el, end, endList, getComponentStackSize, imElse, imIf, imMemo, imOn, imRef, imRerenderable, imState, imTryCatch, init, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setStyle, span, textNode, textSpan, UIRoot } from './utils/im-dom-utils.ts';
+import { addClasses, assert, beginList, cn, div, el, end, endList, getComponentStackSize, imElse, imIf, imMemo, imOn, imRef, imRerenderable, imState, imStateInline, imTryCatch, init, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setStyle, span, textNode, textSpan, UIRoot } from './utils/im-dom-utils.ts';
 import { getLineBeforePos, getLineEndPos, getLineStartPos } from './utils/text-utils.ts';
 
 function newH3() {
@@ -194,10 +194,13 @@ function ParserOutput(parseResultOrUndefined: ProgramParseResult | undefined) {
 
 // TODO: display these above the code editor itself. 
 function renderDiagnosticInfo(heading: string, info: DiagnosticInfo[], emptyText: string) {
-    el(newH3); {
-        init() && setAttributes({ style: "padding: 10px 0" });
-        textSpan(heading);
-    } end();
+    imIf(!!heading, () => {
+        el(newH3); {
+            init() && setAttributes({ style: "padding: 10px 0" });
+            textSpan(heading);
+        } end();
+    });
+
     beginList(); 
     for (const e of info) {
         nextRoot(); {
@@ -307,7 +310,7 @@ function collapsableHeading(heading: string, isCollapsed: boolean, toggle: () =>
             textSpan(" (collapsed)");
         });
 
-        imOn("click", () => {
+        imOn("mousedown", () => {
             toggle();
         });
     } end();
@@ -320,19 +323,13 @@ function renderExecutionStep(step: ExecutionStep) {
 }
 
 function renderFunction(interpretResult: ProgramInterpretResult, { name, steps }: ExecutionSteps) {
-    div(); {
-        init() && setAttributes({
-            class: [cn.flex1, cn.col],
-        });
-
+    beginLayout(); {
         el(newH3); {
             textSpan(name);
         } end()
 
-        const scrollContainer = div(); {
-            init() && setAttributes({
-                class: [cn.flex1, cn.overflowAuto]
-            });
+        const scrollContainer = beginLayout(); {
+            init() && addClasses([ cn.overflowAuto ]);
 
             let rCurrent: UIRoot<HTMLElement> | undefined;
 
@@ -398,19 +395,45 @@ function Button(text: string, onClick: () => void, toggled: boolean = false) {
 
         textSpan(text);
 
-        imOn("click", onClick);
+        imOn("mousedown", onClick);
     } end();
     return root;
 }
 
-function renderAppCodeOutput(ctx: GlobalContext) {
-    const parseResult = ctx.lastParseResult;
+const ROW = 1 << 1;
+const COL = 1 << 2;
+const FLEX = 1 << 3;
+const GAP = 1 << 4;
 
+function beginLayout(flags: number = 0) {
+    const root = div(); {
+        if (init()) {
+            if (flags & ROW) {
+                setClass(cn.row);
+            }
+            if (flags & COL) {
+                setClass(cn.col);
+            }
+            if (flags & FLEX) {
+                setClass(cn.flex1);
+            }
+            if (flags & GAP) {
+                setClass(cnApp.gap5);
+            }
+        }
+    };
+
+    return root;
+}
+
+function renderAppCodeOutput(ctx: GlobalContext) {
     div(); {
         init() && setAttributes({
             class: [cn.h100, cn.overflowYAuto, cn.borderBox],
             style: "padding: 10px"
         });
+
+        const parseResult = ctx.lastParseResult;
 
         collapsableHeading("Parser output", ctx.state.collapseParserOutput, () => {
             ctx.state.collapseParserOutput = !ctx.state.collapseParserOutput;
@@ -423,28 +446,19 @@ function renderAppCodeOutput(ctx: GlobalContext) {
 
         const message = imRef<string>();
 
+        collapsableHeading("Instruction generation - output", ctx.state.collapseInterpreterPass1Output, () => {
+            ctx.state.collapseInterpreterPass1Output = !ctx.state.collapseInterpreterPass1Output;
+            ctx.rerenderApp();
+        });
+
+        // TODO: better UI for this message
         div(); {
             textSpan(message.val ?? "");
         } end();
 
-        collapsableHeading("Interpreter output", ctx.state.collapseProgramOutput, () => {
-            ctx.state.collapseProgramOutput = !ctx.state.collapseProgramOutput;
-            ctx.rerenderApp();
-        });
-
-        imIf(!ctx.state.collapseProgramOutput, () => {
-            Button("Autorun", () => {
-                ctx.state.autorun = !ctx.state.autorun
-                ctx.rerenderApp();
-            }, ctx.state.autorun)
-
-            Button("Start debugging", () => {
-                startDebugging(ctx);
-                ctx.rerenderApp();
-            });
-
-            div(); {
-                imIf(ctx.lastInterpreterResult, (interpretResult) => {
+        imIf(!ctx.state.collapseInterpreterPass1Output, () => {
+            imIf(ctx.lastInterpreterResult, (interpretResult) => {
+                div(); {
                     renderDiagnosticInfo("Interpreting errors", interpretResult.errors, "No interpreting errors");
 
                     el(newH3); {
@@ -466,9 +480,35 @@ function renderAppCodeOutput(ctx: GlobalContext) {
                         textSpan("No code output yet");
                     });
 
-                    renderOutputs(interpretResult.outputs);
+                } end();
+            });
+        });
+
+        beginLayout(ROW | GAP); {
+            beginLayout(FLEX); {
+                Button("Autorun", () => {
+                    ctx.state.autorun = !ctx.state.autorun
+                    ctx.rerenderApp();
+                }, ctx.state.autorun)
+            } end();
+
+            beginLayout(FLEX); {
+                Button("Start debugging", () => {
+                    startDebugging(ctx);
+                    ctx.rerenderApp();
                 });
             } end();
+        } end();
+
+        collapsableHeading("Code output", ctx.state.collapseInterpreterCodeOutput, () => {
+            ctx.state.collapseInterpreterCodeOutput = !ctx.state.collapseInterpreterCodeOutput;
+            ctx.rerenderApp();
+        });
+
+        imIf(!ctx.state.collapseInterpreterCodeOutput, () => {
+            imIf(ctx.lastInterpreterResult, (interpretResult) => {
+                renderProgramOutputs(interpretResult.outputs);
+            });
         });
     } end();
 }
@@ -577,74 +617,76 @@ function renderAppCodeEditor({
     } end();
 }
 
-function renderDebugMenu(ctx: GlobalContext, interpretResult: ProgramInterpretResult) {
-    renderDiagnosticInfo("Interpreting errors", interpretResult.errors, "No interpreting errors");
+function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretResult) {
+    beginLayout(COL | GAP); {
+        if (init()) {
+            setClass(cn.h100);
+            setClass(cn.overflowYAuto);
+            setClass(cn.borderBox);
+            setStyle("padding", "10px");
+        }
 
-    const message = imRef<string>();
+        beginLayout(ROW | GAP); {
+            beginLayout(FLEX); {
+                Button("Stop debugging", () => {
+                    ctx.isDebugging = false;
+                    ctx.rerenderApp();
+                });
+            } end();
 
-    imIf(message.val, (message) => {
-        div(); {
-            textSpan(message);
+            beginLayout(FLEX); {
+                Button("Step", () => {
+                    const result = stepProgram(interpretResult);
+                    if (!result) {
+                        message.val = "Program complete! you can stop debugging now.";
+                    }
+
+                    ctx.rerenderApp();
+                });
+            } end();
+
+            beginLayout(FLEX); {
+                Button("Reset", () => {
+                    assert(ctx.lastParseResult);
+                    ctx.lastInterpreterResult = startInterpreting(ctx.lastParseResult);
+                    message.val = "";
+                    ctx.rerenderApp();
+                });
+            } end();
         } end();
-    });
 
-    div(); {
-        init() && setAttributes({ class: [cn.h100, cn.col] });
-
-        Button("Stop debugging", () => {
-            ctx.isDebugging = false;
-            ctx.rerenderApp();
-        });
-
-        Button("Step", () => {
-            const result = stepProgram(interpretResult);
-            if (!result) {
-                message.val = "Program complete! you can stop debugging now.";
-            }
-
-            ctx.rerenderApp();
-        });
-
-        Button("Reset", () => {
-            assert(ctx.lastParseResult);
-            ctx.lastInterpreterResult = startInterpreting(ctx.lastParseResult);
-            message.val = "";
-            ctx.rerenderApp();
+        const message = imRef<string>();
+        imIf(message.val, (message) => {
+            div(); {
+                textSpan(message);
+            } end();
         });
 
         assert(interpretResult);
         const cs = getCurrentCallstack(interpretResult);
-        div(); {
-            init() && setAttributes({ class: [cn.flex1, cn.col] });
 
+        beginLayout(); {
             imIf(cs, (cs) => {
                 renderFunction(interpretResult, cs.code);
             });
-            div(); {
-                init() && setAttributes({ class: [cn.flex1, cn.row] });
-
-                div(); {
-                    init() && setAttributes({ class: [cn.flex1] });
-
-                    imIf(cs, (cs) => {
-                        div(); {
-                            div(); {
-                                textSpan("stack idx: " + interpretResult.stackIdx);
-                            } end();
-                            div(); {
-                                textSpan("callstack length: " + interpretResult.callStack.length);
-                            } end();
-                            div(); {
-                                textSpan("return address: " + cs.returnAddress);
-                            } end();
-                        } end();
-                    });
-
+            beginLayout(ROW); {
+                beginLayout(COL | FLEX); {
                     el(newH3); {
                         textSpan("Stack");
                     } end();
 
-                    beginList(); {
+                    // render the stack
+                    {
+                        const variablesReverseMap = imStateInline(() => new Map<number, string>());
+                        variablesReverseMap.clear();
+                        for (const cs of interpretResult.callStack) {
+                            for (const [varName, addr] of cs.variables) {
+                                variablesReverseMap.set(addr, varName);
+                            }
+                        }
+
+                        const cs = getCurrentCallstack(interpretResult);
+
                         let n = interpretResult.stack.length;
                         while (n > 0) {
                             n--;
@@ -653,26 +695,59 @@ function renderDebugMenu(ctx: GlobalContext, interpretResult: ProgramInterpretRe
                             }
                         }
 
-                        for (let i = 0; i <= n; i++) {
-                            const res = interpretResult.stack[i];
+                        // show a couple more addresses after, why not.
+                        n += 10;
+                        if (n > interpretResult.stack.length) {
+                            n = interpretResult.stack.length - 1;
+                        }
+
+
+                        beginList();
+                        for (let addr = 0; addr <= n; addr++) {
+                            const res = interpretResult.stack[addr];
 
                             nextRoot(); {
                                 div(); {
-                                    div(); {
-                                        init() && setAttributes({ class: [cn.row] });
-
-                                        imIf(i === interpretResult.stackIdx, () => {
+                                    beginLayout(ROW | GAP); {
+                                        const stackAddrArrow = (name: string) => {
                                             div(); {
-                                                codeSpan("-> ");
+                                                init() && setAttributes({
+                                                    style: "padding-left: 10px; padding-right: 10px"
+                                                });
+
+                                                codeSpan(name + "->");
                                             } end();
+                                        }
+
+                                        imIf(addr === interpretResult.stackIdx, () => {
+                                            stackAddrArrow("");
                                         });
 
-                                        div(); {
-                                            init() && setAttributes({ class: [cn.flex1] });
+                                        // every callstack will have a different return address
+                                        let callstackIdx = -1;
+                                        for (let i = 0; i < interpretResult.callStack.length; i++) {
+                                            const cs = interpretResult.callStack[i];
+                                            if (cs.returnAddress === addr) {
+                                                callstackIdx = i;
+                                            }
+                                        }
 
+                                        imIf(callstackIdx !== -1, () => {
+                                            stackAddrArrow("r" + callstackIdx + "");
+                                        });
+
+                                        const variable = variablesReverseMap.get(addr);
+                                        imIf(variable, variable => {
+                                            div(); {
+                                                codeSpan(variable + " = ");
+                                            } end();
+                                        })
+
+                                        beginLayout(FLEX); {
                                             imIf(res, (res) => {
                                                 renderProgramResult(res);
                                             });
+
                                             imElse(() => {
                                                 textSpan("null");
                                             });
@@ -680,64 +755,28 @@ function renderDebugMenu(ctx: GlobalContext, interpretResult: ProgramInterpretRe
                                     } end();
                                 } end();
                             } end();
-                        }
-                    } endList();
+                        } endList();
+                    }
                 } end();
-                div(); {
-                    init() && setAttributes({ class: [cn.flex1] });
-
+                beginLayout(FLEX | COL); {
                     el(newH3); {
-                        textSpan("Variables");
+                        textSpan("Results");
                     } end();
 
-                    beginList(); 
-                    for (let i = 0; i < interpretResult.callStack.length; i++) {
-                        const cs = interpretResult.callStack[i];
-                        nextRoot(); {
-                            div(); {
-                                textSpan("Call stack " + i);
-                            } end();
-
-                            div(); {
-                                beginList(); 
-                                for (const [k, addr] of cs.variables) {
-                                    nextRoot(); {
-                                        div(); {
-                                            textSpan(k);
-                                        } end();
-                                        textSpan(" addr=" + addr);
-                                        const v = interpretResult.stack[addr];
-                                        imIf(v, (v) => {
-                                            renderProgramResult(v);
-                                        });
-                                    } end();
-                                } endList();
-                            } end();
-                        } end();
-                    } endList();
+                    renderProgramOutputs(interpretResult.outputs);
                 } end();
             } end();
         } end();
-        renderOutputs(interpretResult.outputs);
     } end();
 }
 
-function renderOutputs(outputs: ProgramOutputs) {
+function renderProgramOutputs(outputs: ProgramOutputs) {
     beginList();
     for (const result of outputs.prints) {
         nextRoot(); {
-            div(); {
-                init() && setAttributes({ 
-                    class: [cn.row], 
-                    style: "gap: 5px",
-                })
-
+            beginLayout(ROW | GAP); {
                 div(); { 
-                    init() && setAttributes({ style: `padding-top: 5px;` });
-
                     beginCodeBlock(0); {
-                        init() && setAttributes({ style: `padding: 5px;` });
-
                         textNode(
                             expressionToString(result.expr)
                         )
@@ -821,7 +860,7 @@ export function renderApp() {
                             imIf(ctx.isDebugging, () => {
                                 const interpretResult = ctx.lastInterpreterResult;
                                 assert(interpretResult);
-                                renderDebugMenu(ctx, interpretResult);
+                                renderDebugger(ctx, interpretResult);
                             });
                             imElse(() => {
                                 renderAppCodeOutput(ctx);

@@ -4,10 +4,10 @@ import { parse, ProgramParseResult } from "./program-parser";
 export type GlobalState = {
     text: string;
     collapseParserOutput: boolean;
-    collapseProgramOutput: boolean;
+    collapseInterpreterPass1Output: boolean;
+    collapseInterpreterCodeOutput: boolean;
     autorun: boolean;
 };
-
 
 export type GlobalContext = {
     isDebugging: boolean;
@@ -44,7 +44,8 @@ export function newGlobalState(): GlobalState {
     return {
         text: "",
         collapseParserOutput: false,
-        collapseProgramOutput: false,
+        collapseInterpreterPass1Output: false,
+        collapseInterpreterCodeOutput: false,
         autorun: false,
     };
 }
