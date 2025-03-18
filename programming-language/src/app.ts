@@ -21,12 +21,16 @@ import {
     T_RANGE_FOR,
     T_STRING_LITERAL,
     T_TERNARY_IF,
-    T_VECTOR_LITERAL
+    T_UNARY_OP,
+    T_VECTOR_LITERAL,
+    unaryOpToOpString,
+    unaryOpToString
 } from './program-parser.ts';
 import { GlobalContext, GlobalState, newGlobalContext, saveState, startDebugging } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
 import { addClasses, assert, beginList, cn, div, el, end, endList, getComponentStackSize, imElse, imIf, imMemo, imOn, imRef, imRerenderable, imState, imStateInline, imTryCatch, init, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setStyle, span, textNode, textSpan, UIRoot } from './utils/im-dom-utils.ts';
+import { getSliceValue } from './utils/matrix-math.ts';
 import { getLineBeforePos, getLineEndPos, getLineStartPos } from './utils/text-utils.ts';
 
 function newH3() {
@@ -110,6 +114,13 @@ function ParserOutput(parseResultOrUndefined: ProgramParseResult | undefined) {
 
                         dfs("lhs", expr.lhs, depth + 1);
                         dfs("rhs", expr.rhs, depth + 1);
+                    } break;
+                    case T_UNARY_OP: {
+                        const exprText = expressionToString(expr.expr);
+                        const opSymbol = unaryOpToOpString(expr.op);
+                        const text = `${opSymbol}(${exprText})`;
+                        renderRow(title, unaryOpToString(expr.op), depth, text);
+                        dfs("expr", expr.expr, depth + 1);
                     } break;
                     case T_LIST_LITERAL: 
                     case T_VECTOR_LITERAL: {
@@ -251,9 +262,11 @@ function renderProgramResult(res: ProgramResult) {
                 case T_RESULT_MATRIX:
                     let idx = 0;
                     const dfs = (dim: number, isLast: boolean) => {
-                        if (dim === res.val.m.shape.length) {
-                            const val = res.val.m.values[idx];
-                            idx++;
+                        if (dim === res.val.shape.length) {
+                            const val = getSliceValue(res.val.values, idx);
+
+                            // assuming everything renders in order, this is the only thing we need to do for this to work.
+                            idx++; 
 
                             textSpan("" + val);
                             imIf(!isLast, () => {
@@ -265,12 +278,12 @@ function renderProgramResult(res: ProgramResult) {
                         beginCodeBlock(dim === 0 ? 0 : 1); {
                             textSpan("[");
                             beginList(); {
-                                const len = res.val.m.shape[dim];
+                                const len = res.val.shape[dim];
                                 for (let i = 0; i < len; i++) {
                                     // This is because when the 'level' of the list changes, the depth itself changes,
                                     // and the components we're rendering at a particular level will change. 
                                     // We need to re-key the list, so that we may render a different kind of component at this position.
-                                    const key = (res.val.m.shape.length - dim) + "-" + i;
+                                    const key = (res.val.shape.length - dim) + "-" + i;
                                     nextRoot(key); {
                                         dfs(dim + 1, i === len - 1);
                                     } end();
@@ -422,6 +435,10 @@ function beginLayout(flags: number = 0) {
             }
         }
     };
+
+    // NOTE: this is a possibility for a simple API to allow more higher-level layout primitives.
+    // instructs the corresponding end() to pop more than 1 node.
+    // setEndPopCount(2);
 
     return root;
 }
@@ -732,8 +749,17 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
                                             }
                                         }
 
+                                        // every callstack will have a different return address
+                                        callstackIdx = -1;
+                                        for (let i = 0; i < interpretResult.callStack.length; i++) {
+                                            const cs = interpretResult.callStack[i];
+                                            if (cs.nextVarAddress === addr) {
+                                                callstackIdx = i;
+                                            }
+                                        }
+
                                         imIf(callstackIdx !== -1, () => {
-                                            stackAddrArrow("r" + callstackIdx + "");
+                                            stackAddrArrow("v" + callstackIdx + "");
                                         });
 
                                         const variable = variablesReverseMap.get(addr);
@@ -822,21 +848,6 @@ export function renderApp() {
     imRerenderable((rerender) => {
         const stackSize = getComponentStackSize();
 
-        const ctx = imState(newGlobalContext);
-        ctx.rerenderApp = rerender;
-
-        const { state } = ctx;
-
-        if (!imMemo().keys(state).isSame) {
-            const text = ctx.state.text;
-            ctx.lastParseResult = parse(text);
-            if (ctx.state.autorun) {
-                ctx.lastInterpreterResult = interpret(ctx.lastParseResult);
-            }
-
-            saveStateDebounced(ctx);
-        }
-
         div(); {
             init() && setAttributes({
                 class: [cn.fixed, cnApp.normalFont, cn.absoluteFill]
@@ -844,6 +855,21 @@ export function renderApp() {
 
             imTryCatch({
                 tryFn: () => {
+
+                    const ctx = imState(newGlobalContext);
+                    ctx.rerenderApp = rerender;
+
+                    const { state } = ctx;
+
+                    if (!imMemo().keys(state).isSame) {
+                        const text = ctx.state.text;
+                        ctx.lastParseResult = parse(text);
+                        if (ctx.state.autorun) {
+                            ctx.lastInterpreterResult = interpret(ctx.lastParseResult);
+                        }
+
+                        saveStateDebounced(ctx);
+                    }
 
                     div(); {
                         init() && setAttributes({

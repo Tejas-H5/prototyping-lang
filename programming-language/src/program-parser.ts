@@ -38,6 +38,8 @@ export const T_FN = 11;
 export const T_RANGE_FOR = 12;
 export const T_ASSIGNMENT = 13;
 
+export const T_UNARY_OP = 14;
+
 export function expressionTypeToString(expr: ProgramExpression): string {
     switch(expr.t) {
         case T_IDENTIFIER:
@@ -46,6 +48,8 @@ export function expressionTypeToString(expr: ProgramExpression): string {
             return "(result from above)";
         case T_BINARY_OP:
             return "Binary operator";
+        case T_UNARY_OP:
+            return "Unary operator";
         case T_NUMBER_LITERAL:
             return "Number literal";
         case T_LIST_LITERAL:
@@ -95,12 +99,20 @@ export type BinaryOperatorType = typeof BIN_OP_MULTIPLY
     | typeof BIN_OP_OR_OR
     | typeof BIN_OP_INVALID;
 
+export const UNARY_OP_NOT = 1;
 
-export function getBinaryOperatorType(c: string): BinaryOperatorType {
-    switch (c) {
+export type UnaryOperatorType = typeof UNARY_OP_NOT;
+
+export function unaryOpToOpString(op: UnaryOperatorType): string {
+    switch (op) {
+        case UNARY_OP_NOT: return "!";
     }
+}
 
-    return BIN_OP_INVALID;
+export function unaryOpToString(op: UnaryOperatorType): string {
+    switch (op) {
+        case UNARY_OP_NOT: return "Not";
+    }
 }
 
 export function binOpToOpString(op: BinaryOperatorType): string {
@@ -150,6 +162,7 @@ function getBinOpPrecedence(op: BinaryOperatorType): number {
 }
 const TERNARY_PRECEDENCE = 20;
 
+const MIN_PRECEDENCE = 1;
 const MAX_PRECEDENCE = 100;
 
 export function binOpToString(op: BinaryOperatorType): string {
@@ -218,11 +231,15 @@ export type ProgramExpressionTernaryIf = ProgramExpressionBase & {
 
 export type ProgramExpressionBinaryOperator = ProgramExpressionBase & {
     t: typeof T_BINARY_OP;
-    // NOTE: it would be more optimal to just have t encode every binary op as a separate type...
-    // I don't care about this right now though
     op: BinaryOperatorType; 
     lhs: ProgramExpression;
     rhs?: ProgramExpression; 
+}
+
+export type ProgramExpressionUnaryOperator = ProgramExpressionBase & {
+    t: typeof T_UNARY_OP;
+    op: UnaryOperatorType; 
+    expr: ProgramExpression;
 }
 
 export type ProgramExpressionBlock = ProgramExpressionBase & {
@@ -263,6 +280,7 @@ export type ProgramExpressionAssignment = ProgramExpressionBase & {
 export type ProgramExpression = ProgramExpressionIdentifier
     | ProgramExpressionPreviousResult
     | ProgramExpressionBinaryOperator
+    | ProgramExpressionUnaryOperator
     | ProgramExpressionNumberLiteral
     | ProgramExpressionListLiteral
     | ProgramExpressionStringLiteral
@@ -1136,6 +1154,26 @@ function parseExpression(ctx: ParserContext, canParseAssignment: boolean = false
         }
     } else if (c === "\"") {
         res = parseStringLiteral(ctx);
+    } else if (c === "!") {
+        // TODO: fix -x not working
+
+        const start = getParserPosition(ctx);
+
+        advance(ctx);
+        parseWhitespace(ctx);
+
+        const expr = parseExpression(ctx, false, MIN_PRECEDENCE);
+        if (!expr) {
+            return;
+        }
+
+        res = {
+            slice: newTextSlice(ctx.text, start.i, ctx.pos.i),
+            pos: start,
+            t: T_UNARY_OP,
+            op: UNARY_OP_NOT,
+            expr
+        };
     }
 
     if (res) {

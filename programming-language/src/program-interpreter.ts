@@ -9,9 +9,13 @@ import {
     ProgramExpressionFn,
     ProgramExpressionIdentifier,
     ProgramParseResult, 
-    T_ASSIGNMENT, T_BINARY_OP, T_BLOCK, T_DATA_INDEX_OP, T_FN, T_IDENTIFIER, T_IDENTIFIER_THE_RESULT_FROM_ABOVE, T_LIST_LITERAL, T_NUMBER_LITERAL, T_RANGE_FOR, T_STRING_LITERAL, T_TERNARY_IF, T_VECTOR_LITERAL
+    T_ASSIGNMENT, T_BINARY_OP, T_BLOCK, T_DATA_INDEX_OP, T_FN, T_IDENTIFIER, T_IDENTIFIER_THE_RESULT_FROM_ABOVE, T_LIST_LITERAL, T_NUMBER_LITERAL, T_RANGE_FOR, T_STRING_LITERAL, T_TERNARY_IF, T_UNARY_OP, T_VECTOR_LITERAL,
+    UnaryOperatorType,
+    unaryOpToOpString,
+    unaryOpToString
 } from "./program-parser";
 import { assert } from "./utils/im-dom-utils";
+import { getSliceValue, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixLogicalAndElements, matrixLogicalOrElements, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, newSlice } from "./utils/matrix-math";
 
 export const T_RESULT_NUMBER = 1;
 export const T_RESULT_STRING = 2;
@@ -35,9 +39,9 @@ export type ProgramResultString = {
     val: string;
 }
 
-export type ProgramResultHPMatrix = {
+export type ProgramResultMatrix = {
     t: typeof T_RESULT_MATRIX;
-    val: HPMatrixIndex;
+    val: Matrix;
 }
 
 export type ProgramResultFunction = {
@@ -48,32 +52,6 @@ export type ProgramResultFunction = {
 };
 
 
-export type HPMatrix = {
-    values: number[];
-    shape: number[];
-};
-
-export type HPMatrixIndex = {
-    m: HPMatrix;
-    indexes: number[];
-};
-
-function newHpMatrix(shape: number[]): HPMatrix {
-    const numValues = getValueCount(shape);
-    return {
-        values: Array(numValues).fill(0),
-        shape,
-    }
-}
-
-function getValueCount(shape: number[]) {
-    let numValues = 1;
-    for (let i = 0; i < shape.length; i++) {
-        numValues *= shape[i];
-    }
-    return numValues;
-}
-
 export type ProgramResultList = {
     t: typeof T_RESULT_LIST;
     values: ProgramResult[];
@@ -83,7 +61,7 @@ export type ProgramResult = ProgramResultNumber
     | ProgramResultRange
     | ProgramResultString
     | ProgramResultList
-    | ProgramResultHPMatrix
+    | ProgramResultMatrix
     | ProgramResultFunction;
 
 export function programResultTypeString(output: ProgramResult): string {
@@ -97,10 +75,8 @@ export function programResultTypeString(output: ProgramResult): string {
         case T_RESULT_LIST:
             return "List";
         case T_RESULT_MATRIX: {
-            const dimension = output.val.indexes.length;
-            const remainingShape = output.val.m.shape.slice(dimension);
-            return remainingShape.length === 1 ? `Vector${remainingShape[0]}` : (
-                `Matrix${remainingShape.map(s => "" + s).join("x")}`
+            return output.val.shape.length === 1 ? `Vector${output.val.shape[0]}` : (
+                `Matrix${output.val.shape.map(s => "" + s).join("x")}`
             );
         }
         case T_RESULT_FN:
@@ -115,7 +91,7 @@ type NumberRange = {
     hi: number;
 };
 
-function calculateBinaryOpNumberXNumber(
+function evaluateBinaryOpNumberXNumber(
     l: ProgramResultNumber, 
     r: ProgramResultNumber, 
     op: BinaryOperatorType,
@@ -151,6 +127,96 @@ function calculateBinaryOpNumberXNumber(
     return result;
 }
 
+function evaluateBinaryOpMatrixXMatrix(
+    l: ProgramResultMatrix, 
+    r: ProgramResultMatrix, 
+    op: BinaryOperatorType,
+): [ProgramResultNumber | ProgramResultMatrix | null, string] {
+
+    let isBool = false;
+    let bool = false;
+    let val: Matrix | null = null; 
+    let err: string;
+
+    switch (op) {
+        case BIN_OP_MULTIPLY:
+            [val, err] = matrixMultiplyElements(l.val, r.val);
+            break;
+        case BIN_OP_DIVIDE: 
+            [val, err] = matrixDivideElements(l.val, r.val);
+            break;
+        case BIN_OP_ADD: 
+            [val, err] = matrixAddElements(l.val, r.val);
+            break;
+        case BIN_OP_SUBTRACT: 
+            [val, err] = matrixSubtractElements(l.val, r.val);
+            break;
+        case BIN_OP_IS_EQUAL_TO: 
+            isBool = true;
+            [bool, err] = matrixElementsEqual(l.val, r.val);
+            break;
+        case BIN_OP_LESS_THAN: 
+            isBool = true;
+            [bool, err] = matrixElementsLessThan(l.val, r.val);
+            break;
+        case BIN_OP_LESS_THAN_EQ:
+            isBool = true;
+            [bool, err] = matrixElementsLessThanOrEqual(l.val, r.val);
+            break;
+        case BIN_OP_GREATER_THAN:
+            isBool = true;
+            [bool, err] = matrixElementsGreaterThan(l.val, r.val);
+            break;
+        case BIN_OP_GREATER_THAN_EQ:
+            isBool = true;
+            [bool, err] = matrixElementsGreaterThanOrEqual(l.val, r.val);
+            break;
+        case BIN_OP_AND_AND:
+            [val, err] = matrixLogicalAndElements(l.val, r.val);
+            break;
+        case BIN_OP_OR_OR:
+            [val, err] = matrixLogicalOrElements(l.val, r.val);
+            break;
+        case BIN_OP_INVALID: 
+            // An invalid binary op was parsed, and added to the result tree somehow
+            assert(false)
+    }
+
+    if (isBool) {
+        return [newNumberResult(bool ? 1 : 0), ""];
+    }
+
+    if (val) {
+        return [{ t: T_RESULT_MATRIX, val }, ""];
+    }
+
+    if (err) {
+        return [null, err];
+    }
+
+    return [null, ""];
+}
+
+function evaluateBinaryOpNumberXMatrix(
+    l: ProgramResultNumber, 
+    r: ProgramResultMatrix, 
+    op: BinaryOperatorType,
+): ProgramResultNumber | ProgramResultMatrix | null {
+    let val: Matrix | null = null; 
+
+    // TODO:
+
+    return val;
+}
+
+function evaluateUnaryOp(val: ProgramResult, op: UnaryOperatorType): [ProgramResult | null, string] {
+    if (val.t === T_RESULT_NUMBER) {
+        return [newNumberResult(val.val === 0 ? 1 : 0), ""];
+    }
+
+    return [null, ""];
+}
+
 // Trying a product type isntead of a sum-type, will let u know how I go.
 export type ExecutionStep = {
     // which code did we type to generate this thing?
@@ -180,6 +246,8 @@ export type ExecutionStep = {
     set?: string;
     // Pops the last two stack values, applies a binary operator to them
     binaryOperator?: BinaryOperatorType;
+    // pops the last value, applies a unary operator
+    unaryOperator?: UnaryOperatorType;
     // Pops the last n things off the stack and into a list
     list?: number;
     // Pops the last n things off the stack and into a vector
@@ -236,6 +304,9 @@ export function executionStepToString(step: ExecutionStep) {
     if (step.binaryOperator !== undefined) {
         return ("Binary op: " + binOpToOpString(step.binaryOperator) + " (" + binOpToString(step.binaryOperator) + ")");
     }
+    if (step.unaryOperator !== undefined) {
+        return ("Unary op: " + unaryOpToOpString(step.unaryOperator) + " (" + unaryOpToString(step.unaryOperator) + ")");
+    }
     if (step.list !== undefined) {
         return ("List " + step.list);
     }
@@ -291,6 +362,7 @@ type ExecutionState = {
     // TODO: replace with an array
     variables: Map<string, number>;
     returnAddress: number;
+    nextVarAddress: number;
 };
 
 export type ProgramInterpretResult = {
@@ -385,6 +457,10 @@ function getExecutionSteps(
                 dfs(expr.lhs);
                 dfs(expr.rhs);
                 step.binaryOperator = expr.op;
+            } break;
+            case T_UNARY_OP: {
+                dfs(expr.expr);
+                step.unaryOperator = expr.op;
             } break;
             case T_VECTOR_LITERAL: 
             case T_LIST_LITERAL: {
@@ -545,9 +621,8 @@ function getExecutionSteps(
     }
 }
 
-function getLengthHpMatrix(val: HPMatrixIndex): number {
-    const dimension = val.indexes.length;
-    return val.m.shape[dimension];
+function getLengthHpMatrix(val: Matrix): number {
+    return val.shape[0];
 }
 
 function getLength(result: ProgramResult): number | undefined {
@@ -594,6 +669,7 @@ function push(result: ProgramInterpretResult, val: ProgramResult, step: Executio
     result.stackIdx++;
     if (result.stackIdx >= result.stack.length) {
         addError(result, step, "Stack overflow!!!");
+        return false;
     }
 
     // TODO: rewrite in a language with struct value types
@@ -610,7 +686,7 @@ export function startInterpreting(parseResult: ProgramParseResult): ProgramInter
         functions: new Map(),
 
         stack: Array(64).fill(null),
-        stackIdx: -1,
+        stackIdx: 0,
         callStack: [],
 
         outputs: {
@@ -651,7 +727,8 @@ export function startInterpreting(parseResult: ProgramParseResult): ProgramInter
         code: result.entryPoint, 
         argsCount: 0,
         i: 0, variables: new Map(), 
-        returnAddress: 0
+        returnAddress: 0,
+        nextVarAddress: 1,
     });
 
     return result;
@@ -843,6 +920,8 @@ function evaluateBuiltinFunction(
     addError(program, step, "Too many arguments...");
 }
 
+
+
 export function stepProgram(result: ProgramInterpretResult): boolean {
     const call = getCurrentCallstack(result);
     if (!call) {
@@ -890,9 +969,9 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
 
         const s = getVarExecutionState(result, step.set);
         if (!s) {
-            assert(result.stackIdx === call.returnAddress);
+            assert(result.stackIdx === call.nextVarAddress);
             call.variables.set(step.set, result.stackIdx);
-            call.returnAddress++;
+            call.nextVarAddress++;
         } else {
             const addr = s.variables.get(step.set)!;
             result.stack[addr] = val;
@@ -905,7 +984,19 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
 
         if (lhs.t === T_RESULT_NUMBER) {
             if (rhs.t == T_RESULT_NUMBER) {
-                calcResult = calculateBinaryOpNumberXNumber(rhs, lhs, step.binaryOperator);
+                calcResult = evaluateBinaryOpNumberXNumber(lhs, rhs, step.binaryOperator);
+            } else if (rhs.t === T_RESULT_MATRIX) {
+                calcResult = evaluateBinaryOpNumberXMatrix(lhs, rhs, step.binaryOperator);
+            }
+        } else if (lhs.t === T_RESULT_MATRIX) {
+            if (rhs.t === T_RESULT_MATRIX) {
+                const [res, err] = evaluateBinaryOpMatrixXMatrix(lhs, rhs, step.binaryOperator);
+                if (err) {
+                    addError(result, step, err);
+                    return false;
+                }
+
+                calcResult = res;
             }
         }
 
@@ -915,6 +1006,20 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         }
 
         push(result, calcResult, step);
+    } else if (step.unaryOperator) {
+        const val = pop(result);
+        const [res, err] = evaluateUnaryOp(val, step.unaryOperator);
+        if (err) {
+            addError(result, step, err);
+            return false;
+        }
+
+        if (!res) {
+            addError(result, step, `We don't have a way to compute ${unaryOpToOpString(step.unaryOperator)}${programResultTypeString(val)} yet.`);
+            return false;
+        }
+
+        push(result, res, step);
     } else if (step.list !== undefined) {
         result.stackIdx -= step.list;
         const list: ProgramResult = { t: T_RESULT_LIST, values: [] };
@@ -936,7 +1041,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
 
         const len = step.vector;
         for (let i = 0; i < len; i++) {
-            const val = result.stack[i];
+            const val = result.stack[result.stackIdx + i + 1];
             assert(val);
 
             if (val.t !== T_RESULT_NUMBER && val.t !== T_RESULT_MATRIX) {
@@ -949,7 +1054,9 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
                 rowLen = getLengthHpMatrix(val.val);
 
                 // TODO: reserve the correct size based on matrix shape. flatmap...
-                values.push(...val.val.m.values);
+                for (let i = 0; i < val.val.values.length; i++) {
+                    values.push(getSliceValue(val.val.values, i));
+                }
             } else {
                 values.push(val.val);
                 rowLen = 1;
@@ -959,15 +1066,18 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
                 innerLen = rowLen;
                 innerT = val.t;
                 if (val.t === T_RESULT_MATRIX) {
-                    innerShape = val.val.m.shape;
+                    innerShape = val.val.shape;
                 }
             } else {
                 if (innerT !== val.t) {
                     addError(result, step, "This item had a different type to the previous items in the vector");
-                } else if (innerLen !== rowLen) {
+                    return false;
+                } 
+
+                if (innerLen !== rowLen) {
                     addError(result, step, "This vector had a different length to the previous vectors");
+                    return false;
                 }
-                return false;
             }
         }
 
@@ -975,7 +1085,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
 
         push(result, {
             t: T_RESULT_MATRIX,
-            val: { m: { values, shape: newShape }, indexes: [] }
+            val: { values: newSlice(values), shape: newShape }
         }, step);
     } else if (step.number !== undefined) {
         push(result, newNumberResult(step.number), step);
@@ -1015,7 +1125,8 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
             code: fn.code,
             argsCount: fn.args.length,
             i: 0, variables,
-            returnAddress: result.stackIdx,
+            returnAddress: call.nextVarAddress,
+            nextVarAddress: call.nextVarAddress + 1,
         });
         call.i++;
         return true;
@@ -1038,7 +1149,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         }
 
         result.stack[call.returnAddress] = val;
-        result.stackIdx = call.returnAddress;
+        result.stackIdx = call.nextVarAddress - 1;
     } else if (step.clearLastBlockResult) {
         result.stack[call.returnAddress] = null;
     } else if (step.index) {
@@ -1119,9 +1230,10 @@ export function interpret(parseResult: ProgramParseResult): ProgramInterpretResu
         return result;
     }
 
-    // step through the code...
+    // I've kept it low, because matrix ops and array programming can result in singular iterations
+    // actually doing quite a lot of computations.
     let safetyCounter = 0;
-    const MAX_ITERATIONS = 10 * 1000 * 1000;
+    const MAX_ITERATIONS = 10000;
     while (result.callStack.length > 0) {
         safetyCounter++;
         if (safetyCounter >= MAX_ITERATIONS) {
