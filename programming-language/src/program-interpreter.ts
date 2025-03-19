@@ -8,8 +8,11 @@ import {
     ProgramExpression,
     ProgramExpressionFn,
     ProgramExpressionIdentifier,
+    ProgramExpressionUnaryOperator,
     ProgramParseResult, 
     T_ASSIGNMENT, T_BINARY_OP, T_BLOCK, T_DATA_INDEX_OP, T_FN, T_IDENTIFIER, T_IDENTIFIER_THE_RESULT_FROM_ABOVE, T_LIST_LITERAL, T_NUMBER_LITERAL, T_RANGE_FOR, T_STRING_LITERAL, T_TERNARY_IF, T_UNARY_OP, T_VECTOR_LITERAL,
+    UNARY_OP_NOT,
+    UNARY_OP_PRINT,
     UnaryOperatorType,
     unaryOpToOpString,
     unaryOpToString
@@ -209,9 +212,17 @@ function evaluateBinaryOpNumberXMatrix(
     return val;
 }
 
-function evaluateUnaryOp(val: ProgramResult, op: UnaryOperatorType): [ProgramResult | null, string] {
-    if (val.t === T_RESULT_NUMBER) {
-        return [newNumberResult(val.val === 0 ? 1 : 0), ""];
+function evaluateUnaryOp(result: ProgramInterpretResult, step: ExecutionStep, val: ProgramResult, op: UnaryOperatorType): [ProgramResult | null, string] {
+    switch(op) {
+        case UNARY_OP_NOT: {
+            if (val.t === T_RESULT_NUMBER) {
+                return [newNumberResult(val.val === 0 ? 1 : 0), ""];
+            }
+        } break;
+        case UNARY_OP_PRINT: {
+            printResult(result, step, step.expr, val);
+            return [val, ""];
+        } 
     }
 
     return [null, ""];
@@ -863,16 +874,23 @@ function newBuiltinFunction(
     })
     newBuiltinFunction("print", [newArg("x")], (result, step, val) => {
         assert(step.builtinCall);
-        result.outputs.prints.push({ 
-            step, 
-            expr: step.builtinCall.expr.arguments[0], 
-            val: { ...val }
-        });
+
+        const innerExpr = step.builtinCall.expr.arguments[0];
+        printResult(result, step, innerExpr, val);
 
         // can't be variadic, because print needs to return something...
         // That's ok, just put the args in a list, lol
         return val;
     })
+}
+
+
+function printResult(result: ProgramInterpretResult, step: ExecutionStep, expr: ProgramExpression, val: ProgramResult) {
+    result.outputs.prints.push({
+        step,
+        expr,
+        val: { ...val }
+    });
 }
 
 
@@ -977,8 +995,8 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
             result.stack[addr] = val;
         }
     } else if (step.binaryOperator) {
-        const rhs = pop(result);
         const lhs = pop(result);
+        const rhs = pop(result);
 
         let calcResult: ProgramResult | null = null;
 
@@ -1008,7 +1026,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         push(result, calcResult, step);
     } else if (step.unaryOperator) {
         const val = pop(result);
-        const [res, err] = evaluateUnaryOp(val, step.unaryOperator);
+        const [res, err] = evaluateUnaryOp(result, step, val, step.unaryOperator);
         if (err) {
             addError(result, step, err);
             return false;

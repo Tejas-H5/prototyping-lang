@@ -27,6 +27,8 @@ export const T_IDENTIFIER_THE_RESULT_FROM_ABOVE = 2;
 
 export const T_BINARY_OP = 3;
 
+const ZERO_TEXT_SLICE = newTextSlice("0", 0, 1);
+
 export const T_NUMBER_LITERAL = 4;
 export const T_LIST_LITERAL = 5;
 export const T_VECTOR_LITERAL = 6;
@@ -99,19 +101,27 @@ export type BinaryOperatorType = typeof BIN_OP_MULTIPLY
     | typeof BIN_OP_OR_OR
     | typeof BIN_OP_INVALID;
 
+export const UNARY_OP_INVALID = -1;
 export const UNARY_OP_NOT = 1;
+export const UNARY_OP_PRINT = 2;
 
-export type UnaryOperatorType = typeof UNARY_OP_NOT;
+export type UnaryOperatorType = typeof UNARY_OP_NOT
+    | typeof UNARY_OP_PRINT
+    | typeof UNARY_OP_INVALID;
 
 export function unaryOpToOpString(op: UnaryOperatorType): string {
     switch (op) {
         case UNARY_OP_NOT: return "!";
+        case UNARY_OP_PRINT: return ">>>";
+        case UNARY_OP_INVALID: return "???";
     }
 }
 
 export function unaryOpToString(op: UnaryOperatorType): string {
     switch (op) {
         case UNARY_OP_NOT: return "Not";
+        case UNARY_OP_PRINT: return "Print";
+        case UNARY_OP_INVALID: return "Invalid";
     }
 }
 
@@ -430,7 +440,7 @@ function isAllowedIdentifierSymbol(char: string) {
 
 function canParseNumberLiteral(ctx: ParserContext) {
     const c = currentChar(ctx);
-    return c === "-" || c === "+" || isDigit(c);
+    return c === "+" || isDigit(c);
 }
 
 function isValidNumberPart(c: string) {
@@ -1033,6 +1043,7 @@ function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
 
     const c = currentChar(ctx);
     const c2 = currentChar(ctx, 1);
+    const c3 = currentChar(ctx, 2);
     switch(c) {
         case "=": 
             if (c2 === "=") {
@@ -1059,10 +1070,12 @@ function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
             }
             break;
         case ">": 
-            if (c2 === "=") {
-                op = BIN_OP_GREATER_THAN_EQ;
-            } else {
-                op = BIN_OP_GREATER_THAN;
+            if (c2 !== ">" && c3 !== ">") {
+                if (c2 === "=") {
+                    op = BIN_OP_GREATER_THAN_EQ;
+                } else {
+                    op = BIN_OP_GREATER_THAN;
+                }
             }
             break;
         case "&": 
@@ -1154,26 +1167,72 @@ function parseExpression(ctx: ParserContext, canParseAssignment: boolean = false
         }
     } else if (c === "\"") {
         res = parseStringLiteral(ctx);
-    } else if (c === "!") {
+    } else if (c === "!" || c === ">" || c === "-") {
         // TODO: fix -x not working
 
         const start = getParserPosition(ctx);
 
-        advance(ctx);
-        parseWhitespace(ctx);
+        let op: UnaryOperatorType = UNARY_OP_INVALID;
+        if (c === "!") {
+            advance(ctx);
+            op = UNARY_OP_NOT;
+        } else if (c === ">") {
+            if (currentChar(ctx, 1) === ">") {
+                if (currentChar(ctx, 2) === ">") {
+                    advance(ctx);
+                    advance(ctx);
+                    advance(ctx);
+                    op = UNARY_OP_PRINT;
+                }
+            }
+        } else if (c === "-") {
+            advance(ctx);
+            parseWhitespace(ctx);
 
-        const expr = parseExpression(ctx, false, MIN_PRECEDENCE);
-        if (!expr) {
-            return;
+            const expr = parseExpression(ctx, false, MIN_PRECEDENCE);
+            if (!expr) {
+                return;
+            }
+
+            // Rewrite negatives to be like 0 - blah.
+
+            res = {
+                slice: newTextSlice(ctx.text, start.i, ctx.pos.i),
+                pos: start,
+                t: T_BINARY_OP,
+                // virtual expression. Source? where the text live? I made it tf up
+                lhs: {
+                    t: T_NUMBER_LITERAL,
+                    pos: start, 
+                    slice: ZERO_TEXT_SLICE,
+                    integerPart: ZERO_TEXT_SLICE, 
+                    decimalPart: null,
+                    exponentPart: null,
+                    isNegative: false,
+                    val: 0
+                },
+                op: BIN_OP_SUBTRACT,
+                rhs: expr
+            }
         }
 
-        res = {
-            slice: newTextSlice(ctx.text, start.i, ctx.pos.i),
-            pos: start,
-            t: T_UNARY_OP,
-            op: UNARY_OP_NOT,
-            expr
-        };
+        if (op !== UNARY_OP_INVALID) {
+            parseWhitespace(ctx);
+
+            const expr = parseExpression(ctx, false, MIN_PRECEDENCE);
+            if (!expr) {
+                return;
+            }
+
+            res = {
+                slice: newTextSlice(ctx.text, start.i, ctx.pos.i),
+                pos: start,
+                t: T_UNARY_OP,
+                op,
+                expr
+            };
+        }
+
     }
 
     if (res) {
