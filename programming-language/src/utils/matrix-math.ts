@@ -127,7 +127,7 @@ export function getCol(m: Matrix, i: number): Matrix {
     return { values, shape: [] };
 }
 
-export function zeroes(shape: number[]): Matrix {
+export function matrixZeroes(shape: number[]): Matrix {
     let len = 1;
     for (let i = 0; i < shape.length; i++) {
         len *= shape[i];
@@ -142,7 +142,7 @@ export function zeroes(shape: number[]): Matrix {
 }
 
 export function copyMatrix(a: Matrix): Matrix {
-    const result = zeroes(a.shape);
+    const result = matrixZeroes(a.shape);
 
     for (let i = 0; i < a.values.length; i++) {
         const val = getSliceValue(a.values, i);
@@ -170,7 +170,7 @@ export function matrixAddElements(a: Matrix, b: Matrix): [Matrix | null, string]
     if (!matrixShapesAreEqual(a, b)) {
         return [null, "Elementwise add is only defined for matrices of identical shape"];
     }
-    const result = zeroes(a.shape);
+    const result = matrixZeroes(a.shape);
     for (let i = 0; i < a.values.length; i++) {
         const aVal = getSliceValue(a.values, i);
         const bVal = getSliceValue(b.values, i);
@@ -184,7 +184,7 @@ export function matrixSubtractElements(a: Matrix, b: Matrix): [Matrix | null, st
     if (!matrixShapesAreEqual(a, b)) {
         return [null, "Elementwise add is only defined for matrices of identical shape"];
     }
-    const result = zeroes(a.shape);
+    const result = matrixZeroes(a.shape);
     for (let i = 0; i < a.values.length; i++) {
         const aVal = getSliceValue(a.values, i);
         const bVal = getSliceValue(b.values, i);
@@ -199,7 +199,7 @@ export function matrixMultiplyElements(a: Matrix, b: Matrix): [Matrix | null, st
     if (!matrixShapesAreEqual(a, b)) {
         return [null, "Elementwise add is only defined for matrices of identical shape"];
     }
-    const result = zeroes(a.shape);
+    const result = matrixZeroes(a.shape);
     for (let i = 0; i < a.values.length; i++) {
         const aVal = getSliceValue(a.values, i);
         const bVal = getSliceValue(b.values, i);
@@ -214,7 +214,7 @@ export function matrixDivideElements(a: Matrix, b: Matrix): [Matrix | null, stri
     if (!matrixShapesAreEqual(a, b)) {
         return [null, "Elementwise add is only defined for matrices of identical shape"];
     }
-    const result = zeroes(a.shape);
+    const result = matrixZeroes(a.shape);
     for (let i = 0; i < a.values.length; i++) {
         const aVal = getSliceValue(a.values, i);
         const bVal = getSliceValue(b.values, i);
@@ -228,7 +228,7 @@ export function matrixLogicalAndElements(a: Matrix, b: Matrix): [Matrix | null, 
     if (!matrixShapesAreEqual(a, b)) {
         return [null, "Elementwise add is only defined for matrices of identical shape"];
     }
-    const result = zeroes(a.shape);
+    const result = matrixZeroes(a.shape);
     for (let i = 0; i < a.values.length; i++) {
         const aVal = getSliceValue(a.values, i);
         const bVal = getSliceValue(b.values, i);
@@ -242,7 +242,7 @@ export function matrixLogicalOrElements(a: Matrix, b: Matrix): [Matrix | null, s
     if (!matrixShapesAreEqual(a, b)) {
         return [null, "Elementwise add is only defined for matrices of identical shape"];
     }
-    const result = zeroes(a.shape);
+    const result = matrixZeroes(a.shape);
     for (let i = 0; i < a.values.length; i++) {
         const aVal = getSliceValue(a.values, i);
         const bVal = getSliceValue(b.values, i);
@@ -364,7 +364,7 @@ export function matrixVectorCross(a: Matrix, b: Matrix): [Matrix | null, string]
     const b2 = getSliceValue(b.values, 1);
     const b3 = getSliceValue(b.values, 2);
 
-    const result = zeroes([3]);
+    const result = matrixZeroes([3]);
 
     setSliceValue(result.values, 0, a2*b3 - a3*b2);
     setSliceValue(result.values, 1, a3*b1 - a1*b3);
@@ -401,7 +401,7 @@ export function matrixMul(a: Matrix, b: Matrix): [Matrix | null, string] {
         return [null, "AxB is only defined when A has the same number of columns as B has rows"];
     }
 
-    const result = zeroes([aRows, bCols]);
+    const result = matrixZeroes([aRows, bCols]);
 
     for (let i = 0; i < aRows; i++) {
         for (let j = 0; j < bCols; j++) {
@@ -425,7 +425,7 @@ export function transpose(a: Matrix): [Matrix | null, string] {
     const aRows = a.shape[0];
     const aCols = a.shape[1];
 
-    const result = zeroes([aCols, aRows]);
+    const result = matrixZeroes([aCols, aRows]);
     for (let i = 0; i < aRows; i++) {
         for (let j = 0; j < aCols; j++) {
             const ijVal = getMatrixValue(a, i, j);
@@ -437,7 +437,7 @@ export function transpose(a: Matrix): [Matrix | null, string] {
 }
 
 export function identityMatrix(size: number): Matrix {
-    const result = zeroes([size, size]);
+    const result = matrixZeroes([size, size]);
 
     for (let i = 0; i < size; i++) {
         setMatrixValue(result, i, i, 1);
@@ -545,11 +545,11 @@ export function gaussianElimination(a: Matrix, toInvert?: Matrix): string {
 export function perspectiveProjection(): Matrix {
     // TODO: implement
 
-    return zeroes([1])
+    return matrixZeroes([1])
 }
 
 export function orthoProjection(): Matrix {
     // TODO: implement
-    return zeroes([1])
+    return matrixZeroes([1])
 }
 

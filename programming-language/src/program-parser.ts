@@ -543,20 +543,22 @@ function parseStringLiteral(ctx: ParserContext): ProgramExpressionStringLiteral 
 }
 
 function computeStringForStringLiteral(expr: ProgramExpressionStringLiteral): [string | undefined, string] {
-    const text = getSliceText(expr.slice);
+    const fullText = getSliceText(expr.slice);
+    const text = fullText.slice(1, fullText.length - 1);
     const sb = [];
 
     let isEscape = false;
     let errorMessage = "";
     for (const c of text) {
-        if (c === "\\") {
-            isEscape = true;
-            continue;
-        }
-
         if (!isEscape) {
+            if (c === "\\") {
+                isEscape = true;
+                continue;
+            }
+
             sb.push(c);
         } else {
+            isEscape = false;
             switch(c) {
                 case "n":
                     sb.push("\n");
@@ -580,7 +582,7 @@ function computeStringForStringLiteral(expr: ProgramExpressionStringLiteral): [s
         }
     }
 
-    if (!errorMessage) {
+    if (errorMessage) {
         return [undefined, errorMessage]
     }
 

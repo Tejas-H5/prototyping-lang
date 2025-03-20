@@ -1,5 +1,5 @@
-// Using css was a mistake. Most styling should be available in javascript for the code to know about and use...
-import { newCssBuilder, newColorFromHex, setCssVars } from "src/utils/im-dom-utils";
+import { newCssBuilder, setCssVars } from "src/utils/im-dom-utils";
+import { newColorFromHex } from "src/utils/colour";
 
 const mainTheme = Object.freeze({
     bg: newColorFromHex("#FFF"),
@@ -64,6 +64,14 @@ export const cnApp = {
     gap5: cssb.cn("gap5", [` { gap: 5px; }`]),
 
     code: cssb.cn("code", [` { font-family: Source Code Pro, monospace; }`]),
+    bg2: cssb.cn("bg2", [` { background-color: ${cssVars.bg2}; }`]),
+
+    bold: cssb.cn("bold", [` { font-weight: bold; }`]),
+    italic: cssb.cn("italic", [` { font-style: italic; }`]),
+
+    h1: cssb.cn("h1", [` { font-size: 3em; }`]),
+    h2: cssb.cn("h2", [` { font-size: 2em; }`]),
+    h3: cssb.cn("h3", [` { font-size: 1.25em; }`]),
 };
 
 setCssVars(mainTheme);

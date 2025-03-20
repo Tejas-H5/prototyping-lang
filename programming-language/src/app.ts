@@ -1,5 +1,5 @@
 import { EditableTextArea } from './components/text-area.ts';
-import { ExecutionStep, ExecutionSteps, executionStepToString, getCurrentCallstack, interpret, ProgramInterpretResult, ProgramOutputs, ProgramResult, programResultTypeString, startInterpreting, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING } from './program-interpreter.ts';
+import { ExecutionStep, ExecutionSteps, executionStepToString, getCurrentCallstack, interpret, ProgramInterpretResult, ProgramOutputs, ProgramPlotOutput, ProgramResult, programResultTypeString, startInterpreting, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING } from './program-interpreter.ts';
 import {
     binOpToString,
     binOpToOpString as binOpToSymbolString,
@@ -29,20 +29,52 @@ import {
 import { GlobalContext, GlobalState, newGlobalContext, saveState, startDebugging } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
-import { addClasses, assert, beginList, cn, div, el, end, endList, getComponentStackSize, imElse, imIf, imMemo, imOn, imRef, imRerenderable, imState, imStateInline, imTryCatch, init, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setStyle, span, textNode, textSpan, UIRoot } from './utils/im-dom-utils.ts';
+import { addClasses, assert, beginList, cn, div, el, end, endList, getComponentStackSize, imElse, imIf, imMemo, imOn, imRef, imRerenderable, imSetVal, imState, imStateInline, imTryCatch, imVal, init, initializeDomUtils, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setStyle, span, textNode, UIRoot } from './utils/im-dom-utils.ts';
+import { inverseLerp } from './utils/math-utils.ts';
 import { getSliceValue } from './utils/matrix-math.ts';
 import { getLineBeforePos, getLineEndPos, getLineStartPos } from './utils/text-utils.ts';
 
-function newH3() {
-    return document.createElement("h3");
+const ROW = 1 << 1;
+const COL = 1 << 2;
+const FLEX = 1 << 3;
+const GAP = 1 << 4;
+const CODE = 1 << 5;
+const PRE = 1 << 6;
+const ALIGN_CENTER = 1 << 7;
+const JUSTIFY_CENTER = 1 << 8;
+const W100 = 1 << 9;
+const H100 = 1 << 10;
+const BOLD = 1 << 11;
+const ITALIC = 1 << 12;
+const H1 = 1 << 13;
+const H2 = 1 << 14;
+const H3 = 1 << 15;
+
+function setStyleFlags(flags: number) {
+    setClass(cn.row, !!(flags & ROW));
+    setClass(cn.col, !!(flags & COL));
+    setClass(cn.flex1, !!(flags & FLEX));
+    setClass(cnApp.gap5, !!(flags & GAP));
+    setClass(cnApp.code, !!(flags & CODE));
+    setClass(cn.pre, !!(flags & PRE));
+    setClass(cn.alignItemsCenter, !!(flags & ALIGN_CENTER));
+    setClass(cn.justifyContentCenter, !!(flags & JUSTIFY_CENTER));
+    setClass(cn.h100, !!(flags & H100));
+    setClass(cn.w100, !!(flags & W100));
+    setClass(cnApp.bold, !!(flags & BOLD));
+    setClass(cnApp.italic, !!(flags & ITALIC));
+    setClass(cnApp.h1, !!(flags & H1));
+    setClass(cnApp.h2, !!(flags & H2));
+    setClass(cnApp.h3, !!(flags & H3));
 }
 
-function codeSpan(text: string) {
-    const root = span(); { 
-        init() && setAttributes({
-            class: [cnApp.code],
-            style: `background-color: ${cssVars.bg2}`
-        });
+function textSpan(text: string, flags: number = 0) {
+    const lastFlags = imRef();
+    const root = span(); {
+        if (lastFlags.val !== flags) {
+            lastFlags.val = flags;
+            setStyleFlags(flags);
+        }
 
         textNode(text);
     } end();
@@ -50,14 +82,55 @@ function codeSpan(text: string) {
     return root;
 }
 
+function beginLayout(flags: number = 0) {
+    const lastFlags = imRef();
+    const root = div(); {
+        if (lastFlags.val !== flags) {
+            lastFlags.val = flags;
+            setStyleFlags(flags);
+        }
+    };
+
+    // NOTE: this is a possibility for a simple API to allow more higher-level layout primitives.
+    // instructs the corresponding end() to pop more than 1 node.
+    // setEndPopCount(2);
+
+    return root;
+}
+
+function beginScrollContainer(flags: number = 0) {
+    const root = beginLayout(flags);
+    if (init()) {
+        setClass(cn.overflowYAuto);
+    }
+    return root;
+}
+
+function beginAspectRatio(w: number, h: number, flags: number = 0) {
+    const lastAr = imRef();
+    const root = beginLayout(flags); {
+        if (init()) {
+            setStyle("width", "auto");
+            setStyle("height", "auto");
+        }
+
+        const ar = w / h;
+        if (lastAr.val !== ar) {
+            lastAr.val = ar;
+            setStyle("aspectRatio", w + " / " + h);
+        }
+    };
+
+    return root;
+}
+
+function newH3() {
+    return document.createElement("h3");
+}
+
 // Don't forget to call end()
 function beginCodeBlock(indent: number) {
-    const root = div(); { 
-        init() && setAttributes({
-            class: [cnApp.code],
-            style: `background-color: ${cssVars.bg2}`
-        });
-
+    const root = beginLayout(CODE); { 
         setStyle("paddingLeft", (4 * indent) + "ch");
     } 
 
@@ -78,7 +151,7 @@ function ParserOutput(parseResultOrUndefined: ProgramParseResult | undefined) {
                         textSpan(type);
                         imIf(codeOrUndefined, (code) => {
                             textSpan(" ");
-                            codeSpan(code);
+                            textSpan(code, CODE);
                         });
                     } end();
                 } end();
@@ -203,11 +276,19 @@ function ParserOutput(parseResultOrUndefined: ProgramParseResult | undefined) {
     });
 }
 
+function beginHeading() {
+    const root = el(newH3); {
+        if (init()) {
+            setStyle("padding", "10px 0");
+        }
+    }
+    return root;
+}
+
 // TODO: display these above the code editor itself. 
 function renderDiagnosticInfo(heading: string, info: DiagnosticInfo[], emptyText: string) {
     imIf(!!heading, () => {
-        el(newH3); {
-            init() && setAttributes({ style: "padding: 10px 0" });
+        beginHeading(); {
             textSpan(heading);
         } end();
     });
@@ -231,79 +312,82 @@ function renderDiagnosticInfo(heading: string, info: DiagnosticInfo[], emptyText
 function renderProgramResult(res: ProgramResult) {
     div(); {
         beginList(); {
-            nextRoot(); {
-                const typeString = programResultTypeString(res)
-                textSpan(typeString + " ");
-            } end();
+            nextRoot(res.t);  {
+                beginLayout(COL | GAP); {
+                    const typeString = programResultTypeString(res)
+                    textSpan(typeString + " ");
 
-            nextRoot(res.t); 
-            switch (res.t) {
-                case T_RESULT_NUMBER:
-                    codeSpan("" + res.val);
-                    break;
-                case T_RESULT_STRING:
-                    codeSpan(res.val);
-                    break;
-                case T_RESULT_LIST:
-                    beginCodeBlock(0); {
-                        codeSpan("[");
-                        beginCodeBlock(1); {
-                            beginList(); 
-                            for (let i = 0; i < res.values.length; i++) {
-                                nextRoot(); {
-                                    renderProgramResult(res.values[i]);
+                    switch (res.t) {
+                        case T_RESULT_NUMBER:
+                            textSpan("" + res.val, CODE);
+                            break;
+                        case T_RESULT_STRING:
+                            beginLayout(COL | GAP); {
+                                textSpan(res.val, CODE | PRE);
+                            } end();
+                            break;
+                        case T_RESULT_LIST:
+                            beginCodeBlock(0); {
+                                textSpan("[", CODE);
+                                beginCodeBlock(1); {
+                                    beginList(); 
+                                    for (let i = 0; i < res.values.length; i++) {
+                                        nextRoot(); {
+                                            renderProgramResult(res.values[i]);
+                                        } end();
+                                    }
+                                    endList();
+                                } end();
+                                textSpan("]L", CODE);
+                            } end();
+                            break;
+                        case T_RESULT_MATRIX:
+                            let idx = 0;
+                            const dfs = (dim: number, isLast: boolean) => {
+                                if (dim === res.val.shape.length) {
+                                    const val = getSliceValue(res.val.values, idx);
+
+                                    // assuming everything renders in order, this is the only thing we need to do for this to work.
+                                    idx++; 
+
+                                    textSpan("" + val);
+                                    imIf(!isLast, () => {
+                                        textSpan(", ");
+                                    });
+                                    return;
+                                }
+
+                                beginCodeBlock(dim === 0 ? 0 : 1); {
+                                    textSpan("[");
+                                    beginList(); {
+                                        const len = res.val.shape[dim];
+                                        for (let i = 0; i < len; i++) {
+                                            // This is because when the 'level' of the list changes, the depth itself changes,
+                                            // and the components we're rendering at a particular level will change. 
+                                            // We need to re-key the list, so that we may render a different kind of component at this position.
+                                            const key = (res.val.shape.length - dim) + "-" + i;
+                                            nextRoot(key); {
+                                                dfs(dim + 1, i === len - 1);
+                                            } end();
+                                        }
+                                    } endList();
+                                    textSpan("]");
                                 } end();
                             }
-                            endList();
-                        } end();
-                        codeSpan("]L");
-                    } end();
-                    break;
-                case T_RESULT_MATRIX:
-                    let idx = 0;
-                    const dfs = (dim: number, isLast: boolean) => {
-                        if (dim === res.val.shape.length) {
-                            const val = getSliceValue(res.val.values, idx);
-
-                            // assuming everything renders in order, this is the only thing we need to do for this to work.
-                            idx++; 
-
-                            textSpan("" + val);
-                            imIf(!isLast, () => {
-                                textSpan(", ");
-                            });
-                            return;
-                        }
-
-                        beginCodeBlock(dim === 0 ? 0 : 1); {
-                            textSpan("[");
-                            beginList(); {
-                                const len = res.val.shape[dim];
-                                for (let i = 0; i < len; i++) {
-                                    // This is because when the 'level' of the list changes, the depth itself changes,
-                                    // and the components we're rendering at a particular level will change. 
-                                    // We need to re-key the list, so that we may render a different kind of component at this position.
-                                    const key = (res.val.shape.length - dim) + "-" + i;
-                                    nextRoot(key); {
-                                        dfs(dim + 1, i === len - 1);
-                                    } end();
-                                }
-                            } endList();
-                            textSpan("]");
-                        } end();
-                    }
-                    dfs(0, false);
-                    break;
-                case T_RESULT_RANGE:
-                    codeSpan("" + res.val.lo);
-                    codeSpan(" -> ");
-                    codeSpan("" + res.val.hi);
-                    break;
-                case T_RESULT_FN:
-                    codeSpan(res.expr.fnName.name);
-                    break;
-                default:
-                    throw new Error("Unhandled result type: " + programResultTypeString(res));
+                            dfs(0, false);
+                            break;
+                        case T_RESULT_RANGE:
+                            textSpan("" + res.val.lo, CODE);
+                            textSpan(" -> ", CODE);
+                            textSpan("" + res.val.hi, CODE);
+                            break;
+                        case T_RESULT_FN:
+                            textSpan(res.expr.fnName.name, CODE);
+                            break;
+                        default:
+                            throw new Error("Unhandled result type: " + programResultTypeString(res));
+                    } 
+                } end();
             } end();
         } endList();
     } end();
@@ -311,11 +395,11 @@ function renderProgramResult(res: ProgramResult) {
 
 // this component kinda suss. 
 function collapsableHeading(heading: string, isCollapsed: boolean, toggle: () => void) {
-    el(newH3); {
-        init() && setAttributes({
-            style: "padding: 10px 0; cursor: pointer",
-            class: [cn.userSelectNone]
-        });
+    beginHeading(); {
+        if (init()) {
+            setStyle("cursor", "pointer");
+            setClass(cn.userSelectNone);
+        }
 
         textSpan(heading);
 
@@ -336,14 +420,12 @@ function renderExecutionStep(step: ExecutionStep) {
 }
 
 function renderFunction(interpretResult: ProgramInterpretResult, { name, steps }: ExecutionSteps) {
-    beginLayout(); {
+    beginLayout(FLEX | COL); {
         el(newH3); {
             textSpan(name);
         } end()
 
-        const scrollContainer = beginLayout(); {
-            init() && addClasses([ cn.overflowAuto ]);
-
+        const scrollContainer = beginScrollContainer(FLEX); {
             let rCurrent: UIRoot<HTMLElement> | undefined;
 
             beginCodeBlock(0); {
@@ -396,13 +478,10 @@ const cnButton = cssb.cn("button", [
 ]);
 
 function Button(text: string, onClick: () => void, toggled: boolean = false) {
-    const root = div(); {
-        init() && setAttributes({
-            class: [
-                cnButton, 
-                cn.row, cn.alignItemsCenter, cn.justifyContentCenter
-            ],
-        });
+    const root = beginLayout(ROW | ALIGN_CENTER | JUSTIFY_CENTER); {
+        if (init()) {
+            setClass(cnButton);
+        }
 
         setClass(cnApp.inverted, toggled);
 
@@ -413,42 +492,14 @@ function Button(text: string, onClick: () => void, toggled: boolean = false) {
     return root;
 }
 
-const ROW = 1 << 1;
-const COL = 1 << 2;
-const FLEX = 1 << 3;
-const GAP = 1 << 4;
-
-function beginLayout(flags: number = 0) {
-    const root = div(); {
-        if (init()) {
-            if (flags & ROW) {
-                setClass(cn.row);
-            }
-            if (flags & COL) {
-                setClass(cn.col);
-            }
-            if (flags & FLEX) {
-                setClass(cn.flex1);
-            }
-            if (flags & GAP) {
-                setClass(cnApp.gap5);
-            }
-        }
-    };
-
-    // NOTE: this is a possibility for a simple API to allow more higher-level layout primitives.
-    // instructs the corresponding end() to pop more than 1 node.
-    // setEndPopCount(2);
-
-    return root;
-}
-
 function renderAppCodeOutput(ctx: GlobalContext) {
     div(); {
-        init() && setAttributes({
-            class: [cn.h100, cn.overflowYAuto, cn.borderBox],
-            style: "padding: 10px"
-        });
+        if (init()) {
+            setClass(cn.h100);
+            setClass(cn.overflowYAuto);
+            setClass(cn.borderBox);
+            setStyle("padding", "10px");
+        }
 
         const parseResult = ctx.lastParseResult;
 
@@ -542,7 +593,8 @@ function renderDiagnosticInfoOverlay(
             div(); {
                 init() && setAttributes({
                     class: [
-                        cn.absolute, cn.w100, cn.h100, cn.preWrap,
+                        cn.absolute, cn.w100, cn.h100, 
+                        cn.preWrap,
                         cn.pointerEventsNone,
                         cnApp.code,
                     ],
@@ -682,11 +734,13 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
         assert(interpretResult);
         const cs = getCurrentCallstack(interpretResult);
 
-        beginLayout(); {
-            imIf(cs, (cs) => {
-                renderFunction(interpretResult, cs.code);
-            });
-            beginLayout(ROW); {
+        beginLayout(COL | FLEX); {
+            beginLayout(COL | FLEX); {
+                imIf(cs, (cs) => {
+                    renderFunction(interpretResult, cs.code);
+                });
+            } end();
+            beginLayout(ROW | FLEX); {
                 beginLayout(COL | FLEX); {
                     el(newH3); {
                         textSpan("Stack");
@@ -732,7 +786,7 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
                                                     style: "padding-left: 10px; padding-right: 10px"
                                                 });
 
-                                                codeSpan(name + "->");
+                                                textSpan(name + "->", CODE);
                                             } end();
                                         }
 
@@ -765,7 +819,7 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
                                         const variable = variablesReverseMap.get(addr);
                                         imIf(variable, variable => {
                                             div(); {
-                                                codeSpan(variable + " = ");
+                                                textSpan(variable + " = ", CODE);
                                             } end();
                                         })
 
@@ -796,41 +850,132 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
     } end();
 }
 
+function newCanvasElement() {
+    return document.createElement("canvas");
+}
+
 function renderProgramOutputs(outputs: ProgramOutputs) {
     beginList();
     for (const result of outputs.prints) {
         nextRoot(); {
             beginLayout(ROW | GAP); {
-                div(); { 
-                    beginCodeBlock(0); {
-                        textNode(
-                            expressionToString(result.expr)
-                        )
-                    } end();
-                } end();
-
                 div(); {
                     init() && setAttributes({ 
                         style: `width: 5px; background-color: ${cssVars.fg};`
                     });
                 } end();
 
-                div(); {
-                    init() && setAttributes({ 
-                        class: [cn.flex1], 
-                        style: `padding-top: 5px;`
-                    });
+                beginLayout(COL | GAP); {
+                    div(); {
+                        beginCodeBlock(0); {
+                            textNode(
+                                expressionToString(result.expr)
+                            )
+                        } end();
+                    } end();
 
-                    renderProgramResult(result.val);
+                    beginLayout(FLEX); {
+                        renderProgramResult(result.val);
+                    } end();
                 } end();
             } end();
 
         } end();
     };
     endList();
+    beginList();
+    for (const [idx, plot] of outputs.plots) {
+        nextRoot(); {
+            beginLayout(); {
+                textSpan("Plot #" + idx, H3);
+
+                const container = beginAspectRatio(16, 9).root; {
+                    renderPlot(plot, container);
+                } end();
+            } end();
+        } end();
+    }
+    endList();
     imElse(() => {
         textSpan("No results yet");
     });
+}
+
+function renderPlot(plot: ProgramPlotOutput, container: HTMLElement) {
+    const canvas = el(newCanvasElement).root; {
+        let ctx = imVal<CanvasRenderingContext2D>();
+        if (!ctx) {
+            ctx = imSetVal(canvas.getContext("2d"));
+            if (!ctx) {
+                throw new Error("Canvas 2d isn't supported by your browser!!! I'd suggest _not_ plotting anything. Or updaing your browser");
+            }
+        }
+
+        canvas.width = 0;
+        canvas.height = 0;
+
+        const rect = container.getBoundingClientRect();
+        const width = rect.width - 1;
+        const height = rect.height - 1;
+
+        canvas.width = width;
+        canvas.height = height;
+
+        ctx.clearRect(0, 0, width, height);
+
+        ctx.strokeStyle = cssVars.fg;
+        ctx.lineWidth = 2;
+        ctx.moveTo(0, 0);
+        ctx.lineTo(0, height);
+        ctx.lineTo(width, height);
+        ctx.lineTo(width, 0);
+        ctx.moveTo(0, 0);
+        ctx.stroke();
+
+        let minX = Number.MAX_VALUE;
+        let maxX = Number.MIN_VALUE;
+        let minY = Number.MAX_VALUE;
+        let maxY = Number.MIN_VALUE;
+
+        for (const line of plot.lines) {
+            for (let i = 0; i < line.pointsX.length; i++) {
+                const x = line.pointsX[i];
+                minX = Math.min(x, minX);
+                maxX = Math.max(x, maxX);
+
+                const y = line.pointsY[i];
+                minY = Math.min(y, minY);
+                maxY = Math.max(y, maxY);
+            }
+        }
+
+        for (const line of plot.lines) {
+            // TODO: labels
+
+            ctx.strokeStyle = line.color ? line.color.toString() : cssVars.fg;
+            ctx.lineWidth = 2;
+
+            let x0 = line.pointsX[0];
+            let y0 = line.pointsY[0];
+            const x0Plot = inverseLerp(minX, maxX, x0) * width;
+            const y0Plot = inverseLerp(minY, maxY, y0) * height;
+            ctx.beginPath();
+            ctx.moveTo(x0Plot, y0Plot);
+            for (let i = 1; i < line.pointsX.length; i++) {
+                const x1 = line.pointsX[i];
+                const y1 = line.pointsY[i];
+
+                const x1Plot = inverseLerp(minX, maxX, x1) * width;
+                const y1Plot = inverseLerp(minY, maxY, y1) * height;
+
+                ctx.lineTo(x1Plot, y1Plot);
+
+                x0 = x1; y0 = y1;
+            }
+            ctx.stroke();
+            ctx.closePath();
+        }
+    } end();
 }
 
 let saveTimeout = 0;
@@ -871,18 +1016,11 @@ export function renderApp() {
                         saveStateDebounced(ctx);
                     }
 
-                    div(); {
-                        init() && setAttributes({
-                            class: [cn.row, cn.alignItemsStretch, cn.h100],
-                        });
-
-                        div(); {
-                            init() && setAttributes({ class: [cn.flex1] });
+                    beginLayout(ROW | H100); {
+                        beginLayout(FLEX); {
                             renderAppCodeEditor(ctx);
                         } end();
-                        div(); {
-                            init() && setAttributes({ class: [cn.flex1] });
-
+                        beginLayout(FLEX); {
                             imIf(ctx.isDebugging, () => {
                                 const interpretResult = ctx.lastInterpreterResult;
                                 assert(interpretResult);

@@ -3,6 +3,8 @@
 // Right now, this one seems better, but the other one has a 'proven' track record of actually working.
 // But in a matter of hours/days, I was able to implement features in this framework that I wasn't able to for months/years in the other one...
 
+import { Color } from "./colour";
+
 //////////
 // Assertion functions
 
@@ -214,112 +216,6 @@ export function setCssVar(cssRoot: HTMLElement, varName: string, value: string |
     cssRoot.style.setProperty(fullVarName, "" + value);
 }
 
-export type Color = {
-    r: number; g: number; b: number; a: number;
-    toCssString(): string;
-    toString(): string;
-}
-
-export function newColor(r: number, g: number, b: number, a: number): Color {
-    return {
-        r, g, b, a,
-        toCssString() {
-            const { r, g, b, a} = this;
-            return `rgba(${Math.floor(r * 255)}, ${Math.floor(g * 255)}, ${Math.floor(b * 255)}, ${a})`;
-        },
-        toString() {
-            return this.toCssString();
-        },
-    };
-}
-
-export function newColorFromHex(hex: string): Color {
-    if (hex.startsWith("#")) {
-        hex = hex.substring(1);
-    }
-
-    if (hex.length === 3 || hex.length === 4) {
-        const r = hex[0];
-        const g = hex[1];
-        const b = hex[2];
-        const a = hex[3] as string | undefined;
-
-        return newColor(
-            parseInt("0x" + r + r) / 255,
-            parseInt("0x" + g + g) / 255,
-            parseInt("0x" + b + b) / 255,
-            a ? parseInt("0x" + a + a) / 255 : 1,
-        );
-    }
-
-    if (hex.length === 6 || hex.length === 8) {
-        const r = hex.substring(0, 2);
-        const g = hex.substring(2, 4);
-        const b = hex.substring(4, 6);
-        const a = hex.substring(6);
-
-        return newColor( 
-            parseInt("0x" + r) / 255,
-            parseInt("0x" + g) / 255,
-            parseInt("0x" + b)/ 255,
-            a ? parseInt("0x" + a) / 255 : 1,
-        );
-    }
-
-    throw new Error("invalid hex: " + hex);
-}
-
-/**
- * Taken from https://gist.github.com/mjackson/5311256
- */
-export function newColorFromHsv(h: number, s: number, v: number): Color {
-    let r = 0, g = 0, b = 0;
-
-    if (s === 0) {
-        r = g = b = v; // achromatic
-        return newColor(r, g, b, 1);
-    }
-
-    function hue2rgb(p: number, q: number, t: number) {
-        if (t < 0) t += 1;
-        if (t > 1) t -= 1;
-        if (t < 1 / 6) return p + (q - p) * 6 * t;
-        if (t < 1 / 2) return q;
-        if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-        return p;
-    }
-
-    var q = v < 0.5 ? v * (1 + s) : v + s - v * s;
-    var p = 2 * v - q;
-
-    r = hue2rgb(p, q, h + 1 / 3);
-    g = hue2rgb(p, q, h);
-    b = hue2rgb(p, q, h - 1 / 3);
-
-    return newColor(r, g, b, 1);
-}
-
-function lerp(a: number, b: number, factor: number) {
-    if (factor < 0) {
-        return a;
-    }
-
-    if (factor > 1) {
-        return b;
-    }
-
-    return a + (b - a) * factor;
-}
-
-/**
- * NOTE to self: try to use a CSS transition on the colour style before you reach for this!
- **/
-export function lerpColor(c1: Color, c2: Color, factor: number, dst: Color) {
-    dst.r = lerp(c1.r, c2.r, factor);
-    dst.g = lerp(c1.g, c2.g, factor);
-    dst.b = lerp(c1.b, c2.b, factor);
-    dst.a = lerp(c1.a, c2.a, factor);
-}
 
 //////////
 // Various seemingly random/arbitrary functions that actually end up being very useful
@@ -492,6 +388,10 @@ function newImArray<T>(): ImmediateModeArray<T> {
         expectedLength: -1,
         idx: -1,
     };
+}
+
+function imGetCurrent<T>(arr: ImmediateModeArray<T>): T | undefined {
+    return arr.items[arr.idx];
 }
 
 function imGetNext<T>(arr: ImmediateModeArray<T>): T | undefined {
@@ -1107,7 +1007,10 @@ export function getCurrentStackItemInternal() {
     return currentStack[currentStack.length - 1];
 }
 
-// You probably don't want to use this, if you can help it
+// You probably don't want to use this, if you can help it.
+// but this framework is pretty new, and I probably haven't given you all the APIs you'll actually need. 
+// If you need to use this in your own code, feel free to log a github issue explaining your use case,
+// and I'll probably consider integrating it into the framework itself if it's ubiquitious enough.
 export function getCurrentRootInternal(): UIRoot {
     const val = getCurrentStackItemInternal();
 
@@ -1271,23 +1174,14 @@ export function div(): UIRoot<HTMLDivElement> {
     return el<HTMLDivElement>(newDiv);
 }
 
-// The name `text` is far too common in user code, so textNode it is
+/**
+ * The name `text` is far too common in user code, so textNode it is
+ * @deprecated - we should just use spans, so that we can insert multiple text nodes under the same component.
+ */
 export function textNode(str: string) {
     const r = getCurrentRootInternal();
     r.text(str);
 }
-
-/** 
- * Text spans can be reliably inserted between other DOM elements
- */
-export function textSpan(text: string, fn?: () => void) {
-    const result = span(); {
-        textNode(text);
-        fn?.();
-    } end();
-    return result;
-}
-
 
 export function span(): UIRoot<HTMLSpanElement> {
     return el<HTMLSpanElement>(newSpan);
@@ -1548,6 +1442,32 @@ function newRef<T>(): Ref<T> {
  */
 export function imRef<T>(): Ref<T> {
     return imState(newRef as (typeof newRef<T>));
+}
+
+/**
+ * For when imRef isn't quite right
+ * ```ts
+ * const canvas = el(newCanvas); {
+ *      let ctx = imVal<CanvasRenderingContext2D>();
+ *      if (!ctx) {
+ *          ctx = imSetVal(canvas.getContext("2d"));
+ *      }
+ *
+ *      // ctx is defined
+ * } end();
+ * ```
+ *
+ */
+export function imVal<T>(): T | null {
+    return imRef<T>().val;
+}
+export function imSetVal<T>(t: T): T {
+    const root = getCurrentRootInternal();
+    let val = imGetCurrent(root.items);
+    assert(val?.t === ITEM_STATE);
+    assert(val.supplier === newRef);
+    (val.v as Ref<T>).val = t;
+    return t;
 }
 
 

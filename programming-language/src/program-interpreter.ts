@@ -1,24 +1,25 @@
+import { Color, newColor, newColorFromHexOrUndefined } from "src/utils/colour";
+import { assert } from "src/utils/im-dom-utils";
+import { getMatrixValue, getSlice, getSliceValue, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice } from "src/utils/matrix-math";
 import {
     BIN_OP_ADD, BIN_OP_AND_AND, BIN_OP_DIVIDE, BIN_OP_GREATER_THAN, BIN_OP_GREATER_THAN_EQ, BIN_OP_INVALID, BIN_OP_IS_EQUAL_TO, BIN_OP_LESS_THAN, BIN_OP_LESS_THAN_EQ, BIN_OP_MULTIPLY, BIN_OP_OR_OR, BIN_OP_SUBTRACT,
-    BinaryOperatorType, 
-    binOpToOpString, 
-    binOpToString, 
-    DiagnosticInfo, 
-    expressionTypeToString, 
+    BinaryOperatorType,
+    binOpToOpString,
+    binOpToString,
+    DiagnosticInfo,
+    expressionTypeToString,
     ProgramExpression,
     ProgramExpressionFn,
     ProgramExpressionIdentifier,
-    ProgramExpressionUnaryOperator,
-    ProgramParseResult, 
+    ProgramParseResult,
     T_ASSIGNMENT, T_BINARY_OP, T_BLOCK, T_DATA_INDEX_OP, T_FN, T_IDENTIFIER, T_IDENTIFIER_THE_RESULT_FROM_ABOVE, T_LIST_LITERAL, T_NUMBER_LITERAL, T_RANGE_FOR, T_STRING_LITERAL, T_TERNARY_IF, T_UNARY_OP, T_VECTOR_LITERAL,
+    TextPosition,
     UNARY_OP_NOT,
     UNARY_OP_PRINT,
     UnaryOperatorType,
     unaryOpToOpString,
     unaryOpToString
 } from "./program-parser";
-import { assert } from "./utils/im-dom-utils";
-import { getSliceValue, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixLogicalAndElements, matrixLogicalOrElements, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, newSlice } from "./utils/matrix-math";
 
 export const T_RESULT_NUMBER = 1;
 export const T_RESULT_STRING = 2;
@@ -69,6 +70,18 @@ export type ProgramResult = ProgramResultNumber
 
 export function programResultTypeString(output: ProgramResult): string {
     switch (output.t) {
+        case T_RESULT_MATRIX: {
+            return output.val.shape.length === 1 ? `Vector${output.val.shape[0]}` : (
+                `Matrix${output.val.shape.map(s => "" + s).join("x")}`
+            );
+        }
+    }
+
+    return programResultTypeStringInternal(output.t);
+}
+
+export function programResultTypeStringInternal(t: ProgramResult["t"]): string {
+    switch (t) {
         case T_RESULT_NUMBER:
             return "Number";
         case T_RESULT_RANGE:
@@ -78,9 +91,7 @@ export function programResultTypeString(output: ProgramResult): string {
         case T_RESULT_LIST:
             return "List";
         case T_RESULT_MATRIX: {
-            return output.val.shape.length === 1 ? `Vector${output.val.shape[0]}` : (
-                `Matrix${output.val.shape.map(s => "" + s).join("x")}`
-            );
+            return "Matrix";
         }
         case T_RESULT_FN:
             return `Function`;
@@ -400,8 +411,20 @@ export type ProgramPrintOutput = {
     val: ProgramResult;
 }
 
+export type ProgramPlotOutputLine = {
+    pointsX: number[];
+    pointsY: number[];
+    color: Color | undefined;
+    label: string | undefined;
+}
+
+export type ProgramPlotOutput = {
+    lines: ProgramPlotOutputLine[];
+}
+
 export type ProgramOutputs = {
     prints: ProgramPrintOutput[];
+    plots: Map<number, ProgramPlotOutput>;
 };
 
 
@@ -583,10 +606,13 @@ function getExecutionSteps(
                     const fn = result.functions.get(expr.fnName.name);
                     let isValid = false;
                     if (fn) {
-                        if (expr.arguments.length !== fn.expr.arguments.length) {
-                            addError(expr, "Expected " + fn.expr.arguments.length + " arguments, got " + expr.arguments.length);
-                            return false;
-                        }
+                        // The errors are worse if we report 'too few arguments'. I'd rather see which type I was supposed to input, even though I
+                        // haven't input all the args.
+                        // We might want to bring it back if we add static types.
+                        // if (expr.arguments.length !== fn.expr.arguments.length) {
+                        //     addError(expr, "Expected " + fn.expr.arguments.length + " arguments, got " + expr.arguments.length);
+                        //     return false;
+                        // }
 
                         step.call = { fn, numArgs: expr.arguments.length };
 
@@ -594,10 +620,17 @@ function getExecutionSteps(
                     } else {
                         const fn = getBuiltinFunction(expr.fnName.name);
                         if (fn) {
-                            if (expr.arguments.length !== fn.args.length) {
-                                addError(expr, "Expected " + fn.args.length + " arguments, got " + expr.arguments.length);
-                                return false;
-                            }
+                            // The errors are worse if we report 'too few arguments'. I'd rather see which type I was supposed to input, even though I 
+                            // haven't input all the args.
+                            // We might want to bring it back if we add static types.
+                            // if (expr.arguments.length < fn.minArgs || expr.arguments.length > fn.args.length) {
+                            //     if (fn.minArgs !== fn.args.length) {
+                            //         addError(expr, "Expected between " + fn.minArgs + " to " + fn.args.length + " arguments, got " + expr.arguments.length);
+                            //     } else {
+                            //         addError(expr, "Expected " + fn.args.length + " arguments, got " + expr.arguments.length);
+                            //     }
+                            //     return false;
+                            // }
 
                             step.builtinCall = { fn, numArgs: expr.arguments.length, expr };
                             isValid = true;
@@ -646,7 +679,7 @@ function getLength(result: ProgramResult): number | undefined {
 }
 
 function get(result: ProgramInterpretResult, offset = 0): ProgramResult | null {
-    return result.stack[result.stackIdx + offset];
+    return result.stack[result.stackIdx + offset] ?? null;
 }
 
 function pop(result: ProgramInterpretResult): ProgramResult {
@@ -658,8 +691,8 @@ function pop(result: ProgramInterpretResult): ProgramResult {
 }
 
 
-function addError(result: ProgramInterpretResult, step: ExecutionStep, problem: string) {
-    result.errors.push({ pos: step.expr.pos, problem });
+function addError(result: ProgramInterpretResult, step: ExecutionStep, problem: string, betterPos: TextPosition | null = null) {
+    result.errors.push({ pos: betterPos ?? step.expr.pos, problem });
 }
 
 function getVarExecutionState(result: ProgramInterpretResult, name: string): ExecutionState | null {
@@ -701,7 +734,8 @@ export function startInterpreting(parseResult: ProgramParseResult): ProgramInter
         callStack: [],
 
         outputs: {
-            prints: []
+            prints: [],
+            plots: new Map(),
         }
     };
 
@@ -760,17 +794,21 @@ function min (a: number, b: number): number {
 
 type BuiltinFunctionArgDesc = {
     name: string;
+    expr: ProgramExpression | undefined;
+    type: ProgramResult["t"][];
+    optional: boolean;
 };
 
 type BuiltinFunction = {
     name: string;
     fn: BuiltinFunctionSignature;
     args: BuiltinFunctionArgDesc[];
+    minArgs: number;
 };
-type BuiltinFunctionSignature = (result: ProgramInterpretResult, step: ExecutionStep, ...results: ProgramResult[]) => ProgramResult | undefined;
+type BuiltinFunctionSignature = (result: ProgramInterpretResult, step: ExecutionStep, ...results: (ProgramResult | null)[]) => ProgramResult | undefined;
 
-function newArg(name: string): BuiltinFunctionArgDesc {
-    return { name };
+function newArg(name: string, type: ProgramResult["t"][], optional = false, expr?: ProgramExpression): BuiltinFunctionArgDesc {
+    return { name, type, optional, expr };
 }
 
 const builtinFunctions = new Map<string, BuiltinFunction>();
@@ -784,95 +822,99 @@ function newBuiltinFunction(
         throw new Error("We already have a function called " + name);
     }
 
-    builtinFunctions.set(name, { name, fn, args });
+    let minArgs = 0;
+    for (const arg of args) {
+        if (!arg.optional) {
+            minArgs += 1;
+        }
+    }
+
+    builtinFunctions.set(name, { name, fn, args, minArgs });
 }
+
+const ZERO_VEC2 = matrixZeroes([2]);
+const ZERO_VEC3 = matrixZeroes([3]);
+const ZERO_VEC4 = matrixZeroes([4]);
 
 // initialize builtin funcs
 {
-    newBuiltinFunction("sin", [newArg("t")], (_result, _step, val) => {
-        if (val.t === T_RESULT_NUMBER) {
-            return newNumberResult(Math.sin(val.val));
-        }
+    newBuiltinFunction("sin", [newArg("t", [T_RESULT_NUMBER])], (_result, _step, val) => {
+        assert(val?.t === T_RESULT_NUMBER);
+        return newNumberResult(Math.sin(val.val));
     })
-    newBuiltinFunction("cos", [newArg("t")], (_result, _step, val) => {
-        if (val.t === T_RESULT_NUMBER) {
-            return newNumberResult(Math.cos(val.val));
-        }
+    newBuiltinFunction("cos", [newArg("t", [T_RESULT_NUMBER])], (_result, _step, val) => {
+        assert(val?.t === T_RESULT_NUMBER);
+        return newNumberResult(Math.cos(val.val));
     })
-    newBuiltinFunction("tan", [newArg("t")], ( _result, _step, val) => {
-        if (val.t === T_RESULT_NUMBER) {
-            return newNumberResult(Math.tan(val.val));
-        }
+    newBuiltinFunction("tan", [newArg("t", [T_RESULT_NUMBER])], ( _result, _step, val) => {
+        assert(val?.t === T_RESULT_NUMBER);
+        return newNumberResult(Math.tan(val.val));
     })
-    newBuiltinFunction("asin", [newArg("t")], (_result, _step, val) => {
-        if (val.t === T_RESULT_NUMBER) {
-            return newNumberResult(Math.asin(val.val));
-        }
+    newBuiltinFunction("asin", [newArg("t", [T_RESULT_NUMBER])], (_result, _step, val) => {
+        assert(val?.t === T_RESULT_NUMBER);
+        return newNumberResult(Math.asin(val.val));
     })
-    newBuiltinFunction("acos", [newArg("t")], (_result, _step, val) => {
-        if (val.t === T_RESULT_NUMBER) {
-            return newNumberResult(Math.acos(val.val));
-        }
+    newBuiltinFunction("acos", [newArg("t", [T_RESULT_NUMBER])], (_result, _step, val) => {
+        assert(val?.t === T_RESULT_NUMBER);
+        return newNumberResult(Math.acos(val.val));
     })
-    newBuiltinFunction("atan", [newArg("t")], (_result, _step, val) => {
-        if (val.t === T_RESULT_NUMBER) {
-            return newNumberResult(Math.atan(val.val));
-        }
+    newBuiltinFunction("atan", [newArg("t", [T_RESULT_NUMBER])], (_result, _step, val) => {
+        assert(val?.t === T_RESULT_NUMBER);
+        return newNumberResult(Math.atan(val.val));
     })
-    newBuiltinFunction("atan2", [newArg("y"), newArg("x")], (_result, _step, y, x) => {
-        if (y.t === T_RESULT_NUMBER && x.t === T_RESULT_NUMBER) {
-            return newNumberResult(Math.atan2(y.val, x.val));
-        }
+    newBuiltinFunction("atan2", [newArg("y", [T_RESULT_NUMBER]), newArg("x", [T_RESULT_NUMBER])], (_result, _step, y, x) => {
+        assert(x?.t === T_RESULT_NUMBER);
+        assert(y?.t === T_RESULT_NUMBER);
+
+        return newNumberResult(Math.atan2(y.val, x.val));
     })
-    newBuiltinFunction("abs", [newArg("x")], (_result, _step, val) => {
-        if (val.t === T_RESULT_NUMBER) {
-            return newNumberResult(Math.abs(val.val));
-        }
+    newBuiltinFunction("abs", [newArg("x", [T_RESULT_NUMBER])], (_result, _step, val) => {
+        assert(val?.t === T_RESULT_NUMBER);
+        return newNumberResult(Math.abs(val.val));
     })
-    newBuiltinFunction("ceil", [newArg("x")], (_result, _step, val) => {
-        if (val.t === T_RESULT_NUMBER) {
-            return newNumberResult(Math.ceil(val.val));
-        }
+    newBuiltinFunction("ceil", [newArg("x", [T_RESULT_NUMBER])], (_result, _step, val) => {
+        assert(val?.t === T_RESULT_NUMBER);
+        return newNumberResult(Math.ceil(val.val));
     })
-    newBuiltinFunction("floor", [newArg("x")], (_result, _step, val) => {
-        if (val.t === T_RESULT_NUMBER) {
-            return newNumberResult(Math.floor(val.val));
-        }
+    newBuiltinFunction("floor", [newArg("x", [T_RESULT_NUMBER])], (_result, _step, val) => {
+        assert(val?.t === T_RESULT_NUMBER);
+        return newNumberResult(Math.floor(val.val));
     })
-    newBuiltinFunction("round", [newArg("x")], (_result, _step, val) => {
-        if (val.t === T_RESULT_NUMBER) {
-            return newNumberResult(Math.round(val.val));
-        }
+    newBuiltinFunction("round", [newArg("x", [T_RESULT_NUMBER])], (_result, _step, val) => {
+        assert(val?.t === T_RESULT_NUMBER);
+        return newNumberResult(Math.round(val.val));
     })
-    newBuiltinFunction("log", [newArg("x")], (_result, _step, val) => {
-        if (val.t === T_RESULT_NUMBER) {
-            return newNumberResult(Math.log(val.val));
-        }
+    newBuiltinFunction("log", [newArg("x", [T_RESULT_NUMBER])], (_result, _step, val) => {
+        assert(val?.t === T_RESULT_NUMBER);
+        return newNumberResult(Math.log(val.val));
     })
-    newBuiltinFunction("max", [newArg("a"), newArg("b")], (_result, _step, a, b) => {
-        if (a.t === T_RESULT_NUMBER && b.t === T_RESULT_NUMBER) {
-            return newNumberResult(max(a.val, b.val));
-        }
+    newBuiltinFunction("max", [newArg("a", [T_RESULT_NUMBER]), newArg("b", [T_RESULT_NUMBER])], (_result, _step, a, b) => {
+        assert(a?.t === T_RESULT_NUMBER);
+        assert(b?.t === T_RESULT_NUMBER);
+        return newNumberResult(max(a.val, b.val));
     })
-    newBuiltinFunction("min", [newArg("a"), newArg("b")], (_result, _step, a, b) => {
-        if (a.t === T_RESULT_NUMBER && b.t === T_RESULT_NUMBER) {
-            return newNumberResult(min(a.val, b.val));
-        }
+    newBuiltinFunction("min", [newArg("a", [T_RESULT_NUMBER]), newArg("b", [T_RESULT_NUMBER])], (_result, _step, a, b) => {
+        assert(a?.t === T_RESULT_NUMBER);
+        assert(b?.t === T_RESULT_NUMBER);
+
+        return newNumberResult(min(a.val, b.val));
     })
     newBuiltinFunction("rand", [], () => {
         return newNumberResult(Math.random());
     })
-    newBuiltinFunction("pow", [newArg("x"), newArg("n")], (_result, _step, x, n) => {
-        if (x.t === T_RESULT_NUMBER && n.t === T_RESULT_NUMBER) {
-            return newNumberResult(Math.pow(x.val, n.val));
-        }
+    newBuiltinFunction("pow", [newArg("x", [T_RESULT_NUMBER]), newArg("n", [T_RESULT_NUMBER])], (_result, _step, x, n) => {
+        assert(x?.t === T_RESULT_NUMBER);
+        assert(n?.t === T_RESULT_NUMBER);
+
+        return newNumberResult(Math.pow(x.val, n.val));
     })
-    newBuiltinFunction("ln", [newArg("x")], (_result, _step, val) => {
-        if (val.t === T_RESULT_NUMBER) {
-            return newNumberResult(Math.log(val.val));
-        }
+    newBuiltinFunction("ln", [newArg("x", [T_RESULT_NUMBER])], (_result, _step, val) => {
+        assert(val?.t === T_RESULT_NUMBER);
+        return newNumberResult(Math.log(val.val));
     })
-    newBuiltinFunction("print", [newArg("x")], (result, step, val) => {
+    newBuiltinFunction("print", [newArg("x", [T_RESULT_NUMBER])], (result, step, val) => {
+        if (!val) return;
+
         assert(step.builtinCall);
 
         const innerExpr = step.builtinCall.expr.arguments[0];
@@ -881,7 +923,137 @@ function newBuiltinFunction(
         // can't be variadic, because print needs to return something...
         // That's ok, just put the args in a list, lol
         return val;
-    })
+    });
+    newBuiltinFunction(
+        "plot", 
+        [
+            newArg("idx", [T_RESULT_NUMBER]), 
+            newArg("line", [T_RESULT_LIST, T_RESULT_MATRIX]), 
+            newArg("hexColor", [T_RESULT_STRING, T_RESULT_MATRIX], true),
+            newArg("label", [T_RESULT_STRING], true), 
+        ], 
+        (result, step, plotIdx, lines, colorMaybe, labelMaybe) => {
+
+            let label: string | undefined;
+            if (labelMaybe) {
+                assert(labelMaybe.t === T_RESULT_STRING);
+                label = labelMaybe.val;
+            }
+
+            let color: Color | undefined;
+            if (colorMaybe) {
+                assert(colorMaybe.t === T_RESULT_STRING || colorMaybe.t === T_RESULT_MATRIX);
+                if (colorMaybe.t === T_RESULT_STRING) {
+                    color = newColorFromHexOrUndefined(colorMaybe.val);
+                } else if (colorMaybe.t === T_RESULT_MATRIX) {
+                    if (matrixShapesAreEqual(colorMaybe.val, ZERO_VEC3)) {
+                        color = newColor(
+                            getSliceValue(colorMaybe.val.values, 0),
+                            getSliceValue(colorMaybe.val.values, 1),
+                            getSliceValue(colorMaybe.val.values, 2),
+                            1
+                        );
+                    } else if (matrixShapesAreEqual(colorMaybe.val, ZERO_VEC4)) {
+                        color = newColor(
+                            getSliceValue(colorMaybe.val.values, 0),
+                            getSliceValue(colorMaybe.val.values, 1),
+                            getSliceValue(colorMaybe.val.values, 2),
+                            getSliceValue(colorMaybe.val.values, 3),
+                        );
+                    } else {
+                        addError(result, step, "Vector colors must be a Vector3 or Vector4");
+                        return;
+                    }
+                }
+            }
+
+            assert(plotIdx?.t === T_RESULT_NUMBER);
+            const idx = plotIdx.val;
+
+
+            assert(lines?.t === T_RESULT_LIST || lines?.t === T_RESULT_MATRIX);
+
+            const pointsX: number[] = [];
+            const pointsY: number[] = [];
+
+            if (lines.t === T_RESULT_LIST) {
+                for (let i = 0; i < lines.values.length; i++) {
+                    const val = lines.values[i];
+                    if (val.t !== T_RESULT_MATRIX) {
+                        // if only we could get the position of this value's expression.
+                        // probably if we made a static type system, it would be easier to report this error in the right place.
+                        addError(result, step, "Expected every element in a list be a vector2");
+                        return;
+                    }
+
+                    if (!matrixShapesAreEqual(val.val, ZERO_VEC2)) {
+                        addError(result, step, "Expected every element in a list be a vector2.");
+                        return;
+                    }
+
+                    pointsX.push(getSliceValue(val.val.values, 0));
+                    pointsY.push(getSliceValue(val.val.values, 1));
+                }
+            } else if (lines.t === T_RESULT_MATRIX) {
+                const mat = lines.val;
+                if (!matrixIsRank2(mat)) {
+                    addError(result, step, "Only matrices of rank 2 may be plotted");
+                    return;
+                }
+
+                const m = mat.shape[0];
+                const n = mat.shape[1];
+
+                if (n === 2) {
+                    for (let i = 0; i < m; i++) {
+                        const x = getMatrixValue(mat, i, 0);
+                        const y = getMatrixValue(mat, i, 1);
+
+                        pointsX.push(x);
+                        pointsY.push(y);
+                    }
+                } else if (m === 2) {
+                    for (let i = 0; i < n; i++) {
+                        const x = getMatrixValue(mat, 0, i);
+                        const y = getMatrixValue(mat, 1, i);
+
+                        pointsX.push(x);
+                        pointsY.push(y);
+                    }
+                } else {
+                    addError(result, step, "One of the sides of the matrix must have a length of 2");
+                    return;
+                }
+            }
+
+            assert(pointsY.length === pointsX.length);
+
+            let plot = result.outputs.plots.get(idx);
+            if (!plot) {
+                plot = { lines: [] };
+                result.outputs.plots.set(idx, plot);
+            }
+
+            plot.lines.push({
+                color,
+                label,
+                pointsX,
+                pointsY,
+            });
+
+            return lines;
+        }
+    );
+    // TODO: cool operator that does this?
+    newBuiltinFunction("push", [newArg("list", [T_RESULT_LIST]), newArg("item", [])], (result, step, list, item) => {
+        if (!list) return;
+
+        assert(list.t === T_RESULT_LIST);
+        assert(item);
+        list.values.push(item);
+
+        return list;
+    });
 }
 
 
@@ -900,45 +1072,94 @@ function getBuiltinFunction(name: string): BuiltinFunction | undefined {
 
 function evaluateBuiltinFunction(
     fn: BuiltinFunction, 
+    numArgsInputted: number,
     program: ProgramInterpretResult, 
     step: ExecutionStep
 ): ProgramResult | undefined {
-    // Bob c martin verse 1 chapter 4 - thoust function mustth hath only 3 args at most
-    
-    switch(fn.args.length) {
-        case 0: return fn.fn(program, step);
-        case 1: {
-            const arg1 = get(program);
-            if (arg1) {
-                return fn.fn(program, step, arg1);
-            }
-            addError(program, step, "Expected 1 argument");
-
-        } return;
-        case 2: {
-            const arg1 = get(program, -1);
-            const arg2 = get(program);
-            if (arg1 && arg2) {
-                return fn.fn(program, step, arg1, arg2);
-            }
-            addError(program, step, "Expected 2 arguments");
-            
-        } return;
-        case 3: {
-            const arg1 = get(program, -2);
-            const arg2 = get(program, -1);
-            const arg3 = get(program);
-            if (arg1 && arg2 && arg3) {
-                return fn.fn(program, step, arg1, arg2, arg3);
-            }
-            addError(program, step, "Expected 3 arguments");
-        } return;
+    let numArgsToPull = numArgsInputted;
+    if (numArgsToPull < fn.minArgs) {
+        numArgsToPull = fn.minArgs;
     }
 
-    addError(program, step, "Too many arguments...");
+    function getArg(program: ProgramInterpretResult, step: ExecutionStep, i: number): ProgramResult | null {
+        if (program.errors.length > 0) {
+            return null;
+        }
+
+        const res = get(program, -numArgsInputted + 1 + i);
+        const typeInfo = fn.args[i];
+
+        if (typeInfo.type.length > 0) {
+            if (!res || !typeInfo.type.includes(res.t)) {
+                let expectedType;
+                if (typeInfo.type.length === 1) {
+                    expectedType = programResultTypeStringInternal(typeInfo.type[0]);
+                } else {
+                    expectedType = "one of " + typeInfo.type.map(programResultTypeStringInternal).join(" or ");
+                }
+
+                if (typeInfo.optional) {
+                    expectedType += " or nothing";
+                }
+
+                const gotType = (res ? programResultTypeStringInternal(res.t) : "nothing");
+
+                addError(program, step, "Expected " + expectedType  + " for " + typeInfo.name + ", got " + gotType);
+                return null;
+            }
+        }
+
+        return res;
+    }
+    
+    switch(numArgsToPull) {
+        case 0: return fn.fn(program, step);
+        case 1: {
+            const arg1 = getArg(program, step, 0);
+            if (program.errors.length === 0) {
+                return fn.fn(program, step, arg1);
+            }
+        } break;
+        case 2: {
+            const arg1 = getArg(program, step, 0);
+            const arg2 = getArg(program, step, 1);
+            if (program.errors.length === 0) {
+                return fn.fn(program, step, arg1, arg2);
+            }
+        } break;
+        case 3: {
+            const arg1 = getArg(program, step, 0);
+            const arg2 = getArg(program, step, 1);
+            const arg3 = getArg(program, step, 2);
+            if (program.errors.length === 0) {
+                return fn.fn(program, step, arg1, arg2, arg3);
+            }
+        } break;
+        case 4: {
+            const arg1 = getArg(program, step, 0);
+            const arg2 = getArg(program, step, 1);
+            const arg3 = getArg(program, step, 2);
+            const arg4 = getArg(program, step, 3);
+            if (program.errors.length === 0) {
+                return fn.fn(program, step, arg1, arg2, arg3, arg4);
+            }
+        } break;
+        case 5: {
+            const arg1 = getArg(program, step, 0);
+            const arg2 = getArg(program, step, 1);
+            const arg3 = getArg(program, step, 2);
+            const arg4 = getArg(program, step, 3);
+            const arg5 = getArg(program, step, 4);
+            if (program.errors.length === 0) {
+                return fn.fn(program, step, arg1, arg2, arg3, arg4, arg5);
+            }
+        } break;
+    }
+
+    if (program.errors.length === 0) {
+        addError(program, step, "Too many arguments...");
+    }
 }
-
-
 
 export function stepProgram(result: ProgramInterpretResult): boolean {
     const call = getCurrentCallstack(result);
@@ -987,7 +1208,10 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
 
         const s = getVarExecutionState(result, step.set);
         if (!s) {
-            assert(result.stackIdx === call.nextVarAddress);
+            if (result.stackIdx !== call.nextVarAddress) {
+                addError(result, step, "Nothing was computed to assign");
+                return false;
+            }
             call.variables.set(step.set, result.stackIdx);
             call.nextVarAddress++;
         } else {
@@ -1040,9 +1264,10 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         push(result, res, step);
     } else if (step.list !== undefined) {
         result.stackIdx -= step.list;
+
         const list: ProgramResult = { t: T_RESULT_LIST, values: [] };
         for (let i = 0; i < step.list; i++) {
-            const val = result.stack[i];
+            const val = result.stack[result.stackIdx + i + 1];
             assert(val);
             list.values.push(val);
         }
@@ -1063,7 +1288,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
             assert(val);
 
             if (val.t !== T_RESULT_NUMBER && val.t !== T_RESULT_MATRIX) {
-                addError(result, step, "Vectors/Matrices can only contain other vectors/matrices/numbers");
+                addError(result, step, "Vectors/Matrices can only contain other vectors/matrices/numbers. You can create a List instead, by appending an L on the end, like [1,2,\"3\"]L");
                 return false;
             }
 
@@ -1088,12 +1313,12 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
                 }
             } else {
                 if (innerT !== val.t) {
-                    addError(result, step, "This item had a different type to the previous items in the vector");
+                    addError(result, step, "The items inside this vector/matrix have inconsistent types");
                     return false;
                 } 
 
                 if (innerLen !== rowLen) {
-                    addError(result, step, "This vector had a different length to the previous vectors");
+                    addError(result, step, "The items inside this vector/matrix have inconsistent lengths");
                     return false;
                 }
             }
@@ -1149,7 +1374,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         call.i++;
         return true;
     } else if (step.builtinCall) {
-        const res = evaluateBuiltinFunction(step.builtinCall.fn, result, step);
+        const res = evaluateBuiltinFunction(step.builtinCall.fn, step.builtinCall.numArgs, result, step);
         if (result.errors.length > 0) {
             return false;
         }
@@ -1251,7 +1476,7 @@ export function interpret(parseResult: ProgramParseResult): ProgramInterpretResu
     // I've kept it low, because matrix ops and array programming can result in singular iterations
     // actually doing quite a lot of computations.
     let safetyCounter = 0;
-    const MAX_ITERATIONS = 10000;
+    const MAX_ITERATIONS = 1000 * 1000;
     while (result.callStack.length > 0) {
         safetyCounter++;
         if (safetyCounter >= MAX_ITERATIONS) {
