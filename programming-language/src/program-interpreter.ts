@@ -1,6 +1,6 @@
 import { Color, newColor, newColorFromHexOrUndefined } from "src/utils/colour";
 import { assert } from "src/utils/im-dom-utils";
-import { getMatrixValue, getSlice, getSliceValue, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice } from "src/utils/matrix-math";
+import { copyMatrix, getMatrixValue, getSlice, getSliceValue, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, setSliceValue } from "src/utils/matrix-math";
 import {
     BIN_OP_ADD, BIN_OP_AND_AND, BIN_OP_DIVIDE, BIN_OP_GREATER_THAN, BIN_OP_GREATER_THAN_EQ, BIN_OP_INVALID, BIN_OP_IS_EQUAL_TO, BIN_OP_LESS_THAN, BIN_OP_LESS_THAN_EQ, BIN_OP_MULTIPLY, BIN_OP_OR_OR, BIN_OP_SUBTRACT,
     BinaryOperatorType,
@@ -214,13 +214,136 @@ function evaluateBinaryOpMatrixXMatrix(
 function evaluateBinaryOpNumberXMatrix(
     l: ProgramResultNumber, 
     r: ProgramResultMatrix, 
+    numWasLhs: boolean,
     op: BinaryOperatorType,
-): ProgramResultNumber | ProgramResultMatrix | null {
-    let val: Matrix | null = null; 
+): ProgramResultMatrix | null {
 
-    // TODO:
+    const num = l.val;
+    const rCopy = copyMatrix(r.val);
 
-    return val;
+    switch (op) {
+        case BIN_OP_MULTIPLY: {
+            for (let i = 0; i < rCopy.values.length; i++) {
+                const x = getSliceValue(rCopy.values, i);
+                setSliceValue(rCopy.values, i, x * num);
+            }
+        } break;
+        case BIN_OP_DIVIDE: {
+            // NOTE: this case is just copy-paste
+            for (let i = 0; i < rCopy.values.length; i++) {
+                const x = getSliceValue(rCopy.values, i);
+                setSliceValue(rCopy.values, i, x / num);
+            }
+        } break;
+        case BIN_OP_ADD: {
+            // NOTE: this case is just copy-paste
+            for (let i = 0; i < rCopy.values.length; i++) {
+                const x = getSliceValue(rCopy.values, i);
+                setSliceValue(rCopy.values, i, x * num);
+            }
+        } break;
+        case BIN_OP_SUBTRACT: 
+            if (numWasLhs) {
+                // NOTE: this case is just copy-paste
+                for (let i = 0; i < rCopy.values.length; i++) {
+                    const x = getSliceValue(rCopy.values, i);
+                    setSliceValue(rCopy.values, i, num - x);
+                }
+            } else {
+                // NOTE: this case is just copy-paste
+                for (let i = 0; i < rCopy.values.length; i++) {
+                    const x = getSliceValue(rCopy.values, i);
+                    setSliceValue(rCopy.values, i, x - num);
+                }
+            }
+            break;
+        case BIN_OP_IS_EQUAL_TO:
+            // NOTE: this case is just copy-paste
+            for (let i = 0; i < rCopy.values.length; i++) {
+                const x = getSliceValue(rCopy.values, i);
+                setSliceValue(rCopy.values, i, x === num ? 1 : 0);
+            }
+            break;
+        case BIN_OP_LESS_THAN: {
+            // NOTE: this case is just copy-paste
+            for (let i = 0; i < rCopy.values.length; i++) {
+                const x = getSliceValue(rCopy.values, i);
+                setSliceValue(rCopy.values, i, x < num ? 1 : 0);
+            }
+        } break;
+        case BIN_OP_LESS_THAN_EQ: {
+            // NOTE: this case is just copy-paste
+            for (let i = 0; i < rCopy.values.length; i++) {
+                const x = getSliceValue(rCopy.values, i);
+                setSliceValue(rCopy.values, i, x <= num ? 1 : 0);
+            }
+        } break;
+        case BIN_OP_GREATER_THAN:
+            // NOTE: this case is just copy-paste
+            for (let i = 0; i < rCopy.values.length; i++) {
+                const x = getSliceValue(rCopy.values, i);
+                setSliceValue(rCopy.values, i, x > num ? 1 : 0);
+            }
+            break;
+        case BIN_OP_GREATER_THAN_EQ:
+            // NOTE: this case is just copy-paste
+            for (let i = 0; i < rCopy.values.length; i++) {
+                const x = getSliceValue(rCopy.values, i);
+                setSliceValue(rCopy.values, i, x >= num ? 1 : 0);
+            }
+            break;
+        case BIN_OP_AND_AND: {
+            // NOTE: this case is just copy-paste
+            for (let i = 0; i < rCopy.values.length; i++) {
+                const x = getSliceValue(rCopy.values, i);
+                setSliceValue(rCopy.values, i, x && num ? 1 : 0);
+            }
+        } break;
+        case BIN_OP_OR_OR: {
+            // NOTE: this case is just copy-paste
+            for (let i = 0; i < rCopy.values.length; i++) {
+                const x = getSliceValue(rCopy.values, i);
+                setSliceValue(rCopy.values, i, x || num ? 1 : 0);
+            }
+        } break;
+        case BIN_OP_INVALID: 
+            // An invalid binary op was parsed, and added to the result tree somehow
+            assert(false)
+    }
+
+    return { t: T_RESULT_MATRIX, val: rCopy };
+}
+
+function evaluateBinaryOpNumberXList(
+    l: ProgramResultNumber, 
+    r: ProgramResultList, 
+    numWasLhs: boolean,
+    program: ProgramInterpretResult,
+    step: ExecutionStep,
+): ProgramResultList | null {
+
+    const result = Array(r.values.length);
+    if (numWasLhs) {
+        for (let i = 0; i < r.values.length; i++) {
+            const ithResult = evaluateBinaryOperatorNumber(l, r.values[i], program, step);
+            if (!ithResult) {
+                return null;
+            }
+
+            result[i] = ithResult;
+        }
+    } else {
+        for (let i = 0; i < r.values.length; i++) {
+            const ithResult = evaluateBinaryOperatorNumber(r.values[i], l, program, step);
+            if (!ithResult) {
+                return null;
+            }
+
+            result[i] = ithResult;
+        }
+    }
+
+    return { t: T_RESULT_LIST, values: result }
 }
 
 function evaluateUnaryOp(result: ProgramInterpretResult, step: ExecutionStep, val: ProgramResult, op: UnaryOperatorType): [ProgramResult | null, string] {
@@ -412,6 +535,7 @@ export type ProgramPrintOutput = {
 }
 
 export type ProgramPlotOutputLine = {
+    expr: ProgramExpression;
     pointsX: number[];
     pointsY: number[];
     color: Color | undefined;
@@ -427,6 +551,10 @@ export type ProgramOutputs = {
     plots: Map<number, ProgramPlotOutput>;
 };
 
+
+const builtinNumberConstants = new Map<string, ProgramResultNumber>();
+builtinNumberConstants.set("PI", newNumberResult(Math.PI))
+builtinNumberConstants.set("E", newNumberResult(Math.E))
 
 function getExecutionSteps(
     result: ProgramInterpretResult,
@@ -454,7 +582,12 @@ function getExecutionSteps(
 
         switch (expr.t) {
             case T_IDENTIFIER: {
-                step.load = expr.name;
+                const numberConstant = builtinNumberConstants.get(expr.name);
+                if (numberConstant) {
+                    step.number = numberConstant.val;
+                } else {
+                    step.load = expr.name;
+                }
             } break;
             case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: {
                 step.loadLastBlockResult = true;
@@ -912,7 +1045,7 @@ const ZERO_VEC4 = matrixZeroes([4]);
         assert(val?.t === T_RESULT_NUMBER);
         return newNumberResult(Math.log(val.val));
     })
-    newBuiltinFunction("print", [newArg("x", [T_RESULT_NUMBER])], (result, step, val) => {
+    newBuiltinFunction("print", [newArg("x", [])], (result, step, val) => {
         if (!val) return;
 
         assert(step.builtinCall);
@@ -1035,6 +1168,7 @@ const ZERO_VEC4 = matrixZeroes([4]);
             }
 
             plot.lines.push({
+                expr: step.expr,
                 color,
                 label,
                 pointsX,
@@ -1161,6 +1295,35 @@ function evaluateBuiltinFunction(
     }
 }
 
+function evaluateBinaryOperatorNumber(lhs: ProgramResult, rhs: ProgramResult, program: ProgramInterpretResult, step: ExecutionStep): ProgramResult | null {
+    assert(step.binaryOperator !== undefined);
+
+    let result: ProgramResult | null = null;
+
+    if (lhs.t === T_RESULT_NUMBER && rhs.t == T_RESULT_NUMBER) {
+        result = evaluateBinaryOpNumberXNumber(lhs, rhs, step.binaryOperator);
+    } else if (lhs.t === T_RESULT_NUMBER && rhs.t === T_RESULT_MATRIX) {
+        result = evaluateBinaryOpNumberXMatrix(lhs, rhs, true, step.binaryOperator);
+    } else if (rhs.t === T_RESULT_NUMBER && lhs.t === T_RESULT_MATRIX) {
+        result = evaluateBinaryOpNumberXMatrix(rhs, lhs, false, step.binaryOperator);
+    } else if (lhs.t === T_RESULT_NUMBER && rhs.t === T_RESULT_LIST) {
+        result = evaluateBinaryOpNumberXList(lhs, rhs, true, program, step);
+    } else if (rhs.t === T_RESULT_NUMBER && lhs.t === T_RESULT_LIST) {
+        result = evaluateBinaryOpNumberXList(rhs, lhs, false, program, step);
+    } else if (lhs.t === T_RESULT_MATRIX) {
+        if (rhs.t === T_RESULT_MATRIX) {
+            const [res, err] = evaluateBinaryOpMatrixXMatrix(lhs, rhs, step.binaryOperator);
+            if (err) {
+                addError(program, step, err);
+            } else {
+                result = res;
+            }
+        }
+    }
+
+    return result;
+}
+
 export function stepProgram(result: ProgramInterpretResult): boolean {
     const call = getCurrentCallstack(result);
     if (!call) {
@@ -1224,23 +1387,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
 
         let calcResult: ProgramResult | null = null;
 
-        if (lhs.t === T_RESULT_NUMBER) {
-            if (rhs.t == T_RESULT_NUMBER) {
-                calcResult = evaluateBinaryOpNumberXNumber(lhs, rhs, step.binaryOperator);
-            } else if (rhs.t === T_RESULT_MATRIX) {
-                calcResult = evaluateBinaryOpNumberXMatrix(lhs, rhs, step.binaryOperator);
-            }
-        } else if (lhs.t === T_RESULT_MATRIX) {
-            if (rhs.t === T_RESULT_MATRIX) {
-                const [res, err] = evaluateBinaryOpMatrixXMatrix(lhs, rhs, step.binaryOperator);
-                if (err) {
-                    addError(result, step, err);
-                    return false;
-                }
-
-                calcResult = res;
-            }
-        }
+        calcResult = evaluateBinaryOperatorNumber(lhs, rhs, result, step);
 
         if (!calcResult) {
             addError(result, step, `We don't have a way to compute ${programResultTypeString(lhs)} ${binOpToOpString(step.binaryOperator)} ${programResultTypeString(rhs)} yet.`);

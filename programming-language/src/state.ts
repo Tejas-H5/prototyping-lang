@@ -5,7 +5,6 @@ export type GlobalState = {
     text: string;
     collapseParserOutput: boolean;
     collapseInterpreterPass1Output: boolean;
-    collapseInterpreterCodeOutput: boolean;
     autorun: boolean;
 };
 
@@ -45,7 +44,6 @@ export function newGlobalState(): GlobalState {
         text: "",
         collapseParserOutput: false,
         collapseInterpreterPass1Output: false,
-        collapseInterpreterCodeOutput: false,
         autorun: false,
     };
 }

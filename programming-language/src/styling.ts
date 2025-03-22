@@ -1,5 +1,5 @@
 import { newCssBuilder, setCssVars } from "src/utils/im-dom-utils";
-import { newColorFromHex } from "src/utils/colour";
+import { newColor, newColorFromHex } from "src/utils/colour";
 
 const mainTheme = Object.freeze({
     bg: newColorFromHex("#FFF"),
@@ -9,6 +9,7 @@ const mainTheme = Object.freeze({
     fg: newColorFromHex("#000"),
     playback: newColorFromHex("#00F"),
     error: newColorFromHex("#F00"),
+    translucent: newColor(0, 0, 0, 0.5),
 
     mediumText: "4rem",
     normalText: "1.5rem",
@@ -23,6 +24,7 @@ export const cssVars: Record<keyof Theme, string> = {
     mg: "var(--mg)",
     fg2: "var(--fg2)",
     fg: "var(--fg)",
+    translucent: "var(--translucent)",
     playback: "var(--playback)",
     error: "var(--error)",
     mediumText: "var(--mediumText)",
@@ -65,6 +67,8 @@ export const cnApp = {
 
     code: cssb.cn("code", [` { font-family: Source Code Pro, monospace; }`]),
     bg2: cssb.cn("bg2", [` { background-color: ${cssVars.bg2}; }`]),
+    bg: cssb.cn("bg", [` { background-color: ${cssVars.bg}; }`]),
+    translucent: cssb.cn("translucent", [` { background-color: ${cssVars.translucent}; }`]),
 
     bold: cssb.cn("bold", [` { font-weight: bold; }`]),
     italic: cssb.cn("italic", [` { font-style: italic; }`]),

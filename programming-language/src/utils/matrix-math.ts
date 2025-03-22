@@ -146,7 +146,7 @@ export function copyMatrix(a: Matrix): Matrix {
 
     for (let i = 0; i < a.values.length; i++) {
         const val = getSliceValue(a.values, i);
-        setSliceValue(a.values, i, val);
+        setSliceValue(result.values, i, val);
     }
 
     return result;

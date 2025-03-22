@@ -29,34 +29,51 @@ import {
 import { GlobalContext, GlobalState, newGlobalContext, saveState, startDebugging } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
-import { addClasses, assert, beginList, cn, div, el, end, endList, getComponentStackSize, imElse, imIf, imMemo, imOn, imRef, imRerenderable, imSetVal, imState, imStateInline, imTryCatch, imVal, init, initializeDomUtils, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setStyle, span, textNode, UIRoot } from './utils/im-dom-utils.ts';
-import { inverseLerp } from './utils/math-utils.ts';
+import { assert, beginList, cn, div, el, end, endList, getComponentStackSize, imElse, imIf, imMemo, imRef, imRerenderable, imSetVal, imState, imStateInline, imTryCatch, imVal, init as imInit, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setStyle, span, setInnerText, UIRoot, getCurrentRoot } from './utils/im-dom-utils.ts';
+import { inverseLerp, lerp } from './utils/math-utils.ts';
 import { getSliceValue } from './utils/matrix-math.ts';
 import { getLineBeforePos, getLineEndPos, getLineStartPos } from './utils/text-utils.ts';
 
+// NOTE: you only get 32 of these. use them wisely.
+// (while JS numbers are 64 bit, bit ops are all 32 bits)
 const ROW = 1 << 1;
 const COL = 1 << 2;
 const FLEX = 1 << 3;
 const GAP = 1 << 4;
-const CODE = 1 << 5;
 const PRE = 1 << 6;
 const ALIGN_CENTER = 1 << 7;
 const JUSTIFY_CENTER = 1 << 8;
 const W100 = 1 << 9;
 const H100 = 1 << 10;
+
+const CODE = 1 << 5;
 const BOLD = 1 << 11;
 const ITALIC = 1 << 12;
 const H1 = 1 << 13;
 const H2 = 1 << 14;
 const H3 = 1 << 15;
 
+const RELATIVE = 1 << 16;
+const ABSOLUTE = 1 << 17;
+const FIXED = 1 << 18;
+
+const OPAQUE = 1 << 19;
+const TRANSLUCENT = 1 << 20;
+const PREWRAP = 1 << 21;
+
+const TRANSPARENT = 1 << 22;
+
 function setStyleFlags(flags: number) {
+    const transparent = !!(flags & TRANSPARENT);
+
     setClass(cn.row, !!(flags & ROW));
     setClass(cn.col, !!(flags & COL));
     setClass(cn.flex1, !!(flags & FLEX));
     setClass(cnApp.gap5, !!(flags & GAP));
     setClass(cnApp.code, !!(flags & CODE));
+    setClass(cnApp.bg2, !transparent && !!(flags & CODE));
     setClass(cn.pre, !!(flags & PRE));
+    setClass(cn.preWrap, !!(flags & PREWRAP));
     setClass(cn.alignItemsCenter, !!(flags & ALIGN_CENTER));
     setClass(cn.justifyContentCenter, !!(flags & JUSTIFY_CENTER));
     setClass(cn.h100, !!(flags & H100));
@@ -66,17 +83,35 @@ function setStyleFlags(flags: number) {
     setClass(cnApp.h1, !!(flags & H1));
     setClass(cnApp.h2, !!(flags & H2));
     setClass(cnApp.h3, !!(flags & H3));
+    setClass(cn.absolute, !!(flags & ABSOLUTE));
+    setClass(cn.relative, !!(flags & RELATIVE));
+    const fixed = !!(flags & FIXED);
+    setClass(cn.fixed, fixed);
+    setStyle("top", fixed ? "0" : "");
+    setStyle("left", fixed ? "0" : "");
+    setStyle("bottom", fixed ? "0" : "");
+    setStyle("right", fixed ? "0" : "");
+    setClass(cnApp.bg, !!(flags & OPAQUE));
+    setClass(cnApp.translucent, !!(flags & TRANSLUCENT));
 }
 
 function textSpan(text: string, flags: number = 0) {
     const lastFlags = imRef();
+    // Don't set the text every render. that way, we may modify it in the inspector.
+    // may also be faster, idc
+    const lastText = imRef();
     const root = span(); {
         if (lastFlags.val !== flags) {
             lastFlags.val = flags;
             setStyleFlags(flags);
         }
 
-        textNode(text);
+        deferClickEventUpwards();
+
+        if (lastText.val !== text) {
+            lastText.val = text;
+            root.text(text);
+        }
     } end();
 
     return root;
@@ -100,7 +135,7 @@ function beginLayout(flags: number = 0) {
 
 function beginScrollContainer(flags: number = 0) {
     const root = beginLayout(flags);
-    if (init()) {
+    if (imInit()) {
         setClass(cn.overflowYAuto);
     }
     return root;
@@ -109,7 +144,7 @@ function beginScrollContainer(flags: number = 0) {
 function beginAspectRatio(w: number, h: number, flags: number = 0) {
     const lastAr = imRef();
     const root = beginLayout(flags); {
-        if (init()) {
+        if (imInit()) {
             setStyle("width", "auto");
             setStyle("height", "auto");
         }
@@ -278,7 +313,7 @@ function ParserOutput(parseResultOrUndefined: ProgramParseResult | undefined) {
 
 function beginHeading() {
     const root = el(newH3); {
-        if (init()) {
+        if (imInit()) {
             setStyle("padding", "10px 0");
         }
     }
@@ -394,29 +429,23 @@ function renderProgramResult(res: ProgramResult) {
 }
 
 // this component kinda suss. 
-function collapsableHeading(heading: string, isCollapsed: boolean, toggle: () => void) {
-    beginHeading(); {
-        if (init()) {
+function beginCollapsableHeading(isCollapsed: boolean) {
+    const root = beginHeading(); {
+        if (imInit()) {
             setStyle("cursor", "pointer");
             setClass(cn.userSelectNone);
         }
 
-        textSpan(heading);
-
         imIf(isCollapsed, () => {
             textSpan(" (collapsed)");
         });
+    } 
 
-        imOn("mousedown", () => {
-            toggle();
-        });
-    } end();
+    return root;
 }
 
 function renderExecutionStep(step: ExecutionStep) {
-    span(); {
-        textNode(executionStepToString(step));
-    } end();
+    textSpan(executionStepToString(step));
 }
 
 function renderFunction(interpretResult: ProgramInterpretResult, { name, steps }: ExecutionSteps) {
@@ -472,41 +501,42 @@ function renderFunction(interpretResult: ProgramInterpretResult, { name, steps }
 const cssb = newCssBuilder();
 
 const cnButton = cssb.cn("button", [
-    ` { user-select: none; cursor: pointer; border: 2px solid ${cssVars.fg}; border: 2px solid currentColor; border-radius: 8px; }`,
+    ` { user-select: none; cursor: pointer; border: 2px solid ${cssVars.fg}; border: 2px solid currentColor; border-radius: 8px; padding: 2px 2px; box-sizing: border-box; }`,
     `:hover { background-color: ${cssVars.bg2} }`,
     `:active { background-color: ${cssVars.mg} }`,
 ]);
 
-function Button(text: string, onClick: () => void, toggled: boolean = false) {
+
+function beginButton(toggled: boolean = false) {
     const root = beginLayout(ROW | ALIGN_CENTER | JUSTIFY_CENTER); {
-        if (init()) {
+        if (imInit()) {
             setClass(cnButton);
         }
 
         setClass(cnApp.inverted, toggled);
+    };
 
-        textSpan(text);
-
-        imOn("mousedown", onClick);
-    } end();
     return root;
 }
 
 function renderAppCodeOutput(ctx: GlobalContext) {
     div(); {
-        if (init()) {
+        if (imInit()) {
             setClass(cn.h100);
             setClass(cn.overflowYAuto);
-            setClass(cn.borderBox);
-            setStyle("padding", "10px");
+
+            setInset("10px");
         }
 
         const parseResult = ctx.lastParseResult;
 
-        collapsableHeading("Parser output", ctx.state.collapseParserOutput, () => {
-            ctx.state.collapseParserOutput = !ctx.state.collapseParserOutput;
-            ctx.rerenderApp();
-        });
+        beginCollapsableHeading(ctx.state.collapseParserOutput); {
+            textSpan("Parser output");
+
+            if (elementHasMouseClick()) {
+                ctx.state.collapseParserOutput = !ctx.state.collapseParserOutput;
+            }
+        } end();
 
         imIf(!ctx.state.collapseParserOutput, () => {
             ParserOutput(parseResult);
@@ -514,10 +544,12 @@ function renderAppCodeOutput(ctx: GlobalContext) {
 
         const message = imRef<string>();
 
-        collapsableHeading("Instruction generation - output", ctx.state.collapseInterpreterPass1Output, () => {
-            ctx.state.collapseInterpreterPass1Output = !ctx.state.collapseInterpreterPass1Output;
-            ctx.rerenderApp();
-        });
+        beginCollapsableHeading(ctx.state.collapseInterpreterPass1Output); {
+            textSpan("Instruction generation - output");
+            if (elementHasMouseClick()) {
+                ctx.state.collapseInterpreterPass1Output = !ctx.state.collapseInterpreterPass1Output;
+            }
+        } end();
 
         // TODO: better UI for this message
         div(); {
@@ -554,30 +586,37 @@ function renderAppCodeOutput(ctx: GlobalContext) {
 
         beginLayout(ROW | GAP); {
             beginLayout(FLEX); {
-                Button("Autorun", () => {
-                    ctx.state.autorun = !ctx.state.autorun
-                    ctx.rerenderApp();
-                }, ctx.state.autorun)
+                beginButton(ctx.state.autorun); {
+                    textSpan("Autorun");
+
+                    if (elementHasMouseClick()) {
+                        ctx.state.autorun = !ctx.state.autorun
+                    }
+                } end();
             } end();
 
             beginLayout(FLEX); {
-                Button("Start debugging", () => {
-                    startDebugging(ctx);
-                    ctx.rerenderApp();
-                });
+                beginButton(); {
+                    textSpan("Start debugging");
+                    if (elementHasMouseClick()) {
+                        startDebugging(ctx);
+                    }
+                } end();
             } end();
         } end();
 
-        collapsableHeading("Code output", ctx.state.collapseInterpreterCodeOutput, () => {
-            ctx.state.collapseInterpreterCodeOutput = !ctx.state.collapseInterpreterCodeOutput;
-            ctx.rerenderApp();
-        });
+        beginHeading(); {
+            textSpan("Code output");
+        } end();
 
-        imIf(!ctx.state.collapseInterpreterCodeOutput, () => {
-            imIf(ctx.lastInterpreterResult, (interpretResult) => {
-                renderProgramOutputs(interpretResult.outputs);
-            });
+        imIf(ctx.lastInterpreterResult, (interpretResult) => {
+            renderProgramOutputs(interpretResult.outputs, ctx);
         });
+        imElse(() => {
+            beginLayout(); {
+                textSpan("Nothing yet");
+            } end();
+        })
     } end();
 }
 
@@ -590,33 +629,26 @@ function renderDiagnosticInfoOverlay(
     beginList(); 
     for (const e of errors) {
         nextRoot(); {
-            div(); {
-                init() && setAttributes({
-                    class: [
-                        cn.absolute, cn.w100, cn.h100, 
-                        cn.preWrap,
-                        cn.pointerEventsNone,
-                        cnApp.code,
-                    ],
-                });
+            beginLayout(PREWRAP | ABSOLUTE | W100 | H100 | CODE | TRANSPARENT); {
+                imInit() && setClass(cn.pointerEventsNone);
 
                 const line = getLineBeforePos(state.text, e.pos.i);
                 span(); {
-                    init() && setAttributes({ style: "color: transparent" });
+                    imInit() && setAttributes({ style: "color: transparent" });
 
-                    textNode(
+                    setInnerText(
                         state.text.substring(0, e.pos.i + 1) + "\n" + " ".repeat(line.length)
                     );
                 } end();
 
                 span(); {
-                    init() && setAttributes({
+                    imInit() && setAttributes({
                         style: `background-color: ${cssVars.bg2}`,
                     });
 
                     setStyle("color", color);
 
-                    textNode("^ " + e.problem);
+                    setInnerText("^ " + e.problem);
 
                     let opacity = 1;
                     if (textAreaRef.val) {
@@ -653,14 +685,11 @@ function renderAppCodeEditor({
 
     const textAreaRef = imRef<HTMLTextAreaElement>();
 
-    div(); {
-        init() && setAttributes({
-            class: [
-                cnApp.bgFocus, cn.h100, cn.overflowYAuto, cn.borderBox,
-                cnApp.code,
-            ],
-            style: "padding: 10px"
-        });
+    beginScrollContainer(H100 | CODE); {
+        if (imInit()) {
+            setInset("10px");
+            setClass(cnApp.bgFocus);
+        }
 
         EditableTextArea({
             text: state.text,
@@ -688,43 +717,50 @@ function renderAppCodeEditor({
 
 function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretResult) {
     beginLayout(COL | GAP); {
-        if (init()) {
+        if (imInit()) {
             setClass(cn.h100);
             setClass(cn.overflowYAuto);
             setClass(cn.borderBox);
             setStyle("padding", "10px");
         }
 
+        const message = imRef<string>();
+
         beginLayout(ROW | GAP); {
             beginLayout(FLEX); {
-                Button("Stop debugging", () => {
-                    ctx.isDebugging = false;
-                    ctx.rerenderApp();
-                });
-            } end();
-
-            beginLayout(FLEX); {
-                Button("Step", () => {
-                    const result = stepProgram(interpretResult);
-                    if (!result) {
-                        message.val = "Program complete! you can stop debugging now.";
+                beginButton(); {
+                    textSpan("Stop debugging");
+                    if(elementHasMouseClick()) {
+                        ctx.isDebugging = false;
                     }
-
-                    ctx.rerenderApp();
-                });
+                } end();
             } end();
 
             beginLayout(FLEX); {
-                Button("Reset", () => {
-                    assert(ctx.lastParseResult);
-                    ctx.lastInterpreterResult = startInterpreting(ctx.lastParseResult);
-                    message.val = "";
-                    ctx.rerenderApp();
-                });
+                beginButton(); {
+                    textSpan("Step");
+
+                    if (elementHasMouseClick()) {
+                        const result = stepProgram(interpretResult);
+                        if (!result) {
+                            message.val = "Program complete! you can stop debugging now.";
+                        }
+                    }
+                } end();
+            } end();
+
+            beginLayout(FLEX); {
+                beginButton(); {
+                    textSpan("Reset");
+                    if (elementHasMouseClick()) {
+                        assert(ctx.lastParseResult);
+                        ctx.lastInterpreterResult = startInterpreting(ctx.lastParseResult);
+                        message.val = "";
+                    }
+                } end();
             } end();
         } end();
 
-        const message = imRef<string>();
         imIf(message.val, (message) => {
             div(); {
                 textSpan(message);
@@ -756,8 +792,6 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
                             }
                         }
 
-                        const cs = getCurrentCallstack(interpretResult);
-
                         let n = interpretResult.stack.length;
                         while (n > 0) {
                             n--;
@@ -772,7 +806,6 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
                             n = interpretResult.stack.length - 1;
                         }
 
-
                         beginList();
                         for (let addr = 0; addr <= n; addr++) {
                             const res = interpretResult.stack[addr];
@@ -782,7 +815,7 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
                                     beginLayout(ROW | GAP); {
                                         const stackAddrArrow = (name: string) => {
                                             div(); {
-                                                init() && setAttributes({
+                                                imInit() && setAttributes({
                                                     style: "padding-left: 10px; padding-right: 10px"
                                                 });
 
@@ -843,7 +876,7 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
                         textSpan("Results");
                     } end();
 
-                    renderProgramOutputs(interpretResult.outputs);
+                    renderProgramOutputs(interpretResult.outputs, ctx);
                 } end();
             } end();
         } end();
@@ -854,24 +887,22 @@ function newCanvasElement() {
     return document.createElement("canvas");
 }
 
-function renderProgramOutputs(outputs: ProgramOutputs) {
+function renderProgramOutputs(outputs: ProgramOutputs, ctx: GlobalContext) {
     beginList();
     for (const result of outputs.prints) {
         nextRoot(); {
             beginLayout(ROW | GAP); {
                 div(); {
-                    init() && setAttributes({ 
+                    imInit() && setAttributes({ 
                         style: `width: 5px; background-color: ${cssVars.fg};`
                     });
                 } end();
 
                 beginLayout(COL | GAP); {
-                    div(); {
-                        beginCodeBlock(0); {
-                            textNode(
-                                expressionToString(result.expr)
-                            )
-                        } end();
+                    beginCodeBlock(0); {
+                        textSpan(
+                            expressionToString(result.expr)
+                        )
                     } end();
 
                     beginLayout(FLEX); {
@@ -887,10 +918,33 @@ function renderProgramOutputs(outputs: ProgramOutputs) {
     for (const [idx, plot] of outputs.plots) {
         nextRoot(); {
             beginLayout(); {
-                textSpan("Plot #" + idx, H3);
+                beginLayout(COL | GAP); {
+                    textSpan("Plot #" + idx, H3);
+                } end();
 
-                const container = beginAspectRatio(16, 9).root; {
-                    renderPlot(plot, container);
+
+                const exprFrequencies = imStateInline(() => new Map<ProgramExpression, number>());
+                if (!imMemo().val(outputs).isSame) {
+                    exprFrequencies.clear();
+                    for (const line of plot.lines) {
+                        const count = exprFrequencies.get(line.expr) ?? 0;
+                        exprFrequencies.set(line.expr, count + 1);
+                    }
+                }
+
+                beginList();
+                for (const [expr, count] of exprFrequencies) {
+                    nextRoot(); {
+                        beginLayout(ROW | GAP); {
+                            textSpan(count + "x: ");
+                            textSpan(expressionToString(expr), CODE);
+                        } end();
+                    } end();
+                }
+                endList();
+
+                beginAspectRatio(16, 9).root; {
+                    renderPlot(plot, ctx.rerenderApp);
                 } end();
             } end();
         } end();
@@ -901,80 +955,262 @@ function renderProgramOutputs(outputs: ProgramOutputs) {
     });
 }
 
-function renderPlot(plot: ProgramPlotOutput, container: HTMLElement) {
-    const canvas = el(newCanvasElement).root; {
-        let ctx = imVal<CanvasRenderingContext2D>();
-        if (!ctx) {
-            ctx = imSetVal(canvas.getContext("2d"));
-            if (!ctx) {
-                throw new Error("Canvas 2d isn't supported by your browser!!! I'd suggest _not_ plotting anything. Or updaing your browser");
-            }
-        }
+let currentMaximizedPlot: ProgramPlotOutput | null = null;
 
-        canvas.width = 0;
-        canvas.height = 0;
+function setInset(amount: string) {
+    if (amount) {
+        setClass(cn.borderBox);
+        setStyle("padding", amount);
+    } else {
+        setClass(cn.borderBox, false);
+        setStyle("padding", "");
+    }
+}
 
-        const rect = container.getBoundingClientRect();
-        const width = rect.width - 1;
-        const height = rect.height - 1;
+type PlotState = {
+    posX: number;
+    posY: number;
+    extent: number;
+    width: number;
+    height: number;
+}
 
-        canvas.width = width;
-        canvas.height = height;
+function newPlotState(): PlotState {
+    return { 
+        posX: 0,
+        posY: 0,
+        extent: 0,
+        width: 0,
+        height: 0,
+    };
+}
 
-        ctx.clearRect(0, 0, width, height);
+function getCanvasX(plot: PlotState, x: number): number {
+    const { posX, extent, width } = plot;
+    const x0Extent = posX - extent;
+    const x1Extent = posX + extent;
+    return inverseLerp(x0Extent, x1Extent, x) * width;
+}
 
+function getCanvasY(plot: PlotState, y: number): number {
+    const { posY, extent, height } = plot;
+    const y0Extent = posY - extent;
+    const y1Extent = posY + extent;
+    return inverseLerp(y0Extent, y1Extent, y) * height;
+}
+
+function getGraphX(plot: PlotState, x: number): number {
+    const { posX, extent, width } = plot;
+    const x0Extent = posX - extent;
+    const x1Extent = posX + extent;
+
+    return lerp(x0Extent, x1Extent, (x / width));
+}
+
+function getGraphLengthX(plot: PlotState, l: number): number {
+    const { extent, width } = plot;
+    return l * extent / width;
+}
+
+function getGraphLengthY(plot: PlotState, l: number): number {
+    const { extent, height } = plot;
+    return l * extent / height;
+}
+
+function getGraphY(plot: PlotState, y: number): number {
+    const { posY, extent, height } = plot;
+    const y0Extent = posY - extent;
+    const y1Extent = posY + extent;
+
+    return lerp(y0Extent, y1Extent, (y / height));
+}
+
+function drawPointAt(plot: PlotState, ctx: CanvasRenderingContext2D, x: number, y: number, size: number) {
+    ctx.beginPath();
+    {
         ctx.strokeStyle = cssVars.fg;
         ctx.lineWidth = 2;
-        ctx.moveTo(0, 0);
-        ctx.lineTo(0, height);
-        ctx.lineTo(width, height);
-        ctx.lineTo(width, 0);
-        ctx.moveTo(0, 0);
+
+        ctx.moveTo(x - size, y - size);
+        ctx.lineTo(x - size, y + size);
+        ctx.lineTo(x + size, y + size);
+        ctx.lineTo(x + size, y - size);
+        ctx.lineTo(x - size, y - size);
         ctx.stroke();
+    }
+    ctx.closePath();
+}
 
-        let minX = Number.MAX_VALUE;
-        let maxX = Number.MIN_VALUE;
-        let minY = Number.MAX_VALUE;
-        let maxY = Number.MIN_VALUE;
+function renderPlot(plot: ProgramPlotOutput, rerender: () => void) {
+    const isMaximized = currentMaximizedPlot === plot;
 
-        for (const line of plot.lines) {
-            for (let i = 0; i < line.pointsX.length; i++) {
-                const x = line.pointsX[i];
-                minX = Math.min(x, minX);
-                maxX = Math.max(x, maxX);
+    let rootLayoutFlags = GAP | W100 | H100 | COL;
+    if (isMaximized) {
+        rootLayoutFlags = rootLayoutFlags | FIXED | TRANSLUCENT;
+    } 
 
-                const y = line.pointsY[i];
-                minY = Math.min(y, minY);
-                maxY = Math.max(y, maxY);
+    beginLayout(rootLayoutFlags).root; {
+        if (!imMemo().val(isMaximized).isSame) {
+            if (isMaximized) {
+                setInset("10px");
+            } else {
+                setInset("");
             }
         }
 
-        for (const line of plot.lines) {
-            // TODO: labels
+        beginLayout(COL | OPAQUE | FLEX | GAP); {
+            beginLayout(ROW | GAP); {
+                beginButton(isMaximized); {
+                    textSpan(isMaximized ? "minimize" : "maximize");
 
-            ctx.strokeStyle = line.color ? line.color.toString() : cssVars.fg;
-            ctx.lineWidth = 2;
+                    if (elementHasMouseClick()) {
+                        if (isMaximized) {
+                            currentMaximizedPlot = null;
+                        } else {
+                            currentMaximizedPlot = plot;
+                        }
+                    }
+                } end();
+            } end();
 
-            let x0 = line.pointsX[0];
-            let y0 = line.pointsY[0];
-            const x0Plot = inverseLerp(minX, maxX, x0) * width;
-            const y0Plot = inverseLerp(minY, maxY, y0) * height;
-            ctx.beginPath();
-            ctx.moveTo(x0Plot, y0Plot);
-            for (let i = 1; i < line.pointsX.length; i++) {
-                const x1 = line.pointsX[i];
-                const y1 = line.pointsY[i];
+            imRerenderable((rerenderCanvas) => {
+                const container = beginLayout(FLEX).root; {
+                    const canvasRoot = el(newCanvasElement); const canvas = canvasRoot.root; {
+                        if (imInit()) {
+                            setStyle("cursor", "move");
+                        }
+                        
+                        // init canvas 
+                        const plotState = imState(newPlotState);
+                        let ctx = imVal<CanvasRenderingContext2D>(); {
+                            if (!ctx) {
+                                ctx = imSetVal(canvas.getContext("2d"));
+                                if (!ctx) {
+                                    throw new Error("Canvas 2d isn't supported by your browser!!! I'd suggest _not_ plotting anything. Or updaing your browser");
+                                }
+                            }
+                            canvas.width = 0;
+                            canvas.height = 0;
 
-                const x1Plot = inverseLerp(minX, maxX, x1) * width;
-                const y1Plot = inverseLerp(minY, maxY, y1) * height;
+                            // TODO: a better way to get boundingRect without triggering reflows
+                            const rect = container.getBoundingClientRect();
+                            const width = rect.width;
+                            const height = rect.height;
 
-                ctx.lineTo(x1Plot, y1Plot);
+                            canvas.width = width;
+                            canvas.height = height;
 
-                x0 = x1; y0 = y1;
-            }
-            ctx.stroke();
-            ctx.closePath();
-        }
+                            plotState.width = width;
+                            plotState.height = height;
+                        }
+
+                        if (!imMemo().val(plot).isSame) {
+                            let minX = Number.MAX_VALUE;
+                            let maxX = Number.MIN_VALUE;
+                            let minY = Number.MAX_VALUE;
+                            let maxY = Number.MIN_VALUE;
+
+                            for (const line of plot.lines) {
+                                for (let i = 0; i < line.pointsX.length; i++) {
+                                    const x = line.pointsX[i];
+                                    minX = Math.min(x, minX);
+                                    maxX = Math.max(x, maxX);
+
+                                    const y = line.pointsY[i];
+                                    minY = Math.min(y, minY);
+                                    maxY = Math.max(y, maxY);
+                                }
+                            }
+
+                            let maxDist = Math.max(maxX - minX, maxY - minY);
+                            const centerX = (minX + maxX) / 2;
+                            const centerY = (minY + maxY) / 2;
+
+                            plotState.extent = maxDist / 2;
+                            plotState.posX = centerX;
+                            plotState.posY = centerY;
+                        }
+
+                        const mouse = getMouse();
+                        if (elementHasMouseDown()) {
+                            const dxPlot = getGraphLengthX(plotState, mouse.dX);
+                            const dyPlot = getGraphLengthY(plotState, mouse.dY);
+
+                            plotState.posX -= dxPlot * 2;
+                            plotState.posY -= dyPlot * 2;
+                        }
+
+                        imPreventScrollEventPropagation();
+
+                        if (elementHasMouseOver()) {
+                            if (scrollAmountY < 0) {
+                                plotState.extent /= 2;
+                            } else if (scrollAmountY > 0) {
+                                plotState.extent *= 2;
+                            }
+                        }
+
+                        const { width, height, extent, posX, posY } = plotState;
+
+                        ctx.clearRect(0, 0, width, height);
+
+                        // draw boundary
+                        ctx.beginPath();
+                        {
+                            ctx.strokeStyle = cssVars.fg;
+                            ctx.lineWidth = 2;
+                            const offset = 1;
+                            ctx.moveTo(offset, offset);
+                            ctx.lineTo(offset, height - offset);
+                            ctx.lineTo(width - offset, height - offset);
+                            ctx.lineTo(width - offset, offset);
+                            ctx.lineTo(offset, offset);
+                            ctx.stroke();
+                        }
+                        ctx.closePath();
+
+                        // draw something at 0, 0
+                        {
+                            const x1Plot = getCanvasX(plotState, 0);
+                            const y1Plot = getCanvasY(plotState, 0);
+                            drawPointAt(plotState, ctx, x1Plot, y1Plot, 5)
+                        }
+
+                        // draw lines
+                        {
+                            for (const line of plot.lines) {
+                                // TODO: labels
+
+                                ctx.strokeStyle = line.color ? line.color.toString() : cssVars.fg;
+                                ctx.lineWidth = 2;
+
+                                let x0 = line.pointsX[0];
+                                let y0 = line.pointsY[0];
+                                const x0Plot = getCanvasX(plotState, x0);
+                                const y0Plot = getCanvasY(plotState, y0);
+                                ctx.beginPath();
+                                {
+                                    ctx.moveTo(x0Plot, y0Plot);
+                                    for (let i = 1; i < line.pointsX.length; i++) {
+                                        const x1 = line.pointsX[i];
+                                        const y1 = line.pointsY[i];
+
+                                        const x1Plot = getCanvasX(plotState, x1);
+                                        const y1Plot = getCanvasY(plotState, y1);
+
+                                        ctx.lineTo(x1Plot, y1Plot);
+
+                                        x0 = x1; y0 = y1;
+                                    }
+                                    ctx.stroke();
+                                }
+                                ctx.closePath();
+                            }
+                        }
+                    } end();
+                } end();
+            });
+        } end();
     } end();
 }
 
@@ -989,12 +1225,128 @@ function saveStateDebounced(ctx: GlobalContext) {
     }, 1000);
 }
 
+let clickedElement: object | null = null;
+let downElement: object | null = null;
+let lastClickedElement: object | null = null;
+let hoverElement: object | null = null;
+const mouse = {
+    lastX: 0,
+    lastY: 0,
+    isDown: false,
+    dX: 0,
+    dY: 0,
+    X: 0,
+    Y: 0,
+};
+
+function getMouse() {
+    return mouse;
+}
+
+// I cant fking believe this shit works, lol
+function elementHasMouseClick() {
+    const r = getCurrentRoot();
+    return r.root === clickedElement;
+}
+
+function elementHasMouseDown() {
+    const r = getCurrentRoot();
+    return r.root === downElement;
+}
+
+function elementHasMouseOver() {
+    const r = getCurrentRoot();
+    return r.root === hoverElement;
+}
+
+function deferClickEventUpwards() {
+    const r = getCurrentRoot();
+    const el = r.root;
+    const parent = el.parentNode;
+
+    if (clickedElement === el) {
+        clickedElement = parent;
+    }
+    if (lastClickedElement === el) {
+        lastClickedElement = parent;
+    }
+    if (downElement === el) {
+        downElement = parent;
+    }
+    if (hoverElement === el) {
+        hoverElement = parent;
+    }
+}
+
+function setClickedElement(el: object | null) {
+    clickedElement = el;
+    lastClickedElement = el;
+    downElement = el;
+}
+
+document.addEventListener("mousedown", (e) => {
+    setClickedElement(e.target);
+    mouse.isDown = true;
+});
+document.addEventListener("mousemove", (e) => {
+    mouse.lastX = mouse.X;
+    mouse.lastY = mouse.Y;
+    mouse.X = e.pageX;
+    mouse.Y = e.pageY;
+    mouse.dX = mouse.X - mouse.lastX;
+    mouse.dY = mouse.Y - mouse.lastY;
+    hoverElement = e.target;
+
+});
+document.addEventListener("mouseup", (e) => {
+    mouse.isDown = false;
+    downElement =  null;
+});
+document.addEventListener("blur", (e) => {
+    mouse.isDown = false;
+    downElement =  null;
+});
+
+// NOTE: if you want to use this, you'll have to prevent scroll event propagation.
+let scrollAmountY = 0;
+document.addEventListener("wheel", (e) => {
+    scrollAmountY += e.deltaY;
+    e.preventDefault();
+});
+
+function newPreventScrollEventPropagationState() {
+    return {
+        whenShiftPressed: false
+    };
+}
+
+function imPreventScrollEventPropagation() {
+    const state = imState(newPreventScrollEventPropagationState);
+
+    if (imInit()) {
+        const r = getCurrentRoot();
+        r.root.addEventListener("wheel", e => {
+            if (state.whenShiftPressed) {
+                // TODO: keyboard input.
+                let shiftNotPressed = false;
+                if (shiftNotPressed) {
+                    return;
+                }
+            }
+
+            e.preventDefault();
+        });
+    }
+
+    return state;
+}
+
 export function renderApp() {
-    imRerenderable((rerender) => {
+    // imRerenderable((rerender) => {
         const stackSize = getComponentStackSize();
 
         div(); {
-            init() && setAttributes({
+            imInit() && setAttributes({
                 class: [cn.fixed, cnApp.normalFont, cn.absoluteFill]
             });
 
@@ -1002,7 +1354,7 @@ export function renderApp() {
                 tryFn: () => {
 
                     const ctx = imState(newGlobalContext);
-                    ctx.rerenderApp = rerender;
+                    // ctx.rerenderApp = rerender;
 
                     const { state } = ctx;
 
@@ -1033,12 +1385,12 @@ export function renderApp() {
                     } end();
 
                     div(); {
-                        init() && setAttributes({
+                        imInit() && setAttributes({
                             style: "right: 10px; bottom: 10px",
                             class: [cn.absolute],
                         });
 
-                        textNode(saveTimeout ? "Saving..." : "Saved");
+                        setInnerText(saveTimeout ? "Saving..." : "Saved");
                     } end();
 
                 },
@@ -1053,5 +1405,13 @@ export function renderApp() {
         } end();
 
         assert(stackSize === getComponentStackSize());
-    });
+
+        clickedElement = null;
+        mouse.lastX = mouse.X;
+        mouse.lastY = mouse.Y;
+        mouse.dX = 0;
+        mouse.dY = 0;
+        scrollAmountY = 0;
+
+    // });
 }

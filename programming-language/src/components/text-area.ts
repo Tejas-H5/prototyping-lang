@@ -1,6 +1,6 @@
 import { cssVars } from "src/styling";
 import { execCommand } from "src/utils/depracated-dom-api-wrappers";
-import { cn, div, el, end, imIf, imOn, imState, init, newCssBuilder, newDomElement, Ref, setAttributes, setClass, setInputValue, span, textNode } from "src/utils/im-dom-utils";
+import { cn, div, el, end, imIf, imState, init, newCssBuilder, newDomElement, Ref, setAttributes, setClass, setInputValue, span, setInnerText, } from "src/utils/im-dom-utils";
 import { getLineBeforePos } from "src/utils/text-utils";
 
 const CSSVARS_FOCUS = cssVars.bg;
@@ -96,15 +96,17 @@ export function EditableTextArea({
                     setInputValue(textArea, text);
                 }
 
-                imOn("input", () => {
-                    onInput(textArea.value, textArea);
-                });
 
-                imOn("keydown", (e) => {
-                    if (!handleTextAreaKeyboardInput(e, textArea, config)) {
-                        onInputKeyDown(e, textArea);
-                    }
-                });
+                if (init()) {
+                    textArea.addEventListener("input", () => {
+                        onInput(textArea.value, textArea);
+                    });
+                    textArea.addEventListener("keydown", (e) => {
+                        if (!handleTextAreaKeyboardInput(e, textArea, config)) {
+                            onInputKeyDown(e, textArea);
+                        }
+                    });
+                }
             } end();
         });
 
@@ -122,14 +124,14 @@ export function EditableTextArea({
             // This is a facade that gives the text area the illusion of auto-sizing!
             // but it only works if the text doesn't end in whitespace....
             span(); {
-                textNode(text);
+                setInnerText(text);
             } end();
 
             // This full-stop at the end of the text is what prevents the text-area from collapsing in on itself
             span(); {
                 if (init()) {
                     setAttributes({ style: "color: transparent" });
-                    textNode(".");
+                    setInnerText(".");
                 }
             } end();
         } end();

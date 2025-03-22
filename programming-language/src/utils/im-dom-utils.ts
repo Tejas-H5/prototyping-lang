@@ -290,75 +290,9 @@ export function scrollIntoView(
     scrollParent.scrollTop = scrollToElOffsetTop - scrollOffset + elementHeightOffset;
 }
 
-//////////
-// animation utils. The vast majority of apps will need animation, so I figured I'd just merge this into dom-utils itself
 
-export type AnimateFunction = (dt: number) => boolean;
-
-export type RealtimeAnimation = {
-    isRunning: boolean;
-    isInQueue: boolean;
-    fn: AnimateFunction;
-}
-
-const queue: RealtimeAnimation[] = [];
-
-const MAX_DT = 100;
-
-let lastTime = 0;
-function runAnimation(time: DOMHighResTimeStamp) {
-    const dtMs = time - lastTime;
-    lastTime = time;
-
-    if (dtMs < MAX_DT) {
-        for (let i = 0; i < queue.length; i++) {
-            const handle = queue[i];
-
-            handle.isRunning = handle.fn(dtMs / 1000);
-
-            if (!handle.isRunning) {
-                // O(1) fast-remove
-                queue[i] = queue[queue.length - 1];
-                queue.pop();
-                handle.isInQueue = false;
-                i--;
-            }
-        }
-    }
-
-    if (queue.length > 0) {
-        requestAnimationFrame(runAnimation);
-    }
-}
-
-export function newAnimation(fn: AnimateFunction): RealtimeAnimation {
-    return { fn, isRunning: false, isInQueue: false };
-}
-
-/**
- * Adds an animation to the realtime animation queue that runs with `requestAnimationFrame`.
- * See {@link newAnimation}.
- */
-export function startAnimation(animation: RealtimeAnimation) {
-    if (animation.isInQueue) {
-        return;
-    }
-
-    const restartQueue = queue.length === 0;
-
-    queue.push(animation);
-    animation.isInQueue = true;
-
-    if (restartQueue) {
-        requestAnimationFrame(runAnimation);
-    }
-}
-
-export function getCurrentNumAnimations() {
-    return queue.length;
-}
-
-///////// Immediate-mode array datastructure, for use with the immediate mode renderer
+///////// 
+// Immediate-mode array datastructure, for use with the immediate mode renderer
 
 /**
  * An immediate-mode array datastructure is an array 
@@ -443,7 +377,8 @@ function imReset(arr: ImmediateModeArray<unknown>, idx: number = -1) {
     arr.idx = idx;
 }
 
-///////// Immediate-mode dom renderer. I've replaced the old render-groups approach with this thing. 
+///////// 
+// Immediate-mode dom renderer. I've replaced the old render-groups approach with this thing. 
 // It solves a lot of issues I've had with the old renderer, at the cost of being a bit more complicated,
 // and requiring a bit more compute per-render. But the performance is fairly similar.
 //
@@ -548,7 +483,10 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     hasRealChildren = false;
     manuallyHidden = false;
     ifStatementOpen = false;
+
+    // Probably not needed, now that we're just rerendering the app in an animation frame.
     removed = true;
+
     began = false;
 
     // Users should call `newUiRoot` instead.
@@ -635,7 +573,6 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     readonly c = this.setClass;
 
     text(value: string) { 
-        setChildAtEl
         // don't overwrite the real children!
         assert(!this.hasRealChildren);
 
@@ -661,15 +598,27 @@ export class UIRoot<E extends ValidElement = ValidElement> {
         assert(this.elementSupplier !== null);
     }
 
-    // NOTE: If this is being called before we've rendered any components here, it should be ok.
-    // if it's being called during a render, then that is typically an incorrect usage - the domRoot's index may or may not be incorrect now, because
-    // we will have removed HTML elements out from underneath it. You'll need to ensure that this isn't happening in your use case.
-    __removeAllDomElements() {
+    __onRemove() {
         this.removed = true;
         for (let i = 0; i < this.items.items.length; i++) {
             const item = this.items.items[i];
             if (item.t === ITEM_UI_ROOT) {
+                item.v.__onRemove();
+            } else if (item.t === ITEM_LIST) {
+                item.v.__onRemove();
+            }
+        }
+    }
+
+    // NOTE: If this is being called before we've rendered any components here, it should be ok.
+    // if it's being called during a render, then that is typically an incorrect usage - the domRoot's index may or may not be incorrect now, because
+    // we will have removed HTML elements out from underneath it. You'll need to ensure that this isn't happening in your use case.
+    __removeAllDomElements() {
+        for (let i = 0; i < this.items.items.length; i++) {
+            const item = this.items.items[i];
+            if (item.t === ITEM_UI_ROOT) {
                 item.v.domRoot.root.remove();
+                item.v.__onRemove();
             } else if (item.t === ITEM_LIST) {
                 // needs to be fully recursive. because even though our UI tree is like
                 //
@@ -779,10 +728,20 @@ export class ListRenderer {
             this.builders[i].__removeAllDomElements();
         }
         this.builders.length = this.builderIdx;
-        for (const v of this.keys.values()) {
+        for (const [k, v] of this.keys) {
             if (!v.rendered) {
                 v.root.__removeAllDomElements();
+                this.keys.delete(k);
             }
+        }
+    }
+
+    __onRemove() {
+        for (let i = 0; i < this.builders.length; i++) {
+            this.builders[i].__onRemove();
+        }
+        for (const v of this.keys.values()) {
+            v.root.__onRemove();
         }
     }
 
@@ -838,7 +797,7 @@ export type RenderFnArgs<A extends unknown[], T extends ValidElement = ValidElem
  * ```
  */
 export function beginList(): ListRenderer {
-    const r = getCurrentRootInternal();
+    const r = getCurrentRoot();
 
     let result = imGetNext(r.items);
     if (!result) {
@@ -934,10 +893,11 @@ function imRerenderPoint(r: UIRoot, offset: number): RerenderPoint {
     return state;
 }
 
-///////// Common immediate mode UI helpers
+///////// 
+// Common immediate mode UI helpers
 
 function imStateInternal<T>(supplier: () => T, skipSupplierCheck: boolean): T {
-    const r = getCurrentRootInternal();
+    const r = getCurrentRoot();
     // Don't render new elements to this thing when you have a list renderer that is active!
     // render to that instead.
     assert(r.openListRenderers === 0);
@@ -996,28 +956,25 @@ export function imStateInline<T>(supplier: () => T): T {
 
 let appRoot: UIRoot = newUiRoot(() => document.body);
 const currentStack: (UIRoot | ListRenderer)[] = [];
-export function setUiRoot(r: UIRoot) {
-    assert(currentStack.length <= 1);
-    appRoot = r;
-    currentStack[0] = appRoot;
-}
 
 // You probably don't want to use this, if you can help it
 export function getCurrentStackItemInternal() {
     return currentStack[currentStack.length - 1];
 }
 
-// You probably don't want to use this, if you can help it.
-// but this framework is pretty new, and I probably haven't given you all the APIs you'll actually need. 
-// If you need to use this in your own code, feel free to log a github issue explaining your use case,
-// and I'll probably consider integrating it into the framework itself if it's ubiquitious enough.
-export function getCurrentRootInternal(): UIRoot {
+// Allows you to get the current root without having a reference to it.
+// You should use this very sparingly, if at all.
+export function getCurrentRoot<T extends ValidElement = ValidElement>(): UIRoot<T> {
     const val = getCurrentStackItemInternal();
 
-    /** Can't call this method without opening a new UI root. A common mistake is to use end() instead of endList() to end lists */
+    /** 
+     * Can't call this method without opening a new UI root. Common mistakes include: 
+     *  - using end() instead of endList() to end lists
+     *  - calling beginList() and then rendering a component without wrapping it in nextRoot like `nextRoot(); { ...component code... } end();`
+     */
     assert(val instanceof UIRoot);
 
-    return val;
+    return val as UIRoot<T>;
 }
 
 // You probably don't want to use this, if you can help it
@@ -1043,7 +1000,7 @@ export function startRendering(r: UIRoot = appRoot, rp?: RerenderPoint) {
 }
 
 export function el<E extends ValidElement = ValidElement>(elementSupplier: () => E): UIRoot<E> {
-    const r = getCurrentRootInternal();
+    const r = getCurrentRoot();
 
     // Don't render new elements to this thing when you have a list renderer that is active!
     // render to that instead.
@@ -1087,7 +1044,7 @@ export function el<E extends ValidElement = ValidElement>(elementSupplier: () =>
 } 
 
 export function end() {
-    const val = getCurrentRootInternal();
+    const val = getCurrentRoot();
     val.__end();
 }
 
@@ -1095,7 +1052,7 @@ export function endList(isConditional=false) {
     const val = getCurrentListRendererInternal();
     val.__end();
 
-    const r = getCurrentRootInternal();
+    const r = getCurrentRoot();
 
     if (!isConditional) {
         // by default, open an if-statement for an `else` if we rendered zero items.
@@ -1174,12 +1131,8 @@ export function div(): UIRoot<HTMLDivElement> {
     return el<HTMLDivElement>(newDiv);
 }
 
-/**
- * The name `text` is far too common in user code, so textNode it is
- * @deprecated - we should just use spans, so that we can insert multiple text nodes under the same component.
- */
-export function textNode(str: string) {
-    const r = getCurrentRootInternal();
+export function setInnerText(str: string) {
+    const r = getCurrentRoot();
     r.text(str);
 }
 
@@ -1231,7 +1184,7 @@ type ActualFalseyValues = null | undefined | false;
  * ```
  */
 export function imIf<V>(val: V | ActualFalseyValues, next: (typeNarrowedVal: V) => void) {
-    const r = getCurrentRootInternal();
+    const r = getCurrentRoot();
     r.ifStatementOpen = true;
     imElseIf(val, next);
 }
@@ -1247,7 +1200,7 @@ export function imElse(next: () => void) {
  * See {@link imIf}
  */
 export function imElseIf<V>(val: V | ActualFalseyValues, next: (typeNarrowedVal: V) => void) {
-    const rIn = getCurrentRootInternal();
+    const rIn = getCurrentRoot();
     beginList(); {
         if (rIn.ifStatementOpen && (val || val === 0 || val === "")) {
             rIn.ifStatementOpen = false;
@@ -1288,85 +1241,90 @@ function canAnimate(r: UIRoot) {
  * thing was first rendered, and then calling the function you passed in.
  */
 export function imRerenderable(fn: (rerender: () => void) => void) {
-    const r = getCurrentRootInternal();
+    const r = getCurrentRoot();
     const rerenderPoint = imRerenderPoint(r, FROM_HERE);
-    fn(() => {
-        startRendering(r, rerenderPoint);
+    const ref = newRef<() => void>();
+    if (ref.val === null) {
+        ref.val = () => {
+            startRendering(r, rerenderPoint);
 
-        const stackSize = getComponentStackSize();
+            const stackSize = getComponentStackSize();
 
-        imRerenderable(fn)
+            imRerenderable(fn)
 
-        // You (or I) forgot a call to end() somewhere.
-        assert(stackSize === getComponentStackSize());
-    });
-}
-
-function newRealtimeState(): {
-    dt: number;
-    animation: RealtimeAnimation | null;
-} { 
-    return { 
-        dt: 0, 
-        animation: null,
-    };
-}
-
-export function realtime(fn: (dt: number) => void) {
-    imRerenderable((rerender) => {
-        const r = getCurrentRootInternal();
-
-        const state = imState(newRealtimeState);
-        if (!state.animation) {
-            state.animation = newAnimation((dt) => {
-                if (!canAnimate(r)) {
-                    return false;
-                } 
-
-                state.dt = dt;
-                rerender();
-                return true;
-            });
+            // You (or I) forgot a call to end() somewhere.
+            assert(stackSize === getComponentStackSize());
         }
+    }
 
-        fn(state.dt);
-
-        startAnimation(state.animation);
-    });
+    fn(ref.val);
 }
 
-function newIntermittentState() : {
-    t: number; ms: number; animation: RealtimeAnimation | null;
-} { 
-    return { t: 0, ms: 0 , animation: null };
-}
+// function newRealtimeState(): {
+//     dt: number;
+//     animation: RealtimeAnimation | null;
+// } { 
+//     return { 
+//         dt: 0, 
+//         animation: null,
+//     };
+// }
 
-export function intermittent(fn: RenderFn, ms: number) {
-    imRerenderable((rerender) => {
-        const r = getCurrentRootInternal();
-        const state = imState(newIntermittentState);
-        state.ms = ms;
-        if (!state.animation) {
-            state.animation = newAnimation((dt) => {
-                if (!canAnimate(r)) {
-                    return false;
-                } 
+// export function realtime(fn: (dt: number) => void) {
+//     imRerenderable((rerender) => {
+//         const r = getCurrentRootInternal();
+//
+//         const state = imState(newRealtimeState);
+//         if (!state.animation) {
+//             state.animation = newAnimation((dt) => {
+//                 if (!canAnimate(r)) {
+//                     return false;
+//                 } 
+//
+//                 state.dt = dt;
+//                 rerender();
+//                 return true;
+//             });
+//         }
+//
+//         fn(state.dt);
+//
+//         startAnimation(state.animation);
+//     });
+// }
 
-                state.t += dt;
-                if (state.t > state.ms) {
-                    rerender();
-                    state.t = 0;
-                }
+// function newIntermittentState() : {
+//     t: number; ms: number; animation: RealtimeAnimation | null;
+// } { 
+//     return { t: 0, ms: 0 , animation: null };
+// }
 
-                return true;
-            });
-        }
-
-        fn(r);
-
-        startAnimation(state.animation);
-    });
-}
+// export function intermittent(fn: RenderFn, ms: number) {
+//     imRerenderable((rerender) => {
+//         const r = getCurrentRootInternal();
+//         const state = imState(newIntermittentState);
+//         state.ms = ms;
+//         if (!state.animation) {
+//             state.animation = newAnimation((dt) => {
+//                 if (!canAnimate(r)) {
+//                     return false;
+//                 } 
+//
+//                 state.t += dt;
+//                 if (state.t > state.ms) {
+//                     rerender();
+//                     state.t = 0;
+//                 }
+//
+//                 return true;
+//             });
+//         }
+//
+//         fn(r);
+//
+//         startAnimation(state.animation);
+//     });
+// }
 
 
 // NOTE: currently, if a component rerenders itself deep underneath the error boundary, it
@@ -1462,7 +1420,7 @@ export function imVal<T>(): T | null {
     return imRef<T>().val;
 }
 export function imSetVal<T>(t: T): T {
-    const root = getCurrentRootInternal();
+    const root = getCurrentRoot();
     let val = imGetCurrent(root.items);
     assert(val?.t === ITEM_STATE);
     assert(val.supplier === newRef);
@@ -1523,28 +1481,32 @@ export function imMemo() {
  * Seems like simply doing r.root.onwhatever = () => { blah } destroys performance,
  * so this  method exists now...
  *
+ * NOTE: assumes that `type` never changes.
+ *
  * TODO: verify if we actually need to remove event handlers or not. I haven't
  * ran into any issues by not doing this.
+ * @deprecated
  */
-export function imOn<K extends keyof HTMLElementEventMap>(
-    type: K,
-    listener: (this: HTMLElement, ev: HTMLElementEventMap[K]) => any,
-    options?: boolean | AddEventListenerOptions
-) {
-    const r = getCurrentRootInternal();
-    const handlerRef = imRef<((ev: HTMLElementEventMap[K]) => any)>();
-    if (handlerRef.val === null) {
-        handlerRef.val = listener;
-        r.root.addEventListener(type, (e) => {
-            assert(!!handlerRef.val);
+// export function imOn<K extends keyof HTMLElementEventMap>(
+//     type: K,
+//     listener: (this: HTMLElement, ev: HTMLElementEventMap[K]) => any,
+//     options?: boolean | AddEventListenerOptions
+// ) {
+//     const r = getCurrentRootInternal();
+//     const handlerRef = imRef<((ev: HTMLElementEventMap[K]) => any)>();
+//     if (handlerRef.val === null) {
+//         handlerRef.val = listener;
+//         r.root.addEventListener(type, (e) => {
+//             assert(!!handlerRef.val);
+//
+//             // @ts-expect-error I don't have the typescript skill to explain to typescript why this is actually fine.
+//             handlerRef.val!(e);
+//         }, options);
+//     } else {
+//         handlerRef.val = listener;
+//     }
+// }
 
-            // @ts-expect-error I don't have the typescript skill to explain to typescript why this is actually fine.
-            handlerRef.val!(e);
-        }, options);
-    } else {
-        handlerRef.val = listener;
-    }
-}
 
 /**
  * This allows you to check if a component is missing calls to end().
@@ -1565,14 +1527,18 @@ export function getComponentStackSize() {
 }
 
 /**
- * Use this for micro-optimization of calling `setAttributes` just once, and 
- * not for actual idempotency. See {@link UIRoot#isInInitPhase} to know why.
- *
- * If you want real idempotency, use {@link imRef} or something similar
+ * Returns true the first time it's called for a particular UIRoot, and false every other time.
  */
 export function init(): boolean {
-    const r = getCurrentRootInternal();
-    return r.isInInitPhase;
+    const val = imRef<boolean>();
+    if (!val.val) {
+        val.val = true;
+
+        return true;
+    }
+
+
+    return false;
 }
 
 /**
@@ -1589,7 +1555,7 @@ export function init(): boolean {
  * ```
  * @deprecated
  */
-export function setAttributes(attrs: Attrs, r = getCurrentRootInternal()) {
+export function setAttributes(attrs: Attrs, r = getCurrentRoot()) {
     // When elementSupplier is null, this is because the root is not the 'owner' of a particular DOM element - 
     // rather, we got it from a ListRenderer somehow - setting attributes on these roots is usually a mistake
     assert(r.elementSupplier !== null);
@@ -1598,26 +1564,53 @@ export function setAttributes(attrs: Attrs, r = getCurrentRootInternal()) {
 }
 
 export function addClasses(classes: string[]) {
-    const r = getCurrentRootInternal();
-    for (const c of classes) {
-        r.c(c);
+    const r = getCurrentRoot();
+    for (let i = 0; i < classes.length; i++) {
+        r.c(classes[i]);
     }
 }
 
 export function setAttr<T extends keyof Attrs>(k: T, v: string | null) {
-    const r = getCurrentRootInternal();
+    const r = getCurrentRoot();
     r.setAttribute(k, v);
 }
 
 export function setStyle<K extends (keyof ValidElement["style"])>(key: K, value: string) {
-    const r = getCurrentRootInternal();
+    const r = getCurrentRoot();
     r.setStyle(key, value);
 }
 
 export function setClass(val: string, enabled: boolean = true) {
     // NOTE: the effect of this method will persist accross renders
-    const r = getCurrentRootInternal();
+    const r = getCurrentRoot();
     r.setClass(val, enabled);
 }
 
 
+const MAX_VALID_DELTATIME_SECONDS = 0.500;
+let dtSeconds = 0;
+let lastTime = 0;
+
+export function deltaTimeSeconds(): number {
+    return dtSeconds;
+}
+
+export function initializeDomRootAnimiationLoop(renderFn: () => void, renderRoot?: UIRoot) {
+    const animation = (t: number) => {
+        dtSeconds = (t - lastTime) / 1000;
+        lastTime = t;
+
+        if (dtSeconds > 0 && dtSeconds < MAX_VALID_DELTATIME_SECONDS) {
+            startRendering(renderRoot);
+            renderFn();
+
+            // If this throws, then you've forgotten to pop some elements off the stack.
+            // inspect currentStack in the debugger for more info
+            assert(currentStack.length === 1);
+        }
+
+        requestAnimationFrame(animation);
+    };
+    
+    requestAnimationFrame(animation);
+}
