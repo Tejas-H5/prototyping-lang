@@ -29,9 +29,9 @@ import {
 import { GlobalContext, GlobalState, newGlobalContext, saveState, startDebugging } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
-import { assert, beginList, cn, div, el, end, endList, getComponentStackSize, imElse, imIf, imMemo, imRef, imRerenderable, imSetVal, imState, imStateInline, imTryCatch, imVal, init as imInit, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setStyle, span, setInnerText, UIRoot, getCurrentRoot } from './utils/im-dom-utils.ts';
-import { inverseLerp, lerp } from './utils/math-utils.ts';
-import { getSliceValue } from './utils/matrix-math.ts';
+import { assert, beginList, cn, div, el, end, endList, getComponentStackSize, imElse, imIf, imMemo, imRef, imRerenderable, imSetVal, imState, imStateInline, imTryCatch, imVal, imInit, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setStyle, span, setInnerText, UIRoot, getCurrentRoot, endFrame, beginFrame, imPreventScrollEventPropagation, initializeImEvents, deferClickEventToParent, elementHasMouseClick, elementWasLastClicked, getMouse, elementHasMouseOver, isShiftPressed, getKeys, imElseIf, deltaTimeSeconds, abortListAndRewindUiStack } from './utils/im-dom-utils.ts';
+import { clamp, inverseLerp, lerp } from './utils/math-utils.ts';
+import { getMatrixValue, getSliceValue } from './utils/matrix-math.ts';
 import { getLineBeforePos, getLineEndPos, getLineStartPos } from './utils/text-utils.ts';
 
 // NOTE: you only get 32 of these. use them wisely.
@@ -106,7 +106,7 @@ function textSpan(text: string, flags: number = 0) {
             setStyleFlags(flags);
         }
 
-        deferClickEventUpwards();
+        deferClickEventToParent();
 
         if (lastText.val !== text) {
             lastText.val = text;
@@ -129,6 +129,20 @@ function beginLayout(flags: number = 0) {
     // NOTE: this is a possibility for a simple API to allow more higher-level layout primitives.
     // instructs the corresponding end() to pop more than 1 node.
     // setEndPopCount(2);
+
+    return root;
+}
+
+const NONE = 9999999;
+function beginAbsoluteLayout(flags: number = 0, top: number, left: number, bottom: number, right: number) {
+    const root = beginLayout(flags | ABSOLUTE);
+
+    if (!imMemo().val(top).val(left).val(bottom).val(right).isSame) {
+        setStyle("top", top === NONE ? "" : top + "px");
+        setStyle("left", left === NONE ? "" : left + "px");
+        setStyle("bottom", bottom === NONE ? "" : bottom + "px");
+        setStyle("right", right === NONE ? "" : right + "px");
+    }
 
     return root;
 }
@@ -428,17 +442,21 @@ function renderProgramResult(res: ProgramResult) {
     } end();
 }
 
-// this component kinda suss. 
-function beginCollapsableHeading(isCollapsed: boolean) {
+function beginExpandableSectionHeading(text: string, isCollapsed: boolean) {
     const root = beginHeading(); {
+        textSpan(text);
+
+        imIf(isCollapsed, () => {
+            textSpan(" <");
+        });
+        imElse(() => {
+            textSpan(" v");
+        })
+
         if (imInit()) {
             setStyle("cursor", "pointer");
             setClass(cn.userSelectNone);
         }
-
-        imIf(isCollapsed, () => {
-            textSpan(" (collapsed)");
-        });
     } 
 
     return root;
@@ -504,6 +522,8 @@ const cnButton = cssb.cn("button", [
     ` { user-select: none; cursor: pointer; border: 2px solid ${cssVars.fg}; border: 2px solid currentColor; border-radius: 8px; padding: 2px 2px; box-sizing: border-box; }`,
     `:hover { background-color: ${cssVars.bg2} }`,
     `:active { background-color: ${cssVars.mg} }`,
+
+    `.${cnApp.inverted}:hover { background-color: ${cssVars.fg2} }`,
 ]);
 
 
@@ -530,9 +550,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
 
         const parseResult = ctx.lastParseResult;
 
-        beginCollapsableHeading(ctx.state.collapseParserOutput); {
-            textSpan("Parser output");
-
+        beginExpandableSectionHeading("Parser output", ctx.state.collapseParserOutput); {
             if (elementHasMouseClick()) {
                 ctx.state.collapseParserOutput = !ctx.state.collapseParserOutput;
             }
@@ -544,8 +562,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
 
         const message = imRef<string>();
 
-        beginCollapsableHeading(ctx.state.collapseInterpreterPass1Output); {
-            textSpan("Instruction generation - output");
+        beginExpandableSectionHeading("Instruction generation - output", ctx.state.collapseInterpreterPass1Output); {
             if (elementHasMouseClick()) {
                 ctx.state.collapseInterpreterPass1Output = !ctx.state.collapseInterpreterPass1Output;
             }
@@ -670,17 +687,12 @@ function renderAppCodeEditor({
     state,
     lastInterpreterResult,
     lastParseResult,
-    rerenderApp
 }: GlobalContext) {
     function onInput(newText: string) {
         state.text = newText;
-        rerenderApp();
     }
 
     function onInputKeyDown(_e: KeyboardEvent, _textArea: HTMLTextAreaElement) {
-        setTimeout(() => {
-            rerenderApp();
-        }, 1);
     }
 
     const textAreaRef = imRef<HTMLTextAreaElement>();
@@ -944,7 +956,7 @@ function renderProgramOutputs(outputs: ProgramOutputs, ctx: GlobalContext) {
                 endList();
 
                 beginAspectRatio(16, 9).root; {
-                    renderPlot(plot, ctx.rerenderApp);
+                    renderPlot(plot);
                 } end();
             } end();
         } end();
@@ -970,62 +982,91 @@ function setInset(amount: string) {
 type PlotState = {
     posX: number;
     posY: number;
-    extent: number;
+    originalExtent: number;
+    zoom: number;
     width: number;
     height: number;
+    maximized: boolean;
 }
 
 function newPlotState(): PlotState {
     return { 
         posX: 0,
         posY: 0,
-        extent: 0,
+        zoom: 1,
+        originalExtent: 0,
         width: 0,
         height: 0,
+        maximized: false
     };
 }
 
-function getCanvasX(plot: PlotState, x: number): number {
-    const { posX, extent, width } = plot;
+function getExtent(plot: PlotState): number {
+    const { originalExtent, zoom } = plot;
+    return originalExtent / zoom;
+}
+
+function getCanvasElementX(plot: PlotState, x: number): number {
+    const { posX, width } = plot;
+    const extent = getExtent(plot);
     const x0Extent = posX - extent;
     const x1Extent = posX + extent;
     return inverseLerp(x0Extent, x1Extent, x) * width;
 }
 
-function getCanvasY(plot: PlotState, y: number): number {
-    const { posY, extent, height } = plot;
+function getCanvasElementY(plot: PlotState, y: number): number {
+    const { posY, height } = plot;
+    const extent = getExtent(plot);
     const y0Extent = posY - extent;
     const y1Extent = posY + extent;
     return inverseLerp(y0Extent, y1Extent, y) * height;
 }
 
-function getGraphX(plot: PlotState, x: number): number {
-    const { posX, extent, width } = plot;
+function getPlotX(plot: PlotState, x: number): number {
+    const { posX, width } = plot;
+    const extent = getExtent(plot);
     const x0Extent = posX - extent;
     const x1Extent = posX + extent;
 
     return lerp(x0Extent, x1Extent, (x / width));
 }
 
-function getGraphLengthX(plot: PlotState, l: number): number {
-    const { extent, width } = plot;
-    return l * extent / width;
+function getPlotLengthX(plot: PlotState, l: number): number {
+    const { width } = plot;
+    const extent = getExtent(plot);
+    return l * 2 * extent / width;
 }
 
-function getGraphLengthY(plot: PlotState, l: number): number {
-    const { extent, height } = plot;
-    return l * extent / height;
+function getPlotLengthY(plot: PlotState, l: number): number {
+    const { height } = plot;
+    const extent = getExtent(plot);
+    return l * 2 * extent / height;
 }
 
-function getGraphY(plot: PlotState, y: number): number {
-    const { posY, extent, height } = plot;
+function getPlotY(plot: PlotState, y: number): number {
+    const { posY, height } = plot;
+    const extent = getExtent(plot);
     const y0Extent = posY - extent;
     const y1Extent = posY + extent;
 
     return lerp(y0Extent, y1Extent, (y / height));
 }
 
-function drawPointAt(plot: PlotState, ctx: CanvasRenderingContext2D, x: number, y: number, size: number) {
+function isPointOnScreen(plot: PlotState, x: number, y: number) {
+    const { posX, posY } = plot;
+
+    const extent = getExtent(plot);
+
+    const y0Extent = posY - extent;
+    const y1Extent = posY + extent;
+    const x0Extent = posX - extent;
+    const x1Extent = posX + extent;
+
+    return (x >= x0Extent && x <= x1Extent) &&
+        (y >= y0Extent && y <= y1Extent);
+}
+
+function drawPointAt(ctx: CanvasRenderingContext2D, x: number, y: number, size: number) {
     ctx.beginPath();
     {
         ctx.strokeStyle = cssVars.fg;
@@ -1041,7 +1082,7 @@ function drawPointAt(plot: PlotState, ctx: CanvasRenderingContext2D, x: number, 
     ctx.closePath();
 }
 
-function renderPlot(plot: ProgramPlotOutput, rerender: () => void) {
+function renderPlot(plot: ProgramPlotOutput) {
     const isMaximized = currentMaximizedPlot === plot;
 
     let rootLayoutFlags = GAP | W100 | H100 | COL;
@@ -1063,25 +1104,130 @@ function renderPlot(plot: ProgramPlotOutput, rerender: () => void) {
                 beginButton(isMaximized); {
                     textSpan(isMaximized ? "minimize" : "maximize");
 
-                    if (elementHasMouseClick()) {
-                        if (isMaximized) {
+                    const keys = getKeys();
+                    const mouse = getMouse();
+
+                    if (isMaximized) {
+                        if (
+                            keys.escPressed ||
+                            (mouse.leftMouseButton && elementHasMouseClick())
+                        ) {
                             currentMaximizedPlot = null;
-                        } else {
+                        }
+                    } else {
+                        if (mouse.leftMouseButton && elementHasMouseClick()) {
                             currentMaximizedPlot = plot;
                         }
                     }
                 } end();
             } end();
 
-            imRerenderable((rerenderCanvas) => {
-                const container = beginLayout(FLEX).root; {
-                    const canvasRoot = el(newCanvasElement); const canvas = canvasRoot.root; {
-                        if (imInit()) {
-                            setStyle("cursor", "move");
+            const container = beginLayout(FLEX | RELATIVE).root; {
+                const shiftScrollToZoomVal = imRef<number>();
+
+                const canvasRoot = el(newCanvasElement); const canvas = canvasRoot.root; {
+                    if (imInit()) {
+                        setStyle("cursor", "move");
+                    }
+
+                    const mouse = getMouse();
+                    const canZoom = elementHasMouseOver() && (isShiftPressed() || isMaximized);
+
+                    if (elementHasMouseOver() && (mouse.scrollY !== 0 && !canZoom)) {
+                        shiftScrollToZoomVal.val = 1;
+                    }
+
+                    // init canvas 
+                    const plotState = imState(newPlotState);
+
+                    plotState.maximized = isMaximized;
+
+                    if (!imMemo().val(plot).isSame) {
+                        let minX = Number.MAX_VALUE;
+                        let maxX = Number.MIN_VALUE;
+                        let minY = Number.MAX_VALUE;
+                        let maxY = Number.MIN_VALUE;
+
+                        for (const line of plot.lines) {
+                            for (let i = 0; i < line.pointsX.length; i++) {
+                                const x = line.pointsX[i];
+                                minX = Math.min(x, minX);
+                                maxX = Math.max(x, maxX);
+
+                                const y = line.pointsY[i];
+                                minY = Math.min(y, minY);
+                                maxY = Math.max(y, maxY);
+                            }
                         }
-                        
-                        // init canvas 
-                        const plotState = imState(newPlotState);
+
+                        let maxDist = Math.max(maxX - minX, maxY - minY);
+                        const centerX = (minX + maxX) / 2;
+                        const centerY = (minY + maxY) / 2;
+
+                        plotState.zoom = 1;
+                        plotState.originalExtent = maxDist / 2;;
+                        plotState.posX = centerX;
+                        plotState.posY = centerY;
+                    }
+
+                    
+                    if (mouse.leftMouseButton && elementWasLastClicked()) {
+                        const dxPlot = getPlotLengthX(plotState, mouse.dX);
+                        const dyPlot = getPlotLengthY(plotState, mouse.dY);
+
+                        plotState.posX -= dxPlot;
+                        plotState.posY -= dyPlot;
+                    }
+
+
+                    const scrollBlocker = imPreventScrollEventPropagation();
+                    scrollBlocker.isBlocking = canZoom;
+
+                    let mx0 = 0;
+                    let my0 = 0;
+                    let mx1 = 0;
+                    let my1 = 0;
+
+                    if (canZoom) {
+                        if (mouse.scrollY !== 0) {
+                            // When we zoom in or out, we want the graph-point that the mouse is currently over
+                            // to remain the same.
+
+                            // TODO: a better way to get boundingRect without triggering reflows
+                            const rect = container.getBoundingClientRect();
+
+                            const mouseX = mouse.X - rect.left;
+                            const mouseY = mouse.Y - rect.top;
+                            const mouseXPlot = getPlotX(plotState, mouseX);
+                            const mouseYPlot = getPlotY(plotState, mouseY);
+
+                            plotState.zoom -= mouse.scrollY / 100;
+                            plotState.zoom = clamp(plotState.zoom, 0.5, 10);
+
+                            const newMouseX = getCanvasElementX(plotState, mouseXPlot);
+                            const newMouseY = getCanvasElementY(plotState, mouseYPlot);
+
+                            const mouseDX = newMouseX - mouseX;
+                            const mouseDY = newMouseY - mouseY;
+
+                            const dX = getPlotLengthX(plotState, mouseDX);
+                            const dY = getPlotLengthY(plotState, mouseDY);
+
+                            mx0 = mouseXPlot;
+                            my0 = mouseYPlot;
+
+                            mx1 = newMouseX;
+                            my1 = newMouseY;
+
+                            plotState.posX += dX;
+                            plotState.posY += dY;
+                        }
+                    }
+
+                    if (!imMemo().objectVals(plotState).isSame) {
+                        const { width, height } = plotState;
+
+
                         let ctx = imVal<CanvasRenderingContext2D>(); {
                             if (!ctx) {
                                 ctx = imSetVal(canvas.getContext("2d"));
@@ -1089,11 +1235,10 @@ function renderPlot(plot: ProgramPlotOutput, rerender: () => void) {
                                     throw new Error("Canvas 2d isn't supported by your browser!!! I'd suggest _not_ plotting anything. Or updaing your browser");
                                 }
                             }
-                            canvas.width = 0;
-                            canvas.height = 0;
 
                             // TODO: a better way to get boundingRect without triggering reflows
                             const rect = container.getBoundingClientRect();
+
                             const width = rect.width;
                             const height = rect.height;
 
@@ -1103,54 +1248,6 @@ function renderPlot(plot: ProgramPlotOutput, rerender: () => void) {
                             plotState.width = width;
                             plotState.height = height;
                         }
-
-                        if (!imMemo().val(plot).isSame) {
-                            let minX = Number.MAX_VALUE;
-                            let maxX = Number.MIN_VALUE;
-                            let minY = Number.MAX_VALUE;
-                            let maxY = Number.MIN_VALUE;
-
-                            for (const line of plot.lines) {
-                                for (let i = 0; i < line.pointsX.length; i++) {
-                                    const x = line.pointsX[i];
-                                    minX = Math.min(x, minX);
-                                    maxX = Math.max(x, maxX);
-
-                                    const y = line.pointsY[i];
-                                    minY = Math.min(y, minY);
-                                    maxY = Math.max(y, maxY);
-                                }
-                            }
-
-                            let maxDist = Math.max(maxX - minX, maxY - minY);
-                            const centerX = (minX + maxX) / 2;
-                            const centerY = (minY + maxY) / 2;
-
-                            plotState.extent = maxDist / 2;
-                            plotState.posX = centerX;
-                            plotState.posY = centerY;
-                        }
-
-                        const mouse = getMouse();
-                        if (elementHasMouseDown()) {
-                            const dxPlot = getGraphLengthX(plotState, mouse.dX);
-                            const dyPlot = getGraphLengthY(plotState, mouse.dY);
-
-                            plotState.posX -= dxPlot * 2;
-                            plotState.posY -= dyPlot * 2;
-                        }
-
-                        imPreventScrollEventPropagation();
-
-                        if (elementHasMouseOver()) {
-                            if (scrollAmountY < 0) {
-                                plotState.extent /= 2;
-                            } else if (scrollAmountY > 0) {
-                                plotState.extent *= 2;
-                            }
-                        }
-
-                        const { width, height, extent, posX, posY } = plotState;
 
                         ctx.clearRect(0, 0, width, height);
 
@@ -1169,13 +1266,6 @@ function renderPlot(plot: ProgramPlotOutput, rerender: () => void) {
                         }
                         ctx.closePath();
 
-                        // draw something at 0, 0
-                        {
-                            const x1Plot = getCanvasX(plotState, 0);
-                            const y1Plot = getCanvasY(plotState, 0);
-                            drawPointAt(plotState, ctx, x1Plot, y1Plot, 5)
-                        }
-
                         // draw lines
                         {
                             for (const line of plot.lines) {
@@ -1184,19 +1274,21 @@ function renderPlot(plot: ProgramPlotOutput, rerender: () => void) {
                                 ctx.strokeStyle = line.color ? line.color.toString() : cssVars.fg;
                                 ctx.lineWidth = 2;
 
+                                // draw the actual lines
+
                                 let x0 = line.pointsX[0];
                                 let y0 = line.pointsY[0];
-                                const x0Plot = getCanvasX(plotState, x0);
-                                const y0Plot = getCanvasY(plotState, y0);
+                                const x0Plot = getCanvasElementX(plotState, x0);
+                                const y0Plot = getCanvasElementY(plotState, y0);
                                 ctx.beginPath();
-                                {
+                                if (!line.displayAsPoints) {
                                     ctx.moveTo(x0Plot, y0Plot);
                                     for (let i = 1; i < line.pointsX.length; i++) {
                                         const x1 = line.pointsX[i];
                                         const y1 = line.pointsY[i];
 
-                                        const x1Plot = getCanvasX(plotState, x1);
-                                        const y1Plot = getCanvasY(plotState, y1);
+                                        const x1Plot = getCanvasElementX(plotState, x1);
+                                        const y1Plot = getCanvasElementY(plotState, y1);
 
                                         ctx.lineTo(x1Plot, y1Plot);
 
@@ -1205,11 +1297,52 @@ function renderPlot(plot: ProgramPlotOutput, rerender: () => void) {
                                     ctx.stroke();
                                 }
                                 ctx.closePath();
+
+                                let renderPoints = line.displayAsPoints;
+                                if (!renderPoints) {
+                                    let numPointsOnScreen = 0;
+                                    for (let i = 0; i < line.pointsX.length; i++) {
+                                        const x1 = line.pointsX[i];
+                                        const y1 = line.pointsY[i];
+                                        if (isPointOnScreen(plotState, x1, y1)) {
+                                            numPointsOnScreen++;
+                                        }
+                                    }
+
+                                    renderPoints = numPointsOnScreen < 20;
+                                }
+                                if (renderPoints) {
+                                   for (let i = 0; i < line.pointsX.length; i++) {
+                                        const x1 = line.pointsX[i];
+                                        const y1 = line.pointsY[i];
+
+                                        const x1Plot = getCanvasElementX(plotState, x1);
+                                        const y1Plot = getCanvasElementY(plotState, y1);
+
+                                        drawPointAt(ctx, x1Plot, y1Plot, 5);
+                                    }
+                                }
                             }
                         }
-                    } end();
+                    }
                 } end();
-            });
+
+                if (shiftScrollToZoomVal.val !== null) {
+                    const dt = deltaTimeSeconds();
+                    shiftScrollToZoomVal.val -= dt;
+                    if (shiftScrollToZoomVal.val < 0) {
+                        shiftScrollToZoomVal.val = null;
+                    }
+                }
+
+                imIf(shiftScrollToZoomVal.val, (val) => {
+                    beginAbsoluteLayout(0, 5, NONE, NONE, 5); {
+                        setStyle("opacity", val + "");
+                        textSpan("Shift + scroll to zoom");
+                    } end();
+                })
+
+            } end();
         } end();
     } end();
 }
@@ -1220,198 +1353,78 @@ function saveStateDebounced(ctx: GlobalContext) {
     saveTimeout = setTimeout(() => {
         saveState(ctx.state);
         saveTimeout = 0;
-
-        ctx.rerenderApp();
     }, 1000);
 }
 
-let clickedElement: object | null = null;
-let downElement: object | null = null;
-let lastClickedElement: object | null = null;
-let hoverElement: object | null = null;
-const mouse = {
-    lastX: 0,
-    lastY: 0,
-    isDown: false,
-    dX: 0,
-    dY: 0,
-    X: 0,
-    Y: 0,
-};
-
-function getMouse() {
-    return mouse;
-}
-
-// I cant fking believe this shit works, lol
-function elementHasMouseClick() {
-    const r = getCurrentRoot();
-    return r.root === clickedElement;
-}
-
-function elementHasMouseDown() {
-    const r = getCurrentRoot();
-    return r.root === downElement;
-}
-
-function elementHasMouseOver() {
-    const r = getCurrentRoot();
-    return r.root === hoverElement;
-}
-
-function deferClickEventUpwards() {
-    const r = getCurrentRoot();
-    const el = r.root;
-    const parent = el.parentNode;
-
-    if (clickedElement === el) {
-        clickedElement = parent;
-    }
-    if (lastClickedElement === el) {
-        lastClickedElement = parent;
-    }
-    if (downElement === el) {
-        downElement = parent;
-    }
-    if (hoverElement === el) {
-        hoverElement = parent;
-    }
-}
-
-function setClickedElement(el: object | null) {
-    clickedElement = el;
-    lastClickedElement = el;
-    downElement = el;
-}
-
-document.addEventListener("mousedown", (e) => {
-    setClickedElement(e.target);
-    mouse.isDown = true;
-});
-document.addEventListener("mousemove", (e) => {
-    mouse.lastX = mouse.X;
-    mouse.lastY = mouse.Y;
-    mouse.X = e.pageX;
-    mouse.Y = e.pageY;
-    mouse.dX = mouse.X - mouse.lastX;
-    mouse.dY = mouse.Y - mouse.lastY;
-    hoverElement = e.target;
-
-});
-document.addEventListener("mouseup", (e) => {
-    mouse.isDown = false;
-    downElement =  null;
-});
-document.addEventListener("blur", (e) => {
-    mouse.isDown = false;
-    downElement =  null;
-});
-
-// NOTE: if you want to use this, you'll have to prevent scroll event propagation.
-let scrollAmountY = 0;
-document.addEventListener("wheel", (e) => {
-    scrollAmountY += e.deltaY;
-    e.preventDefault();
-});
-
-function newPreventScrollEventPropagationState() {
-    return {
-        whenShiftPressed: false
-    };
-}
-
-function imPreventScrollEventPropagation() {
-    const state = imState(newPreventScrollEventPropagationState);
-
-    if (imInit()) {
-        const r = getCurrentRoot();
-        r.root.addEventListener("wheel", e => {
-            if (state.whenShiftPressed) {
-                // TODO: keyboard input.
-                let shiftNotPressed = false;
-                if (shiftNotPressed) {
-                    return;
-                }
-            }
-
-            e.preventDefault();
-        });
-    }
-
-    return state;
-}
 
 export function renderApp() {
-    // imRerenderable((rerender) => {
-        const stackSize = getComponentStackSize();
+    beginFrame(); {
+        const error = imRef<any>();
 
         div(); {
             imInit() && setAttributes({
                 class: [cn.fixed, cnApp.normalFont, cn.absoluteFill]
             });
 
-            imTryCatch({
-                tryFn: () => {
+            const l = beginList();
+            try {
+                if (!error.val) {
+                    nextRoot(1); {
+                        const ctx = imState(newGlobalContext);
+                        // ctx.rerenderApp = rerender;
 
-                    const ctx = imState(newGlobalContext);
-                    // ctx.rerenderApp = rerender;
+                        const { state } = ctx;
 
-                    const { state } = ctx;
+                        if (!imMemo().objectVals(state).isSame) {
+                            const text = ctx.state.text;
+                            ctx.lastParseResult = parse(text);
+                            if (ctx.state.autorun) {
+                                ctx.lastInterpreterResult = interpret(ctx.lastParseResult);
+                            }
 
-                    if (!imMemo().keys(state).isSame) {
-                        const text = ctx.state.text;
-                        ctx.lastParseResult = parse(text);
-                        if (ctx.state.autorun) {
-                            ctx.lastInterpreterResult = interpret(ctx.lastParseResult);
+                            saveStateDebounced(ctx);
                         }
 
-                        saveStateDebounced(ctx);
-                    }
-
-                    beginLayout(ROW | H100); {
-                        beginLayout(FLEX); {
-                            renderAppCodeEditor(ctx);
+                        beginLayout(ROW | H100); {
+                            beginLayout(FLEX); {
+                                renderAppCodeEditor(ctx);
+                            } end();
+                            beginLayout(FLEX); {
+                                imIf(ctx.isDebugging, () => {
+                                    const interpretResult = ctx.lastInterpreterResult;
+                                    assert(interpretResult);
+                                    renderDebugger(ctx, interpretResult);
+                                });
+                                imElse(() => {
+                                    renderAppCodeOutput(ctx);
+                                });
+                            } end();
                         } end();
-                        beginLayout(FLEX); {
-                            imIf(ctx.isDebugging, () => {
-                                const interpretResult = ctx.lastInterpreterResult;
-                                assert(interpretResult);
-                                renderDebugger(ctx, interpretResult);
+
+                        div(); {
+                            imInit() && setAttributes({
+                                style: "right: 10px; bottom: 10px",
+                                class: [cn.absolute],
                             });
-                            imElse(() => {
-                                renderAppCodeOutput(ctx);
-                            });
+
+                            setInnerText(saveTimeout ? "Saving..." : "Saved");
                         } end();
+
                     } end();
-
-                    div(); {
-                        imInit() && setAttributes({
-                            style: "right: 10px; bottom: 10px",
-                            class: [cn.absolute],
-                        });
-
-                        setInnerText(saveTimeout ? "Saving..." : "Saved");
-                    } end();
-
-                },
-                catchFn: (error, _recover) => {
-                    console.error(error);
-
-                    div(); {
-                        textSpan("An error occured: " + error.message);
+                } else {
+                    nextRoot(2); {
+                        div(); {
+                            textSpan("An error occured: " + error.val.message);
+                        } end();
                     } end();
                 }
-            })
+            } catch (e) {
+                abortListAndRewindUiStack(l);
+                console.error(e);
+                error.val = e;
+            }
+            endList();
         } end();
 
-        assert(stackSize === getComponentStackSize());
-
-        clickedElement = null;
-        mouse.lastX = mouse.X;
-        mouse.lastY = mouse.Y;
-        mouse.dX = 0;
-        mouse.dY = 0;
-        scrollAmountY = 0;
-
-    // });
+    } endFrame();
 }

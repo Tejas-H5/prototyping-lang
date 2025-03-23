@@ -540,6 +540,7 @@ export type ProgramPlotOutputLine = {
     pointsY: number[];
     color: Color | undefined;
     label: string | undefined;
+    displayAsPoints: boolean;
 }
 
 export type ProgramPlotOutput = {
@@ -971,6 +972,128 @@ const ZERO_VEC4 = matrixZeroes([4]);
 
 // initialize builtin funcs
 {
+    function builtinPlotLines(
+        result: ProgramInterpretResult, step: ExecutionStep,
+        plotIdx: ProgramResult | null,
+        lines: ProgramResult | null,
+        colorMaybe: ProgramResult | null,
+        labelMaybe: ProgramResult | null,
+        displayAsPoints: boolean,
+    ) {
+        let label: string | undefined;
+        if (labelMaybe) {
+            assert(labelMaybe.t === T_RESULT_STRING);
+            label = labelMaybe.val;
+        }
+
+        let color: Color | undefined;
+        if (colorMaybe) {
+            assert(colorMaybe.t === T_RESULT_STRING || colorMaybe.t === T_RESULT_MATRIX);
+            if (colorMaybe.t === T_RESULT_STRING) {
+                color = newColorFromHexOrUndefined(colorMaybe.val);
+            } else if (colorMaybe.t === T_RESULT_MATRIX) {
+                if (matrixShapesAreEqual(colorMaybe.val, ZERO_VEC3)) {
+                    color = newColor(
+                        getSliceValue(colorMaybe.val.values, 0),
+                        getSliceValue(colorMaybe.val.values, 1),
+                        getSliceValue(colorMaybe.val.values, 2),
+                        1
+                    );
+                } else if (matrixShapesAreEqual(colorMaybe.val, ZERO_VEC4)) {
+                    color = newColor(
+                        getSliceValue(colorMaybe.val.values, 0),
+                        getSliceValue(colorMaybe.val.values, 1),
+                        getSliceValue(colorMaybe.val.values, 2),
+                        getSliceValue(colorMaybe.val.values, 3),
+                    );
+                } else {
+                    addError(result, step, "Vector colors must be a Vector3 or Vector4");
+                    return;
+                }
+            }
+        }
+
+        assert(plotIdx?.t === T_RESULT_NUMBER);
+        const idx = plotIdx.val;
+
+
+        assert(lines?.t === T_RESULT_LIST || lines?.t === T_RESULT_MATRIX);
+
+        const pointsX: number[] = [];
+        const pointsY: number[] = [];
+
+        if (lines.t === T_RESULT_LIST) {
+            for (let i = 0; i < lines.values.length; i++) {
+                const val = lines.values[i];
+                if (val.t !== T_RESULT_MATRIX) {
+                    // if only we could get the position of this value's expression.
+                    // probably if we made a static type system, it would be easier to report this error in the right place.
+                    addError(result, step, "Expected every element in a list be a vector2");
+                    return;
+                }
+
+                if (!matrixShapesAreEqual(val.val, ZERO_VEC2)) {
+                    addError(result, step, "Expected every element in a list be a vector2.");
+                    return;
+                }
+
+                pointsX.push(getSliceValue(val.val.values, 0));
+                pointsY.push(getSliceValue(val.val.values, 1));
+            }
+        } else if (lines.t === T_RESULT_MATRIX) {
+            const mat = lines.val;
+            if (!matrixIsRank2(mat)) {
+                addError(result, step, "Only matrices of rank 2 may be plotted");
+                return;
+            }
+
+            const m = mat.shape[0];
+            const n = mat.shape[1];
+
+            if (n === 2) {
+                for (let i = 0; i < m; i++) {
+                    const x = getMatrixValue(mat, i, 0);
+                    const y = getMatrixValue(mat, i, 1);
+
+                    pointsX.push(x);
+                    pointsY.push(y);
+                }
+            } else if (m === 2) {
+                for (let i = 0; i < n; i++) {
+                    const x = getMatrixValue(mat, 0, i);
+                    const y = getMatrixValue(mat, 1, i);
+
+                    pointsX.push(x);
+                    pointsY.push(y);
+                }
+            } else {
+                addError(result, step, "One of the sides of the matrix must have a length of 2");
+                return;
+            }
+        }
+
+        assert(pointsY.length === pointsX.length);
+
+        let plot = result.outputs.plots.get(idx);
+        if (!plot) {
+            plot = { lines: [] };
+            result.outputs.plots.set(idx, plot);
+        }
+
+        plot.lines.push({
+            expr: step.expr,
+            color,
+            label,
+            pointsX,
+            pointsY,
+            displayAsPoints
+        });
+
+        return lines;
+    }
+
+
+
     newBuiltinFunction("sin", [newArg("t", [T_RESULT_NUMBER])], (_result, _step, val) => {
         assert(val?.t === T_RESULT_NUMBER);
         return newNumberResult(Math.sin(val.val));
@@ -1058,7 +1181,7 @@ const ZERO_VEC4 = matrixZeroes([4]);
         return val;
     });
     newBuiltinFunction(
-        "plot", 
+        "plot_lines", 
         [
             newArg("idx", [T_RESULT_NUMBER]), 
             newArg("line", [T_RESULT_LIST, T_RESULT_MATRIX]), 
@@ -1066,116 +1189,19 @@ const ZERO_VEC4 = matrixZeroes([4]);
             newArg("label", [T_RESULT_STRING], true), 
         ], 
         (result, step, plotIdx, lines, colorMaybe, labelMaybe) => {
-
-            let label: string | undefined;
-            if (labelMaybe) {
-                assert(labelMaybe.t === T_RESULT_STRING);
-                label = labelMaybe.val;
-            }
-
-            let color: Color | undefined;
-            if (colorMaybe) {
-                assert(colorMaybe.t === T_RESULT_STRING || colorMaybe.t === T_RESULT_MATRIX);
-                if (colorMaybe.t === T_RESULT_STRING) {
-                    color = newColorFromHexOrUndefined(colorMaybe.val);
-                } else if (colorMaybe.t === T_RESULT_MATRIX) {
-                    if (matrixShapesAreEqual(colorMaybe.val, ZERO_VEC3)) {
-                        color = newColor(
-                            getSliceValue(colorMaybe.val.values, 0),
-                            getSliceValue(colorMaybe.val.values, 1),
-                            getSliceValue(colorMaybe.val.values, 2),
-                            1
-                        );
-                    } else if (matrixShapesAreEqual(colorMaybe.val, ZERO_VEC4)) {
-                        color = newColor(
-                            getSliceValue(colorMaybe.val.values, 0),
-                            getSliceValue(colorMaybe.val.values, 1),
-                            getSliceValue(colorMaybe.val.values, 2),
-                            getSliceValue(colorMaybe.val.values, 3),
-                        );
-                    } else {
-                        addError(result, step, "Vector colors must be a Vector3 or Vector4");
-                        return;
-                    }
-                }
-            }
-
-            assert(plotIdx?.t === T_RESULT_NUMBER);
-            const idx = plotIdx.val;
-
-
-            assert(lines?.t === T_RESULT_LIST || lines?.t === T_RESULT_MATRIX);
-
-            const pointsX: number[] = [];
-            const pointsY: number[] = [];
-
-            if (lines.t === T_RESULT_LIST) {
-                for (let i = 0; i < lines.values.length; i++) {
-                    const val = lines.values[i];
-                    if (val.t !== T_RESULT_MATRIX) {
-                        // if only we could get the position of this value's expression.
-                        // probably if we made a static type system, it would be easier to report this error in the right place.
-                        addError(result, step, "Expected every element in a list be a vector2");
-                        return;
-                    }
-
-                    if (!matrixShapesAreEqual(val.val, ZERO_VEC2)) {
-                        addError(result, step, "Expected every element in a list be a vector2.");
-                        return;
-                    }
-
-                    pointsX.push(getSliceValue(val.val.values, 0));
-                    pointsY.push(getSliceValue(val.val.values, 1));
-                }
-            } else if (lines.t === T_RESULT_MATRIX) {
-                const mat = lines.val;
-                if (!matrixIsRank2(mat)) {
-                    addError(result, step, "Only matrices of rank 2 may be plotted");
-                    return;
-                }
-
-                const m = mat.shape[0];
-                const n = mat.shape[1];
-
-                if (n === 2) {
-                    for (let i = 0; i < m; i++) {
-                        const x = getMatrixValue(mat, i, 0);
-                        const y = getMatrixValue(mat, i, 1);
-
-                        pointsX.push(x);
-                        pointsY.push(y);
-                    }
-                } else if (m === 2) {
-                    for (let i = 0; i < n; i++) {
-                        const x = getMatrixValue(mat, 0, i);
-                        const y = getMatrixValue(mat, 1, i);
-
-                        pointsX.push(x);
-                        pointsY.push(y);
-                    }
-                } else {
-                    addError(result, step, "One of the sides of the matrix must have a length of 2");
-                    return;
-                }
-            }
-
-            assert(pointsY.length === pointsX.length);
-
-            let plot = result.outputs.plots.get(idx);
-            if (!plot) {
-                plot = { lines: [] };
-                result.outputs.plots.set(idx, plot);
-            }
-
-            plot.lines.push({
-                expr: step.expr,
-                color,
-                label,
-                pointsX,
-                pointsY,
-            });
-
-            return lines;
+            return builtinPlotLines(result, step, plotIdx, lines, colorMaybe, labelMaybe, false);
+        }
+    );
+    newBuiltinFunction(
+        "plot_points", 
+        [
+            newArg("idx", [T_RESULT_NUMBER]), 
+            newArg("line", [T_RESULT_LIST, T_RESULT_MATRIX]), 
+            newArg("hexColor", [T_RESULT_STRING, T_RESULT_MATRIX], true),
+            newArg("label", [T_RESULT_STRING], true), 
+        ], 
+        (result, step, plotIdx, lines, colorMaybe, labelMaybe) => {
+            return builtinPlotLines(result, step, plotIdx, lines, colorMaybe, labelMaybe, true);
         }
     );
     // TODO: cool operator that does this?

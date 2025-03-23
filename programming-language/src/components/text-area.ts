@@ -1,6 +1,6 @@
 import { cssVars } from "src/styling";
 import { execCommand } from "src/utils/depracated-dom-api-wrappers";
-import { cn, div, el, end, imIf, imState, init, newCssBuilder, newDomElement, Ref, setAttributes, setClass, setInputValue, span, setInnerText, } from "src/utils/im-dom-utils";
+import { cn, div, el, end, imIf, imState, imInit, newCssBuilder, newDomElement, Ref, setAttributes, setClass, setInputValue, span, setInnerText, } from "src/utils/im-dom-utils";
 import { getLineBeforePos } from "src/utils/text-utils";
 
 const CSSVARS_FOCUS = cssVars.bg;
@@ -67,7 +67,7 @@ export function EditableTextArea({
     state.isEditing = isEditing;
 
     const root = div(); {
-        init() && setAttributes({
+        imInit() && setAttributes({
             class: [cn.flex1, cn.row, cn.h100, cn.relative],
             style: "overflow-y: hidden",
         });
@@ -78,7 +78,7 @@ export function EditableTextArea({
                     textAreaRef.val = textArea;
                 }
 
-                init() && setAttributes({
+                imInit() && setAttributes({
                     class: [cnEditableTextArea, cn.allUnset, cn.absolute, cn.preWrap, cn.w100, cn.h100],
                     style: "background-color: transparent; color: transparent; overflow-y: hidden; padding: 0px",
                 });
@@ -97,7 +97,7 @@ export function EditableTextArea({
                 }
 
 
-                if (init()) {
+                if (imInit()) {
                     textArea.addEventListener("input", () => {
                         onInput(textArea.value, textArea);
                     });
@@ -112,7 +112,7 @@ export function EditableTextArea({
 
         // This is now always present.
         div(); {
-            init() && setAttributes({
+            imInit() && setAttributes({
                 class: [cn.handleLongWords]
             });
 
@@ -129,7 +129,7 @@ export function EditableTextArea({
 
             // This full-stop at the end of the text is what prevents the text-area from collapsing in on itself
             span(); {
-                if (init()) {
+                if (imInit()) {
                     setAttributes({ style: "color: transparent" });
                     setInnerText(".");
                 }

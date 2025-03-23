@@ -1,33 +1,41 @@
 import { renderApp } from './app.ts';
 import "./styling.ts";
-import { deltaTimeSeconds, div, end, init, initializeDomRootAnimiationLoop, initializeDomUtils, setStyle } from './utils/im-dom-utils.ts';
+import { cssVars } from './styling.ts';
+import { deltaTimeSeconds, div, end, imInit, initializeDomRootAnimiationLoop, initializeDomUtils, initializeImEvents, setStyle } from './utils/im-dom-utils.ts';
 
 initializeDomUtils();
+initializeImEvents();
 
 let t = 0;
+let frames = 0;
+let fps = 0;
 function renderRoot() {
     const dt = deltaTimeSeconds();
-    t += dt * 0.2;
+    t += dt;
     if (t > 1) {
+        fps = Math.round(frames / t);
         t = 0;
+        frames = 1;
+    } else {
+        frames++;
     }
 
-    const angle = 360 * t;
-
     const r = div(); {
-        if (init()) {
+        if (imInit()) {
             setStyle("position", "absolute");
-            setStyle("top", "10px");
-            setStyle("right", "10px");
+            setStyle("top", "5px");
+            setStyle("right", "5px");
+            setStyle("padding", "5px");
+            setStyle("zIndex", "1000000");
+            setStyle("backgroundColor", cssVars.bg);
+            setStyle("borderRadius", "1000px");
             // setStyle("backgroundColor", cssVars.fg);
             // setStyle("width", "20px");
             // setStyle("height", "20px");
             // setStyle("transformOrigin", "center");
         }
 
-        const fps = Math.round(1 / dt);
         r.text(fps + " fps");
-
         // setStyle("transform", "rotate(" + angle + "deg)");
 
     } end();

@@ -12,7 +12,6 @@ export type GlobalContext = {
     isDebugging: boolean;
     lastParseResult: ProgramParseResult | undefined;
     lastInterpreterResult: ProgramInterpretResult | undefined;
-    rerenderApp: () => void;
 
     // This stuff is actually saved and persisted between runs
     state: GlobalState;
@@ -32,7 +31,6 @@ export function startDebugging(ctx: GlobalContext): string {
 
 export function newGlobalContext(): GlobalContext {
     return {
-        rerenderApp: () => {},
         state: loadState(),
         isDebugging: false,
         lastParseResult: undefined, 

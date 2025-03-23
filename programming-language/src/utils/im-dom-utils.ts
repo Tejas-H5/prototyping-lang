@@ -509,7 +509,7 @@ export class UIRoot<E extends ValidElement = ValidElement> {
 
         imReset(this.items, rp?.itemsIdx);
 
-        push(this);
+        pushRoot(this);
 
         // NOTE: avoid any more asertions here - the component may error out, and
         // __end may not get called. No I'm not going to catch it with an exception stfu. We livin on the edge, bois.
@@ -528,10 +528,7 @@ export class UIRoot<E extends ValidElement = ValidElement> {
         assert(this.began);
         this.began = false;
 
-        const val = pop();
-
-        // You may have forgotten to call end();
-        assert(val === this);
+        popRoot(this);
 
         this.isInInitPhase = false;
 
@@ -655,7 +652,7 @@ export class ListRenderer {
             v.rendered = false;
         }
         this.current = null;
-        push(this);
+        pushList(this);
     }
 
     /** Use this for a keyed list renderer */
@@ -679,10 +676,10 @@ export class ListRenderer {
 
     // This method automatically calls end() on the last root
     root(key?: ValidKey) {
-        const r = getCurrentStackItemInternal();
+        const l = getCurrentListRendererInternal();
 
-        // you also need to call end() after grabbing a root. 
-        assert(r === this);
+        // You may have forgotten to call end() on some component before this one
+        assert(l === this);
 
         let result;
         if (key) {
@@ -718,10 +715,7 @@ export class ListRenderer {
         assert(this.uiRoot.openListRenderers > 0);
         this.uiRoot.openListRenderers--;
 
-        const val = pop();
-
-        // You may have forgotten to call end();
-        assert(val === this);
+        popList(this);
 
         // remove all the UI components that may have been added by other builders in the previous render.
         for (let i = this.builderIdx; i < this.builders.length; i++) {
@@ -956,43 +950,73 @@ export function imStateInline<T>(supplier: () => T): T {
 
 let appRoot: UIRoot = newUiRoot(() => document.body);
 const currentStack: (UIRoot | ListRenderer)[] = [];
+let currentRoot: UIRoot | undefined;
+let currentListRenderer: ListRenderer | undefined;
 
-// You probably don't want to use this, if you can help it
-export function getCurrentStackItemInternal() {
-    return currentStack[currentStack.length - 1];
-}
 
 // Allows you to get the current root without having a reference to it.
 // You should use this very sparingly, if at all.
 export function getCurrentRoot<T extends ValidElement = ValidElement>(): UIRoot<T> {
-    const val = getCurrentStackItemInternal();
-
     /** 
      * Can't call this method without opening a new UI root. Common mistakes include: 
      *  - using end() instead of endList() to end lists
      *  - calling beginList() and then rendering a component without wrapping it in nextRoot like `nextRoot(); { ...component code... } end();`
      */
-    assert(val instanceof UIRoot);
+    assert(currentRoot);
 
-    return val as UIRoot<T>;
+    return currentRoot as UIRoot<T>;
 }
 
 // You probably don't want to use this, if you can help it
 export function getCurrentListRendererInternal(): ListRenderer {
-    const val = getCurrentStackItemInternal();
-
     /** Can't call this method without opening a new list renderer (see {@link beginList}) */
-    assert(val instanceof ListRenderer);
+    assert(currentListRenderer)
 
-    return val;
+    return currentListRenderer;
 }
 
-function push(r: UIRoot | ListRenderer) {
+function pushList(l: ListRenderer) {
+    currentStack.push(l);
+    currentRoot = undefined;
+    currentListRenderer = l;
+}
+
+function pushRoot(r: UIRoot) {
     currentStack.push(r);
+    currentRoot = r;
+    currentListRenderer = undefined;
 }
+
+function popList(r: ListRenderer) {
+    const existing = getCurrentListRendererInternal();
+
+    // You may have forgotten a call to end() you were supposed to do before this one
+    assert(r === existing);
+
+    pop();
+}
+
+function popRoot(r: UIRoot) {
+    const existing = getCurrentRoot();
+
+    // You may have forgotten a call to end() you were supposed to do before this one
+    assert(r === existing);
+
+    pop();
+}
+
 function pop() {
-    return currentStack.pop();
+    currentStack.length--;
+    const val = currentStack[currentStack.length - 1];
+    if (val instanceof ListRenderer) {
+        currentListRenderer = val;
+        currentRoot = undefined;
+    } else {
+        currentListRenderer = undefined;
+        currentRoot = val;
+    }
 }
+
 
 export function startRendering(r: UIRoot = appRoot, rp?: RerenderPoint) {
     currentStack.length = 0;
@@ -1339,6 +1363,7 @@ export function imRerenderable(fn: (rerender: () => void) => void) {
  *      catchFn: (err, recover) => { Button("there was an error viewing the content. click here to try again", recover); }
  * })
  * ```
+ * @deprecated
  */
 export function imTryCatch({ 
     tryFn, catchFn 
@@ -1355,18 +1380,6 @@ export function imTryCatch({
             }
             end();
         } catch (error) {
-            // need to wind the stack back to the current list component
-            const idx = currentStack.lastIndexOf(l);
-            assert(idx !== -1);
-            currentStack.length = idx + 1;
-
-            const r = l.current;
-            if (r) {
-                r.__removeAllDomElements();
-
-                // need to reset the dom root, since we've just removed elements underneath it
-                resetDomRoot(r.domRoot);
-            }
 
             const recover = () => {
                 l.__removeAllDomElementsFromList();
@@ -1381,6 +1394,21 @@ export function imTryCatch({
             endList();
         }
     });
+}
+
+export function abortListAndRewindUiStack(l: ListRenderer) {
+    // need to wind the stack back to the current list component
+    const idx = currentStack.lastIndexOf(l);
+    assert(idx !== -1);
+    currentStack.length = idx + 1;
+
+    const r = l.current;
+    if (r) {
+        r.__removeAllDomElements();
+
+        // need to reset the dom root, since we've just removed elements underneath it
+        resetDomRoot(r.domRoot);
+    }
 }
 
 export type Ref<T> = { val: T | null; }
@@ -1447,7 +1475,7 @@ class Memoizer{
         this.isSame = true;
     }
 
-    keys(obj: Record<string, unknown>) {
+    objectVals(obj: Record<string, unknown>) {
         for (const k in obj) {
             this.val(obj[k]);
         }
@@ -1529,7 +1557,7 @@ export function getComponentStackSize() {
 /**
  * Returns true the first time it's called for a particular UIRoot, and false every other time.
  */
-export function init(): boolean {
+export function imInit(): boolean {
     const val = imRef<boolean>();
     if (!val.val) {
         val.val = true;
@@ -1586,6 +1614,23 @@ export function setClass(val: string, enabled: boolean = true) {
     r.setClass(val, enabled);
 }
 
+///////// 
+// Realtime proper immediate-mode events API, with events.
+//
+// I wasn't able to find a good clean solution to the problem
+// of adding and removing events locally, so I'm attempting to
+// go down a second road of rerendering the entire app at 60fps.
+//
+// It would be interesting to see how far this approach scales.
+
+export type KeyPressEvent = {
+    key: string;
+    code: string;
+    shift: boolean;
+    ctrl: boolean;
+    alt: boolean;
+    meta: boolean;
+};
 
 const MAX_VALID_DELTATIME_SECONDS = 0.500;
 let dtSeconds = 0;
@@ -1614,3 +1659,197 @@ export function initializeDomRootAnimiationLoop(renderFn: () => void, renderRoot
     
     requestAnimationFrame(animation);
 }
+
+let clickedElement: object | null = null;
+let lastClickedElement: object | null = null;
+let hoverElement: object | null = null;
+
+const keys = {
+    shiftsDown: 0,
+    ctrlsDown: 0,
+    escPressed: false,
+}
+
+const mouse = {
+    lastX: 0,
+    lastY: 0,
+
+    leftMouseButton: false,
+    middleMouseButton: false,
+    rightMouseButton: false,
+
+    dX: 0,
+    dY: 0,
+    X: 0,
+    Y: 0,
+
+    /**
+     * NOTE: if you want to use this, you'll have to prevent scroll event propagation.
+     * See {@link imPreventScrollEventPropagation}
+     */
+    scrollY: 0,
+};
+
+export function getMouse() {
+    return mouse;
+}
+
+export function getKeys() {
+    return keys;
+}
+
+
+// I cant fking believe this shit works, lol
+export function elementHasMouseClick() {
+    const r = getCurrentRoot();
+    return r.root === clickedElement;
+}
+
+export function elementWasLastClicked() {
+    const r = getCurrentRoot();
+    return r.root === lastClickedElement;
+}
+
+export function elementHasMouseOver() {
+    const r = getCurrentRoot();
+    return r.root === hoverElement;
+}
+
+export function deferClickEventToParent() {
+    const r = getCurrentRoot();
+    const el = r.root;
+    const parent = el.parentNode;
+
+    if (clickedElement === el) {
+        clickedElement = parent;
+    }
+    if (lastClickedElement === el) {
+        lastClickedElement = parent;
+    }
+    if (hoverElement === el) {
+        hoverElement = parent;
+    }
+}
+
+function setClickedElement(el: object | null) {
+    clickedElement = el;
+    lastClickedElement = el;
+}
+
+export function initializeImEvents() {
+    document.addEventListener("mousedown", (e) => {
+        setClickedElement(e.target);
+
+        if (e.button === 0) {
+            mouse.leftMouseButton = true;
+        } else if (e.button === 1) {
+            mouse.middleMouseButton = true;
+        } else if (e.button === 2) {
+            mouse.rightMouseButton = true;
+        }
+    });
+    document.addEventListener("mousemove", (e) => {
+        mouse.lastX = mouse.X;
+        mouse.lastY = mouse.Y;
+        mouse.X = e.pageX;
+        mouse.Y = e.pageY;
+        mouse.dX = mouse.X - mouse.lastX;
+        mouse.dY = mouse.Y - mouse.lastY;
+        hoverElement = e.target;
+
+    });
+    document.addEventListener("mouseup", (e) => {
+        if (e.button === 0) {
+            mouse.leftMouseButton = false;
+        } else if (e.button === 1) {
+            mouse.middleMouseButton = false;
+        } else if (e.button === 2) {
+            mouse.rightMouseButton = false;
+        }
+    });
+    document.addEventListener("wheel", (e) => {
+        mouse.scrollY += e.deltaY;
+        e.preventDefault();
+    });
+    document.addEventListener("keydown", (e) => {
+        if (e.repeat) {
+            return;
+        }
+
+        if (e.key === "Shift") {
+            keys.shiftsDown++;
+        }
+        if (e.key === "Control") {
+            keys.ctrlsDown++;
+        }
+
+        if (e.key === "Escape") {
+            keys.escPressed = true;
+        }
+    });
+    document.addEventListener("keyup", (e) => {
+        if (e.key === "Shift" && keys.shiftsDown > 0) {
+            keys.shiftsDown--;
+        }
+        if (e.key === "Control" && keys.ctrlsDown > 0) {
+            keys.ctrlsDown--;
+        }
+    });
+    document.addEventListener("blur", (e) => {
+        mouse.leftMouseButton = false;
+        mouse.middleMouseButton = false;
+        mouse.rightMouseButton = false;
+        lastClickedElement = null;
+        clickedElement = null;
+        mouse.scrollY = 0;
+        keys.shiftsDown = 0;
+        keys.ctrlsDown = 0;
+    });
+}
+
+export function isShiftPressed() {
+    return keys.shiftsDown > 0;
+}
+
+export function isCtrlPressed() {
+    return keys.ctrlsDown > 0;
+}
+
+
+function newPreventScrollEventPropagationState() {
+    return { isBlocking: true };
+}
+
+export function imPreventScrollEventPropagation() {
+    const state = imState(newPreventScrollEventPropagationState);
+
+    if (imInit()) {
+        const r = getCurrentRoot();
+        r.root.addEventListener("wheel", e => {
+            if (state.isBlocking) {
+                e.preventDefault();
+            }
+        });
+    }
+
+    return state;
+}
+
+export function beginFrame() {
+    // No-op, more for consistency and code aesthetics.
+}
+
+function clearEvents() {
+}
+
+export function endFrame() {
+    clickedElement = null;
+    mouse.lastX = mouse.X;
+    mouse.lastY = mouse.Y;
+    mouse.dX = 0;
+    mouse.dY = 0;
+    mouse.scrollY = 0;
+
+    keys.escPressed = false;
+}
+
