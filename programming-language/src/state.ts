@@ -1,4 +1,4 @@
-import { ProgramInterpretResult, startInterpreting } from "./program-interpreter";
+import { evaluateFunctionWithinProgramWithArgs, interpret, ProgramInterpretResult, ProgramResultFunction, startEvaluatingFunctionWithingProgramWithArgs, startInterpreting } from "./program-interpreter";
 import { parse, ProgramParseResult } from "./program-parser";
 
 export type GlobalState = {
@@ -10,6 +10,8 @@ export type GlobalState = {
 
 export type GlobalContext = {
     isDebugging: boolean;
+    functionToDebug: ProgramResultFunction | null;
+
     lastParseResult: ProgramParseResult | undefined;
     lastInterpreterResult: ProgramInterpretResult | undefined;
 
@@ -24,7 +26,29 @@ export function startDebugging(ctx: GlobalContext): string {
         return "Fix parsing errors before you can start debugging";
     } 
 
-    ctx.lastInterpreterResult = startInterpreting(ctx.lastParseResult);
+    ctx.lastInterpreterResult = startInterpreting(ctx.lastParseResult, true);
+    ctx.functionToDebug = null;
+    ctx.isDebugging = true;
+    return "";
+}
+
+// Even after this method is called, the user still needs to input arguments into the function.
+// so you haven't actually started stepping through the function yetfunction yet.
+export function startDebuggingFunction(ctx: GlobalContext, functionName: string): string {
+    ctx.lastParseResult = parse(ctx.state.text);
+
+    if (ctx.lastParseResult.errors.length > 0) {
+        return "Fix parsing errors before you can start debugging";
+    } 
+
+    const program = interpret(ctx.lastParseResult);;
+    ctx.lastInterpreterResult = program;
+    const fn = program.functions.get(functionName);
+    if (!fn) {
+        return "This function doesn't exist!";
+    }
+
+    ctx.functionToDebug = fn;
     ctx.isDebugging = true;
     return "";
 }
@@ -32,7 +56,10 @@ export function startDebugging(ctx: GlobalContext): string {
 export function newGlobalContext(): GlobalContext {
     return {
         state: loadState(),
+
         isDebugging: false,
+        functionToDebug: null,
+
         lastParseResult: undefined, 
         lastInterpreterResult: undefined 
     };

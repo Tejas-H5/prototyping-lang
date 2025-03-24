@@ -1,6 +1,6 @@
 import { Color, newColor, newColorFromHexOrUndefined } from "src/utils/colour";
 import { assert } from "src/utils/im-dom-utils";
-import { copyMatrix, getMatrixValue, getSlice, getSliceValue, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, setSliceValue } from "src/utils/matrix-math";
+import { copyMatrix, getMatrixValue, getSliceValue, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, setSliceValue } from "src/utils/matrix-math";
 import {
     BIN_OP_ADD, BIN_OP_AND_AND, BIN_OP_DIVIDE, BIN_OP_GREATER_THAN, BIN_OP_GREATER_THAN_EQ, BIN_OP_INVALID, BIN_OP_IS_EQUAL_TO, BIN_OP_LESS_THAN, BIN_OP_LESS_THAN_EQ, BIN_OP_MULTIPLY, BIN_OP_OR_OR, BIN_OP_SUBTRACT,
     BinaryOperatorType,
@@ -319,7 +319,7 @@ function evaluateBinaryOpNumberXList(
     r: ProgramResultList, 
     numWasLhs: boolean,
     program: ProgramInterpretResult,
-    step: ExecutionStep,
+    step: ProgramExecutionStep,
 ): ProgramResultList | null {
 
     const result = Array(r.values.length);
@@ -346,7 +346,7 @@ function evaluateBinaryOpNumberXList(
     return { t: T_RESULT_LIST, values: result }
 }
 
-function evaluateUnaryOp(result: ProgramInterpretResult, step: ExecutionStep, val: ProgramResult, op: UnaryOperatorType): [ProgramResult | null, string] {
+function evaluateUnaryOp(result: ProgramInterpretResult, step: ProgramExecutionStep, val: ProgramResult, op: UnaryOperatorType): [ProgramResult | null, string] {
     switch(op) {
         case UNARY_OP_NOT: {
             if (val.t === T_RESULT_NUMBER) {
@@ -363,7 +363,7 @@ function evaluateUnaryOp(result: ProgramInterpretResult, step: ExecutionStep, va
 }
 
 // Trying a product type isntead of a sum-type, will let u know how I go.
-export type ExecutionStep = {
+export type ProgramExecutionStep = {
     // which code did we type to generate this thing?
     expr: ProgramExpression;
 
@@ -401,6 +401,10 @@ export type ExecutionStep = {
     number?: number;
     // pushes this string to the stack
     string?: string;
+    // pushes a function to the stack
+    fn?: ProgramResultFunction;
+    // pushes a builtin function to the stack
+    builtinFn?: BuiltinFunction;
 
     // jumps the current instruction index to the step specified
     jump?: number;
@@ -427,10 +431,10 @@ export type ExecutionStep = {
 
 export type ExecutionSteps = {
     name: string;
-    steps: ExecutionStep[];
+    steps: ProgramExecutionStep[];
 }
 
-export function executionStepToString(step: ExecutionStep) {
+export function executionStepToString(step: ProgramExecutionStep) {
     if (step.load !== undefined) {
         return ("Load " + step.load);
     }
@@ -494,7 +498,7 @@ export function executionStepToString(step: ExecutionStep) {
     return "Unhandled step";
 }
 
-function newExecutionStep(expr: ProgramExpression): ExecutionStep {
+function newExecutionStep(expr: ProgramExpression): ProgramExecutionStep {
     return { expr };
 }
 
@@ -511,6 +515,8 @@ type ExecutionState = {
 };
 
 export type ProgramInterpretResult = {
+    isDebugging: boolean;
+
     errors: DiagnosticInfo[];
 
     // Writing it like this instead should allow us to step through the program one step at a time,
@@ -529,7 +535,7 @@ export type ProgramInterpretResult = {
 }
 
 export type ProgramPrintOutput = {
-    step: ExecutionStep;
+    step: ProgramExecutionStep;
     expr: ProgramExpression;
     val: ProgramResult;
 }
@@ -545,11 +551,18 @@ export type ProgramPlotOutputLine = {
 
 export type ProgramPlotOutput = {
     lines: ProgramPlotOutputLine[];
+    functions: ProgramPlotOutputHeatmapFunction[];
+}
+
+export type ProgramPlotOutputHeatmapFunction = {
+    step: ProgramExecutionStep;
+    fn: ProgramResultFunction;
 }
 
 export type ProgramOutputs = {
     prints: ProgramPrintOutput[];
     plots: Map<number, ProgramPlotOutput>;
+    heatmapSubdivisions: number;
 };
 
 
@@ -560,7 +573,7 @@ builtinNumberConstants.set("E", newNumberResult(Math.E))
 function getExecutionSteps(
     result: ProgramInterpretResult,
     statements: ProgramExpression[],
-    steps: ExecutionStep[],
+    steps: ProgramExecutionStep[],
     topLevel: boolean,
 ) {
 
@@ -825,7 +838,7 @@ function pop(result: ProgramInterpretResult): ProgramResult {
 }
 
 
-function addError(result: ProgramInterpretResult, step: ExecutionStep, problem: string, betterPos: TextPosition | null = null) {
+function addError(result: ProgramInterpretResult, step: ProgramExecutionStep, problem: string, betterPos: TextPosition | null = null) {
     result.errors.push({ pos: betterPos ?? step.expr.pos, problem });
 }
 
@@ -843,7 +856,7 @@ function getVarExecutionState(result: ProgramInterpretResult, name: string): Exe
     return null;
 }
 
-function push(result: ProgramInterpretResult, val: ProgramResult, step: ExecutionStep) {
+function push(result: ProgramInterpretResult, val: ProgramResult, step: ProgramExecutionStep) {
     result.stackIdx++;
     if (result.stackIdx >= result.stack.length) {
         addError(result, step, "Stack overflow!!!");
@@ -854,8 +867,9 @@ function push(result: ProgramInterpretResult, val: ProgramResult, step: Executio
     result.stack[result.stackIdx] = { ...val };
 }
 
-export function startInterpreting(parseResult: ProgramParseResult): ProgramInterpretResult {
+export function startInterpreting(parseResult: ProgramParseResult, isDebugging: boolean): ProgramInterpretResult {
     const result: ProgramInterpretResult = {
+        isDebugging,
         entryPoint: {
             name: "Entry point",
             steps: [],
@@ -870,6 +884,7 @@ export function startInterpreting(parseResult: ProgramParseResult): ProgramInter
         outputs: {
             prints: [],
             plots: new Map(),
+            heatmapSubdivisions: 20,
         }
     };
 
@@ -939,7 +954,7 @@ type BuiltinFunction = {
     args: BuiltinFunctionArgDesc[];
     minArgs: number;
 };
-type BuiltinFunctionSignature = (result: ProgramInterpretResult, step: ExecutionStep, ...results: (ProgramResult | null)[]) => ProgramResult | undefined;
+type BuiltinFunctionSignature = (result: ProgramInterpretResult, step: ProgramExecutionStep, ...results: (ProgramResult | null)[]) => ProgramResult | undefined;
 
 function newArg(name: string, type: ProgramResult["t"][], optional = false, expr?: ProgramExpression): BuiltinFunctionArgDesc {
     return { name, type, optional, expr };
@@ -973,7 +988,7 @@ const ZERO_VEC4 = matrixZeroes([4]);
 // initialize builtin funcs
 {
     function builtinPlotLines(
-        result: ProgramInterpretResult, step: ExecutionStep,
+        result: ProgramInterpretResult, step: ProgramExecutionStep,
         plotIdx: ProgramResult | null,
         lines: ProgramResult | null,
         colorMaybe: ProgramResult | null,
@@ -1074,11 +1089,7 @@ const ZERO_VEC4 = matrixZeroes([4]);
 
         assert(pointsY.length === pointsX.length);
 
-        let plot = result.outputs.plots.get(idx);
-        if (!plot) {
-            plot = { lines: [] };
-            result.outputs.plots.set(idx, plot);
-        }
+        const plot = getOrAddNewPlot(result, idx);
 
         plot.lines.push({
             expr: step.expr,
@@ -1164,6 +1175,11 @@ const ZERO_VEC4 = matrixZeroes([4]);
 
         return newNumberResult(Math.pow(x.val, n.val));
     })
+    newBuiltinFunction("sqrt", [newArg("x", [T_RESULT_NUMBER])], (_result, _step, x) => {
+        assert(x?.t === T_RESULT_NUMBER);
+
+        return newNumberResult(Math.sqrt(x.val));
+    })
     newBuiltinFunction("ln", [newArg("x", [T_RESULT_NUMBER])], (_result, _step, val) => {
         assert(val?.t === T_RESULT_NUMBER);
         return newNumberResult(Math.log(val.val));
@@ -1180,6 +1196,35 @@ const ZERO_VEC4 = matrixZeroes([4]);
         // That's ok, just put the args in a list, lol
         return val;
     });
+    newBuiltinFunction(
+        "set_heatmap_subdiv",
+        [
+            newArg("resolution", [T_RESULT_NUMBER]),
+        ], 
+        (result, _step, resolution) => {
+            assert(resolution?.t === T_RESULT_NUMBER);
+
+            result.outputs.heatmapSubdivisions = max(0, min(200, Math.round(resolution.val)));
+
+            return resolution;
+        });
+    newBuiltinFunction(
+        "heatmap",
+        [
+            newArg("idx", [T_RESULT_NUMBER]),
+            newArg("fn", [T_RESULT_FN]),
+        ], 
+        (result, step, idx, fn) => {
+            assert(idx?.t === T_RESULT_NUMBER);
+            assert(fn?.t === T_RESULT_FN);
+
+            const plot = getOrAddNewPlot(result, idx.val);
+            plot.functions.push({ step, fn });
+
+            // can't be variadic, because print needs to return something...
+            // That's ok, just put the args in a list, lol
+            return fn;
+        });
     newBuiltinFunction(
         "plot_lines", 
         [
@@ -1216,15 +1261,26 @@ const ZERO_VEC4 = matrixZeroes([4]);
     });
 }
 
+function getOrAddNewPlot(result: ProgramInterpretResult, idx: number): ProgramPlotOutput {
+    let plot = result.outputs.plots.get(idx);
+    if (!plot) {
+        plot = { 
+            lines: [], 
+            functions: [],
+        };
+        result.outputs.plots.set(idx, plot);
+    }
+    return plot;
+}
 
-function printResult(result: ProgramInterpretResult, step: ExecutionStep, expr: ProgramExpression, val: ProgramResult) {
+
+function printResult(result: ProgramInterpretResult, step: ProgramExecutionStep, expr: ProgramExpression, val: ProgramResult) {
     result.outputs.prints.push({
         step,
         expr,
         val: { ...val }
     });
 }
-
 
 function getBuiltinFunction(name: string): BuiltinFunction | undefined {
     return builtinFunctions.get(name);
@@ -1234,14 +1290,14 @@ function evaluateBuiltinFunction(
     fn: BuiltinFunction, 
     numArgsInputted: number,
     program: ProgramInterpretResult, 
-    step: ExecutionStep
+    step: ProgramExecutionStep
 ): ProgramResult | undefined {
     let numArgsToPull = numArgsInputted;
     if (numArgsToPull < fn.minArgs) {
         numArgsToPull = fn.minArgs;
     }
 
-    function getArg(program: ProgramInterpretResult, step: ExecutionStep, i: number): ProgramResult | null {
+    function getArg(program: ProgramInterpretResult, step: ProgramExecutionStep, i: number): ProgramResult | null {
         if (program.errors.length > 0) {
             return null;
         }
@@ -1250,7 +1306,10 @@ function evaluateBuiltinFunction(
         const typeInfo = fn.args[i];
 
         if (typeInfo.type.length > 0) {
-            if (!res || !typeInfo.type.includes(res.t)) {
+            if (
+                (!res && !typeInfo.optional) || 
+                (res && !typeInfo.type.includes(res.t))
+            ) {
                 let expectedType;
                 if (typeInfo.type.length === 1) {
                     expectedType = programResultTypeStringInternal(typeInfo.type[0]);
@@ -1321,7 +1380,78 @@ function evaluateBuiltinFunction(
     }
 }
 
-function evaluateBinaryOperatorNumber(lhs: ProgramResult, rhs: ProgramResult, program: ProgramInterpretResult, step: ExecutionStep): ProgramResult | null {
+function evaluateFunctionWithinProgram(
+    program: ProgramInterpretResult, 
+    fn: ProgramResultFunction, 
+    numArgs: number
+) {
+    const variables = new Map<string, number>();
+    for (let i = 0; i < numArgs; i++) {
+        const argIdx = program.stackIdx - numArgs + i + 1;
+        variables.set(fn.args[i].name, argIdx);
+    }
+
+    const call = getCurrentCallstack(program);
+
+    program.stackIdx++;
+
+    let returnAddress = program.stackIdx;
+    let nextVarAddress = returnAddress + 1;
+    if (call) {
+        returnAddress = call.nextVarAddress;
+        nextVarAddress = call.nextVarAddress + 1;
+        call.i++;
+    }
+
+    program.callStack.push({
+        code: fn.code,
+        argsCount: fn.args.length,
+        i: 0, variables,
+        returnAddress,
+        nextVarAddress,
+    });
+}
+
+export function startEvaluatingFunctionWithingProgramWithArgs(
+    program: ProgramInterpretResult, 
+    step: ProgramExecutionStep,    // the step to report the error against
+    fn: ProgramResultFunction, 
+    args: ProgramResult[],
+): boolean {
+    if (program.isDebugging) {
+        // Don't attempt to 'interpret rest of program' if we're currently stepping through that program. lmao.
+        return false;
+    }
+
+
+    for (const arg of args) {
+        push(program, arg, step);
+    }
+
+
+    evaluateFunctionWithinProgram(program, fn, args.length);
+
+    return true;
+}
+
+export function evaluateFunctionWithinProgramWithArgs(
+    program: ProgramInterpretResult, 
+    step: ProgramExecutionStep,    // the step to report the error against
+    fn: ProgramResultFunction, 
+    args: ProgramResult[],
+): ProgramResult | null {
+    if (!startEvaluatingFunctionWithingProgramWithArgs(program, step, fn, args)) {
+        return null
+    }
+
+    interpretRestOfProgram(program);
+
+    blockStatementEnd(program, step);
+
+    return program.stack[0];
+}
+
+function evaluateBinaryOperatorNumber(lhs: ProgramResult, rhs: ProgramResult, program: ProgramInterpretResult, step: ProgramExecutionStep): ProgramResult | null {
     assert(step.binaryOperator !== undefined);
 
     let result: ProgramResult | null = null;
@@ -1350,6 +1480,22 @@ function evaluateBinaryOperatorNumber(lhs: ProgramResult, rhs: ProgramResult, pr
     return result;
 }
 
+function blockStatementEnd(program: ProgramInterpretResult, step: ProgramExecutionStep) {
+    const call = getCurrentCallstack(program);
+    if (!call) {
+        return;
+    }
+
+    const val = get(program)
+    if (!val) {
+        addError(program, step, "This block-level statement didn't return a result");
+        return false;
+    }
+
+    program.stack[call.returnAddress] = val;
+    program.stackIdx = call.nextVarAddress - 1;
+}
+
 export function stepProgram(result: ProgramInterpretResult): boolean {
     const call = getCurrentCallstack(result);
     if (!call) {
@@ -1366,20 +1512,40 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
 
     const step = steps[call.i];
 
+    let nextCallI = call.i + 1;
+
     // TODO: use a switch here instead
     if (step.load) {
-        const s = getVarExecutionState(result, step.load);
-        if (!s) {
-            addError(result, step, "This variable hasn't been set yet");
+        const varName = step.load;
+
+        const fn = getBuiltinFunction(varName);
+        if (fn) {
+            // TODO: implement this
+            addError(result, step, "We don't have a way to load a builtin function as a variable yet");
             return false;
         }
 
-        const addr = s.variables.get(step.load);
-        assert(addr !== undefined);
-        const val = result.stack[addr];
-        assert(val);
+        const userFn = result.functions.get(varName);
+        let resultToPush: ProgramResult | undefined;
 
-        push(result, val, step);
+        if (userFn) {
+            resultToPush = userFn;
+        } else {
+            const s = getVarExecutionState(result, varName);
+            if (!s) {
+                addError(result, step, "This variable hasn't been set yet");
+                return false;
+            }
+
+            const addr = s.variables.get(varName);
+            assert(addr !== undefined);
+            const val = result.stack[addr];
+            assert(val);
+
+            resultToPush = val;
+        }
+
+        push(result, resultToPush, step);
     } else if (step.loadLastBlockResult) {
         const val = result.stack[call.returnAddress];
         if (!val) {
@@ -1510,8 +1676,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
     } else if (step.jump !== undefined) {
         assert(step.jump >= 0);
         assert(step.jump < steps.length);
-        call.i = step.jump;
-        return true;
+        nextCallI = step.jump;
     } else if (step.jumpIfFalse !== undefined) {
         assert(step.jumpIfFalse >= 0);
         assert(step.jumpIfFalse <= steps.length);
@@ -1525,26 +1690,12 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         }
 
         if (val.val === 0) {
+            nextCallI = step.jumpIfFalse;
             call.i = step.jumpIfFalse;
-            return true;
         }
     } else if (step.call) {
-        const fn = step.call.fn
-
-        const variables = new Map<string, number>();
-        for (let i = 0; i < fn.args.length; i++) {
-            const argIdx = result.stackIdx - fn.args.length + i + 1;
-            variables.set(fn.args[i].name, argIdx);
-        }
-        result.stackIdx++;
-        result.callStack.push({
-            code: fn.code,
-            argsCount: fn.args.length,
-            i: 0, variables,
-            returnAddress: call.nextVarAddress,
-            nextVarAddress: call.nextVarAddress + 1,
-        });
-        call.i++;
+        const numArgs = step.call.numArgs;
+        evaluateFunctionWithinProgram(result, step.call.fn, numArgs);
         return true;
     } else if (step.builtinCall) {
         const res = evaluateBuiltinFunction(step.builtinCall.fn, step.builtinCall.numArgs, result, step);
@@ -1558,14 +1709,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         push(result, res, step);
     } else if (step.blockStatementEnd !== undefined) {
         // need this to clean up after the last 'statement'.
-        const val = get(result)
-        if (!val) {
-            addError(result, step, "This block-level statement didn't return a result");
-            return false;
-        }
-
-        result.stack[call.returnAddress] = val;
-        result.stackIdx = call.nextVarAddress - 1;
+        blockStatementEnd(result, step);
     } else if (step.clearLastBlockResult) {
         result.stack[call.returnAddress] = null;
     } else if (step.index) {
@@ -1621,7 +1765,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         val.val--;
     }
 
-    call.i++;
+    call.i = nextCallI;
     if (call.code.steps.length === call.i) {
         // this was the thing we last computed
         const val = result.stack[result.stackIdx];
@@ -1636,16 +1780,11 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
     return result.callStack.length > 0;
 }
 
-function newNumberResult(val: number): ProgramResultNumber {
+export function newNumberResult(val: number): ProgramResultNumber {
     return { t: T_RESULT_NUMBER, val };
 }
 
-export function interpret(parseResult: ProgramParseResult): ProgramInterpretResult {
-    const result = startInterpreting(parseResult);
-    if (result.errors.length > 0) {
-        return result;
-    }
-
+function interpretRestOfProgram(result: ProgramInterpretResult) {
     // I've kept it low, because matrix ops and array programming can result in singular iterations
     // actually doing quite a lot of computations.
     let safetyCounter = 0;
@@ -1672,6 +1811,15 @@ export function interpret(parseResult: ProgramParseResult): ProgramInterpretResu
         // TODO: allow user to override or disable this.
         addError(result, step, "The program terminated here, because it reached the maximum number of iterations (" + MAX_ITERATIONS + ")");
     }
+}
+
+export function interpret(parseResult: ProgramParseResult): ProgramInterpretResult {
+    const result = startInterpreting(parseResult, false);
+    if (result.errors.length > 0) {
+        return result;
+    }
+
+    interpretRestOfProgram(result);
 
     return result;
 }

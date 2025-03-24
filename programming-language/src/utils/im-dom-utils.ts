@@ -552,11 +552,11 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     readonly s = this.setStyle;
 
     // NOTE: the effect of this method will persist accross renders
-    setClass(val: string, enabled: boolean = true) {
+    setClass(val: string, enabled: boolean | number = true) {
         this.assertNotDerived();
 
         const has = this.root.classList.contains(val);
-        if (has === enabled) {
+        if (has === !!enabled) {
             return;
         }
 
@@ -791,6 +791,9 @@ export type RenderFnArgs<A extends unknown[], T extends ValidElement = ValidElem
  * ```
  */
 export function beginList(): ListRenderer {
+    // Don't access immediate mode state when immediate mode is disabled
+    assert(!imDisabled);
+
     const r = getCurrentRoot();
 
     let result = imGetNext(r.items);
@@ -891,6 +894,9 @@ function imRerenderPoint(r: UIRoot, offset: number): RerenderPoint {
 // Common immediate mode UI helpers
 
 function imStateInternal<T>(supplier: () => T, skipSupplierCheck: boolean): T {
+    // Don't access immediate mode state when immediate mode is disabled
+    assert(!imDisabled);
+
     const r = getCurrentRoot();
     // Don't render new elements to this thing when you have a list renderer that is active!
     // render to that instead.
@@ -1020,10 +1026,14 @@ function pop() {
 
 export function startRendering(r: UIRoot = appRoot, rp?: RerenderPoint) {
     currentStack.length = 0;
+    enableIm();
     r.__begin(rp);
 }
 
 export function el<E extends ValidElement = ValidElement>(elementSupplier: () => E): UIRoot<E> {
+    // Don't access immediate mode state when immediate mode is disabled
+    assert(!imDisabled);
+
     const r = getCurrentRoot();
 
     // Don't render new elements to this thing when you have a list renderer that is active!
@@ -1442,7 +1452,6 @@ export function imRef<T>(): Ref<T> {
  *      // ctx is defined
  * } end();
  * ```
- *
  */
 export function imVal<T>(): T | null {
     return imRef<T>().val;
@@ -1457,22 +1466,41 @@ export function imSetVal<T>(t: T): T {
 }
 
 
+let imDisabled = false; 
+function disableIm() {
+    imDisabled = true;
+}
+
+function enableIm() {
+    imDisabled = false;
+}
+
 class Memoizer{
     items = newImArray<[unknown]>();
-
-    // If a Memo is supposed to keep our realtime animation loop from firing repeatedly,
-    // but we've done `if(imMemo(r).val(r))` by mistake, the bug will be some expensive thing firing
-    // very repeatedly. However, if the mistake was `if(!imMemo(r).val(r))`, then nothing will happen.
-    // This is why I am using `isSame` here instead of `changed`, so that the mis-use will be less costly.
-    isSame = true;
+    __changed = false;
+    __invoked = true;
 
     begin() {
         if (this.items.expectedLength !== -1) {
             imLockSize(this.items);
         }
+        
+        /**
+         * You should be querying changed() on this memoizer. Otherwise, there is a high change that you're
+         * using it wrong:
+         * ```ts
+         * if (imMemo().val(v)) { ... } // always true no matter what
+         * ```
+         * ```ts
+         * if (imMemo().val(v).changed()) { ... } // finally, some correct usage
+         * ```
+         */
+        assert(this.__invoked);
+
 
         imReset(this.items);
-        this.isSame = true;
+        this.__changed = false
+        this.__invoked = false;
     }
 
     objectVals(obj: Record<string, unknown>) {
@@ -1486,12 +1514,17 @@ class Memoizer{
         let existing = imGetNext(this.items);
         if (!existing) {
             existing = imPush(this.items, [val]);
-            this.isSame = false;
+            this.__changed = true;
         } else if (val !== existing[0]) {
-            this.isSame = false;
+            this.__changed = true;
         }
         existing[0] = val;
         return this;
+    }
+
+    changed(): boolean {
+        this.__invoked = true;
+        return this.__changed;
     }
 }
 
@@ -1499,11 +1532,35 @@ function newMemoizer() {
     return new Memoizer();
 }
 
-export function imMemo() {
+/**
+ * Use memoizers to gate expensive computations.
+ *
+ * ```ts
+ * if (beginMemo()
+ *      .val(top).val(left).val(bottom).val(right)
+ *      .objectVals(state)
+ *      .changed()
+ *  ) {
+ *      ... // do your code.
+ *  } endMemo();
+ *
+ * ```
+ *
+ * The memoizer will also disable immedate mode, and force you to re-enable it with endMemo() at the end.
+ * This is because memoized logic tends to grow quite long, and becomes prone to conditional 
+ * and out-of-order imState bugs. 
+ */
+export function beginMemo() {
     const val = imState(newMemoizer);
     val.begin();
+    disableIm();
     return val;
 }
+
+export function endMemo() {
+    enableIm();
+}
+
 
 /**
  * Seems like simply doing r.root.onwhatever = () => { blah } destroys performance,
@@ -1608,7 +1665,7 @@ export function setStyle<K extends (keyof ValidElement["style"])>(key: K, value:
     r.setStyle(key, value);
 }
 
-export function setClass(val: string, enabled: boolean = true) {
+export function setClass(val: string, enabled: boolean | number = true) {
     // NOTE: the effect of this method will persist accross renders
     const r = getCurrentRoot();
     r.setClass(val, enabled);
@@ -1701,8 +1758,9 @@ export function getKeys() {
 
 // I cant fking believe this shit works, lol
 export function elementHasMouseClick() {
+    const mouse = getMouse();
     const r = getCurrentRoot();
-    return r.root === clickedElement;
+    return mouse.leftMouseButton && r.root === clickedElement;
 }
 
 export function elementWasLastClicked() {
