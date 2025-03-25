@@ -1504,9 +1504,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
 
     const steps = call.code.steps;
     if (call.i >= steps.length) {
-        if (call.i > steps.length) {
-            throw new Error("How did that happen");
-        }
+        call.i = steps.length;
         return false;
     }
 
@@ -1766,7 +1764,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
     }
 
     call.i = nextCallI;
-    if (call.code.steps.length === call.i) {
+    if (call.code.steps.length === call.i && result.callStack.length > 1) {
         // this was the thing we last computed
         const val = result.stack[result.stackIdx];
 

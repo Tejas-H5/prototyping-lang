@@ -1,6 +1,6 @@
 import { cssVars } from "src/styling";
 import { execCommand } from "src/utils/depracated-dom-api-wrappers";
-import { cn, div, el, end, imIf, imState, imInit, newCssBuilder, newDomElement, Ref, setAttributes, setClass, setInputValue, span, setInnerText, } from "src/utils/im-dom-utils";
+import { cn, div, el, end, imState, imInit, newCssBuilder, newDomElement, Ref, setAttributes, setClass, setInputValue, span, setInnerText, beginList, nextRoot, isEditingTextSomewhereInDocument, endList, } from "src/utils/im-dom-utils";
 import { getLineBeforePos } from "src/utils/text-utils";
 
 const CSSVARS_FOCUS = cssVars.bg;
@@ -33,7 +33,6 @@ export type EditableTextAreaArgs = {
     onInputKeyDown(e: KeyboardEvent, textArea: HTMLTextAreaElement): void;
     config: EditableTextAreaConfig;
     textAreaRef?: Ref<HTMLTextAreaElement>;
-    overlays?: () => void;
 };
 
 type EditableTextAreaConfig = {
@@ -51,14 +50,13 @@ function newEditableTextAreaState() {
 
 // NOTE: this text area has a tonne of minor things wrong with it. we should fix them at some point.
 //   - When I have a lot of empty newlines, and then click off, the empty lines go away 'as needed' 
-export function EditableTextArea({
+export function beginTextArea({
     text,
     isEditing,
     isOneLine,
     onInput,
     onInputKeyDown,
     config,
-    overlays,
     textAreaRef,
 }: EditableTextAreaArgs) {
     const state = imState(newEditableTextAreaState);
@@ -72,7 +70,8 @@ export function EditableTextArea({
             style: "overflow-y: hidden",
         });
 
-        imIf(isEditing, () => {
+        beginList(); 
+        if (nextRoot() && isEditing) {
             const textArea = el(newTextArea).root; {
                 if (textAreaRef) {
                     textAreaRef.val = textArea;
@@ -87,7 +86,6 @@ export function EditableTextArea({
                     textArea.focus({ preventScroll: true });
                 }
 
-
                 if (state.lastText !== text || state.lastIsEditing !== isEditing) {
                     state.lastText = text;
                     // for some reason, we need to render this thing again when we start editing - perhaps
@@ -95,7 +93,6 @@ export function EditableTextArea({
                     state.lastIsEditing = isEditing;
                     setInputValue(textArea, text);
                 }
-
 
                 if (imInit()) {
                     textArea.addEventListener("input", () => {
@@ -108,7 +105,8 @@ export function EditableTextArea({
                     });
                 }
             } end();
-        });
+        } 
+        endList();
 
         // This is now always present.
         div(); {
@@ -136,8 +134,10 @@ export function EditableTextArea({
             } end();
         } end();
 
-        overlays?.();
-    } end();
+    }
+
+    // You can now render your own overlays here.
+    // Don't forget to call end() !
 
     return root;
 }

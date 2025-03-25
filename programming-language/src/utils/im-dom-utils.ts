@@ -305,21 +305,23 @@ export function scrollIntoView(
  * in some places in this codebase, when I meant to say 'immediate mode state'. 
  *
  * Unlike React, every DOM node is also rendered as immediate-mode state.
+ * There is also one key difference - immediate mode arrays support not being rendered to.
+ * This means that if you decide to render nothing at all to an immediate mode array, it will not complain
+ * about you not rendering enough things. 
  *
- * You might now be wondering how to do conditional rendering, or list rendering.
- * See the docuemntation for {@link imIf}, {@link imSwitch}, {@link beginList} for more info.
- * See the {@link UIRoot} docs for more info on what a 'UIRoot' even is, what it's limitations are, and how to effectively (re)-use them.
+ * The class {@link UIRoot} actually checks for this case, and detatches any DOM elements it rendered in 
+ * the previous render pass. 
  */
 type ImmediateModeArray<T> = {
     items: T[];
-    expectedLength: number;
+    expectedIdx: number;
     idx: number;
 };
 
 function newImArray<T>(): ImmediateModeArray<T> {
     return {
         items: [],
-        expectedLength: -1,
+        expectedIdx: -1,
         idx: -1,
     };
 }
@@ -336,7 +338,7 @@ function imGetNext<T>(arr: ImmediateModeArray<T>): T | undefined {
     }
 
     if (arr.idx === arr.items.length) {
-        if (arr.expectedLength === -1) {
+        if (arr.expectedIdx === -1) {
             return undefined;
         }
 
@@ -351,7 +353,7 @@ function imGetNext<T>(arr: ImmediateModeArray<T>): T | undefined {
 
 function imPush<T>(arr: ImmediateModeArray<T>, value: T): T {
     // DEV: Pushing to an immediate mode array after it's been finalized is always a mistake
-    assert(arr.expectedLength === -1);
+    assert(arr.expectedIdx === -1);
     assert(arr.items.length === arr.idx);
 
     arr.items.push(value);
@@ -360,18 +362,16 @@ function imPush<T>(arr: ImmediateModeArray<T>, value: T): T {
 }
 
 function imLockSize(arr: ImmediateModeArray<unknown>) {
-    if (arr.expectedLength === -1) {
-        if (arr.idx !== -1) {
-            arr.expectedLength = arr.items.length;
-        }
+    if (arr.expectedIdx === -1 && arr.idx !== -1) {
+        arr.expectedIdx = arr.idx;
     }
 }
 
 function imReset(arr: ImmediateModeArray<unknown>, idx: number = -1) {
-    if (arr.expectedLength !== -1) {
+    if (arr.expectedIdx !== -1 && arr.idx !== -1) {
         // Once an immediate mode array has been finalized, every subsequent render must create the same number of things.
         // In this case, you've rendered too few(?) things.
-        assert(arr.expectedLength === arr.items.length);
+        assert(arr.expectedIdx === arr.idx);
     } 
 
     arr.idx = idx;
@@ -410,18 +410,18 @@ export type StateItem  = {
 
 export type UIRootItem = UIChildRootItem | ListRendererItem | StateItem;
 
-export type DomRoot<E extends ValidElement = ValidElement> = {
+export type DomAppender<E extends ValidElement = ValidElement> = {
     root: E;
     currentIdx: number;
 };
 
-export function resetDomRoot(domRoot: DomRoot, idx = -1) {
-    domRoot.currentIdx = idx;
+export function resetDomAppender(domAppender: DomAppender, idx = -1) {
+    domAppender.currentIdx = idx;
 }
 
-export function appendToDomRoot(domRoot: DomRoot, child: ValidElement) {
-    domRoot.currentIdx++;
-    setChildAtEl(domRoot.root, domRoot.currentIdx, child);
+export function appendToDomRoot(domAppender: DomAppender, child: ValidElement) {
+    domAppender.currentIdx++;
+    setChildAtEl(domAppender.root, domAppender.currentIdx, child);
 }
 
 export function setChildAtEl(root: Element, i: number, child: Element) {
@@ -436,7 +436,7 @@ export function setChildAtEl(root: Element, i: number, child: Element) {
 }
 
 export type RerenderPoint =  {
-    domRootIdx: number;
+    domAppenderIdx: number;
     itemsIdx: number;
 }
 
@@ -444,10 +444,30 @@ export type RerenderPoint =  {
  * This class builds an immediate-mode tree, and stores immediate mode state for a component.
  * See {@link ImmediateModeArray} to learn what 'immediate mode state' is. 
  *
+ * Once the immediatem 
+ *
+ * ```
+ *  - [state]
+ *  - [state]
+ *  - [dom node ui root]
+ *      ...
+ *  - [dom node ui root]
+ *      ...
+ *  - [dom node ui root]
+ *      ...
+ *  - [list renderer]
+ *      - [list renderer ui root]
+ *          ...
+ *      - [list renderer ui root]
+ *          ...
+ * ```
+ *
  * Once a UIRoot is created, it has no specific shape. However, once a function has completed
  * rendering to it, it will call __end() on this root, and cause it to lock it's
  * shape. From that point onwards, it is assumed (and heavily asserted) that every subsequent rerender to a particular
- * root happens with the same function as the first render.
+ * root will create the exact same number of state, dom node, and list renderer entries, or zero entries if 
+ * we want to detatch it's DOM elements.
+ *
  *
  * This allows state and DOM-nodes to be created just once, while allowing other code and computations to remain local to 
  * the place that is actually using it. 
@@ -467,12 +487,26 @@ export type RerenderPoint =  {
  * Because more likely than not, Component1 and Component2 will have completly different state and dom elements.
  * You'll need to use a different UI root to render different types of components.
  *
- * There are a couple solutions to this.
- * See the docuemntation for {@link imIf}, {@link imSwitch}, {@link beginList} for more info.
+ * This can be achieved by treating conditional rendering as a special case of list rendering:
+ *
+ * ```
+ *
+ * function Component(val: number) {
+ *      beginList();
+ *      if (nextRoot() && number > 10) {
+ *          Component1();
+ *      } else {
+ *          nextRoot();
+ *          Component2();
+ *      } endList();
+ * }
+ * ```
+ *
+ * See the docs for {@link beginList} for more info.
  */
 export class UIRoot<E extends ValidElement = ValidElement> {
     readonly root: E;
-    readonly domRoot: DomRoot<E>;
+    readonly domAppender: DomAppender<E>;
     // If there was no supplier, then this root is attached to the same DOM element as another UI root that does have a supplier.
     readonly elementSupplier: (() => ValidElement) | null;
 
@@ -490,9 +524,9 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     began = false;
 
     // Users should call `newUiRoot` instead.
-    constructor(domRoot: DomRoot<E>, elementFactory: (() => ValidElement) | null) {
-        this.root = domRoot.root;
-        this.domRoot = domRoot;
+    constructor(domAppender: DomAppender<E>, elementFactory: (() => ValidElement) | null) {
+        this.root = domAppender.root;
+        this.domAppender = domAppender;
         this.elementSupplier = elementFactory;
     }
 
@@ -505,7 +539,7 @@ export class UIRoot<E extends ValidElement = ValidElement> {
 
     // TODO: think of how we can remove this, from user code at the very least.
     __begin(rp?: RerenderPoint) {
-        resetDomRoot(this.domRoot, rp?.domRootIdx);
+        resetDomAppender(this.domAppender, rp?.domAppenderIdx);
 
         imReset(this.items, rp?.itemsIdx);
 
@@ -532,14 +566,16 @@ export class UIRoot<E extends ValidElement = ValidElement> {
 
         this.isInInitPhase = false;
 
-        if (this.items.expectedLength === -1) {
-            imLockSize(this.items);
-            return;
-        }
+        imLockSize(this.items);
 
         // DEV: If this is negative, I fkd up (I decremented this thing too many times) 
         // User: If this is positive, u fked up (You forgot to finalize an open list)
         assert(this.openListRenderers === 0);
+
+        if (this.items.idx === -1) {
+            // we rendered nothing to this root, so we should just remove it.
+            this.__removeAllDomElements();
+        }
     }
 
     setStyle<K extends (keyof E["style"])>(key: K, value: string) {
@@ -608,13 +644,13 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     }
 
     // NOTE: If this is being called before we've rendered any components here, it should be ok.
-    // if it's being called during a render, then that is typically an incorrect usage - the domRoot's index may or may not be incorrect now, because
+    // if it's being called during a render, then that is typically an incorrect usage - the domAppender's index may or may not be incorrect now, because
     // we will have removed HTML elements out from underneath it. You'll need to ensure that this isn't happening in your use case.
     __removeAllDomElements() {
         for (let i = 0; i < this.items.items.length; i++) {
             const item = this.items.items[i];
             if (item.t === ITEM_UI_ROOT) {
-                item.v.domRoot.root.remove();
+                item.v.domAppender.root.remove();
                 item.v.__onRemove();
             } else if (item.t === ITEM_LIST) {
                 // needs to be fully recursive. because even though our UI tree is like
@@ -660,7 +696,7 @@ export class ListRenderer {
         let result = this.keys.get(key);
         if (!result) {
             result = { 
-                root: new UIRoot(this.uiRoot.domRoot, null),
+                root: new UIRoot(this.uiRoot.domAppender, null),
                 rendered: false
             };
             this.keys.set(key, result);
@@ -693,7 +729,7 @@ export class ListRenderer {
             if (idx < this.builders.length) {
                 result = this.builders[idx];
             } else {
-                result = new UIRoot(this.uiRoot.domRoot, null);
+                result = new UIRoot(this.uiRoot.domAppender, null);
                 this.builders.push(result);
             }
 
@@ -701,9 +737,9 @@ export class ListRenderer {
         }
 
         // Append new list elements to where we're currently appending
-        const currentDomRootIdx = result.domRoot.currentIdx;
+        const currentDomRootIdx = result.domAppender.currentIdx;
         result.__begin(undefined);
-        result.domRoot.currentIdx = currentDomRootIdx;
+        result.domAppender.currentIdx = currentDomRootIdx;
 
         this.current = result;
 
@@ -819,10 +855,17 @@ export function beginList(): ListRenderer {
  * If a key is present, the same UIRoot that was rendered for that particular key will be re-used. Make sure
  *      to not reuse the same key twice.
  *
+ * There is no virtue in always specifying a key. Only do it when actually necessary.
+ *
  * See the {@link UIRoot} docs for more info on what a 'UIRoot' even is, what it's limitations are, and how to effectively (re)-use them.
  */
 export function nextRoot(key?: ValidKey) {
+    if (currentRoot) {
+        end();
+    }
+    
     const l = getCurrentListRendererInternal();
+
     return l.root(key);
 }
 
@@ -877,7 +920,7 @@ export function nextRoot(key?: ValidKey) {
  */
 
 export function newRerenderPoint(): RerenderPoint {
-    return { domRootIdx: 0, itemsIdx: 0,  };
+    return { domAppenderIdx: 0, itemsIdx: 0,  };
 }
 
 const FROM_HERE = -1;
@@ -885,7 +928,7 @@ const FROM_HERE = -1;
 // const FROM_ONE_AFTER_HERE = 1;
 function imRerenderPoint(r: UIRoot, offset: number): RerenderPoint {
     const state = imState(newRerenderPoint);
-    state.domRootIdx = r.domRoot.currentIdx;
+    state.domAppenderIdx = r.domAppender.currentIdx;
     state.itemsIdx = r.items.idx + offset;
     return state;
 }
@@ -956,6 +999,8 @@ export function imStateInline<T>(supplier: () => T): T {
 
 let appRoot: UIRoot = newUiRoot(() => document.body);
 const currentStack: (UIRoot | ListRenderer)[] = [];
+
+// Only one of these is defined at a time.
 let currentRoot: UIRoot | undefined;
 let currentListRenderer: ListRenderer | undefined;
 
@@ -1057,7 +1102,7 @@ export function el<E extends ValidElement = ValidElement>(elementSupplier: () =>
     assert(result.v.elementSupplier === elementSupplier);
 
     r.hasRealChildren = true;
-    appendToDomRoot(r.domRoot, result.v.domRoot.root);
+    appendToDomRoot(r.domAppender, result.v.domAppender.root);
 
     result.v.__begin();
 
@@ -1083,14 +1128,18 @@ export function end() {
 }
 
 export function endList(isConditional=false) {
-    const val = getCurrentListRendererInternal();
-    val.__end();
+    if (currentRoot) {
+        end();
+    }
+
+    const l = getCurrentListRendererInternal();
+    l.__end();
 
     const r = getCurrentRoot();
 
     if (!isConditional) {
         // by default, open an if-statement for an `else` if we rendered zero items.
-        r.ifStatementOpen = val.current === null;
+        r.ifStatementOpen = l.current === null;
     }
 }
 
@@ -1174,95 +1223,6 @@ export function span(): UIRoot<HTMLSpanElement> {
     return el<HTMLSpanElement>(newSpan);
 }
 
-
-/// NOTE: This doesn't include "" or 0, mainly to avoid various 'why isn't my thing showing up' bugs
-type ActualFalseyValues = null | undefined | false;
-
-/**
- *
- * See {@link UIRoot}'s docs to understand why this exists.
- *
- * If you have any ideas on how to use a callbackless API here that is also easy to use and 
- * allows us to just use a basic if-statements (they are cool because they do type narrowing and other
- * typescript stuff), then let me know. 
- *
- * Typical usage:
- * ```ts
- * imIf( *** , () => {
- *      Component1();
- * })
- * imElseIf( ***, () => {
- *      Component2();
- * })
- * imElse(() => {
- *      Component3();
- * })
- * ```
- *
- * With lists:
- * ```ts
- * imList() {
- *      for (const item of items) { ... }
- * } end();
- * imElse(() => {
- *      // else after a list is allowed to run when an imList rendered zero items.
- *      div(); { text("Zero results.") } end();
- * })
- * ```
- *
- * Type narrowing:
- * ```ts
- * imIf(valOrUndefined, (val) => {
- *      Component(val);  // NOTE: most of the time, we want to render the number 0. so imIf only type-narrows T | null | undefined | false to T.
- * })
- * ```
- */
-export function imIf<V>(val: V | ActualFalseyValues, next: (typeNarrowedVal: V) => void) {
-    const r = getCurrentRoot();
-    r.ifStatementOpen = true;
-    imElseIf(val, next);
-}
-
-/**
- * See {@link imIf}
- */
-export function imElse(next: () => void) {
-    imElseIf(true, next);
-}
-
-/**
- * See {@link imIf}
- */
-export function imElseIf<V>(val: V | ActualFalseyValues, next: (typeNarrowedVal: V) => void) {
-    const rIn = getCurrentRoot();
-    beginList(); {
-        if (rIn.ifStatementOpen && (val || val === 0 || val === "")) {
-            rIn.ifStatementOpen = false;
-            nextRoot(); {
-                next(val);
-            }
-            end();
-        }
-    }
-    endList(true);
-}
-
-/**
- * ```ts
- * imSwitch(result.type, () => {
- *      switch(result.type) {
- *          case types.A: return AResultComponent(result);
- *          case types.B: return BResultComponent(result);
- *          case types.C: return CResultComponent(result);
- *      }
- * })
- * ```
- */
-export function imSwitch(key: string | number, switchFn: () => void) {
-    beginList(); nextRoot(key);
-    switchFn();
-    end(); endList();
-};
 
 function canAnimate(r: UIRoot) {
     return !r.removed && !r.manuallyHidden;
@@ -1388,7 +1348,6 @@ export function imTryCatch({
             nextRoot(); {
                 tryFn();
             }
-            end();
         } catch (error) {
 
             const recover = () => {
@@ -1399,7 +1358,6 @@ export function imTryCatch({
             nextRoot(); {
                 catchFn(error, recover);
             };
-            end();
         } finally {
             endList();
         }
@@ -1411,13 +1369,15 @@ export function abortListAndRewindUiStack(l: ListRenderer) {
     const idx = currentStack.lastIndexOf(l);
     assert(idx !== -1);
     currentStack.length = idx + 1;
+    currentRoot = undefined;
+    currentListRenderer = l;
 
     const r = l.current;
     if (r) {
         r.__removeAllDomElements();
 
         // need to reset the dom root, since we've just removed elements underneath it
-        resetDomRoot(r.domRoot);
+        resetDomAppender(r.domAppender);
     }
 }
 
@@ -1481,9 +1441,7 @@ class Memoizer{
     __invoked = true;
 
     begin() {
-        if (this.items.expectedLength !== -1) {
-            imLockSize(this.items);
-        }
+        imLockSize(this.items);
         
         /**
          * You should be querying changed() on this memoizer. Otherwise, there is a high change that you're
