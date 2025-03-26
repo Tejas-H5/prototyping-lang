@@ -562,7 +562,7 @@ export class UIRoot<E extends ValidElement = ValidElement> {
         assert(this.began);
         this.began = false;
 
-        popRoot(this);
+        popRoot();
 
         this.isInInitPhase = false;
 
@@ -751,7 +751,7 @@ export class ListRenderer {
         assert(this.uiRoot.openListRenderers > 0);
         this.uiRoot.openListRenderers--;
 
-        popList(this);
+        popList();
 
         // remove all the UI components that may have been added by other builders in the previous render.
         for (let i = this.builderIdx; i < this.builders.length; i++) {
@@ -1032,29 +1032,63 @@ function pushList(l: ListRenderer) {
     currentListRenderer = l;
 }
 
-function pushRoot(r: UIRoot) {
+/**
+ * Use this with {@link popRoot} to create higher level abstractions.
+ *
+ * ``` ts
+ *
+ *
+ * function beginHigherLevelThing() {
+ *     let userRenderPoint: UIRoot;
+ *
+ *     beginLayout(); {
+ *          ...
+ *          userRenderPoint = userRowbeginLayout(); {
+ *              
+ *          } popRoot(); // Rather than calling end(), we're calling popRoot().
+ *          ...
+ *     } end();
+ *     
+ *     pushRoot(userRenderPoint);
+ *     // the user may render whatever they want, and then call end() here. 
+ *     // 
+ * }
+ *
+ * If you want multiple mount points, you could push multiple things that they have to end() here, but 
+ * this should ideally be documented in the method name, like 
+ *
+ * ```
+ * beginHeaderAndSectionAndContent(); {
+ *      // header
+ * } end(); {
+ *      // section
+ * } end(); {
+ *      // content
+ * }
+ * ```
+ *
+ * ```
+ *
+ */
+export function pushRoot(r: UIRoot) {
     currentStack.push(r);
     currentRoot = r;
     currentListRenderer = undefined;
 }
 
-function popList(r: ListRenderer) {
-    const existing = getCurrentListRendererInternal();
-
-    // You may have forgotten a call to end() you were supposed to do before this one
-    assert(r === existing);
-
+/**
+ * see {@link pushRoot} for more info
+ */
+export function popRoot() {
+    getCurrentRoot();
     pop();
 }
 
-function popRoot(r: UIRoot) {
-    const existing = getCurrentRoot();
-
-    // You may have forgotten a call to end() you were supposed to do before this one
-    assert(r === existing);
-
+function popList() {
+    getCurrentListRendererInternal();
     pop();
 }
+
 
 function pop() {
     currentStack.length--;
@@ -1412,13 +1446,25 @@ export function imRef<T>(): Ref<T> {
  *      // ctx is defined
  * } end();
  * ```
+ *
+ * Also, imSetVal can be called inside of a beginMemo() and endMemo() block. 
  */
-export function imVal<T>(): T | null {
-    return imRef<T>().val;
+export function imVal<T>(initialValue: T) {
+    const ref = imRef<T>();
+    if (ref.val === null) {
+        ref.val = initialValue;
+    }
+
+    return ref.val;
 }
 export function imSetVal<T>(t: T): T {
     const root = getCurrentRoot();
+
+    let prevDisabled = imDisabled;
+    imDisabled = false;
     let val = imGetCurrent(root.items);
+    imDisabled = prevDisabled;
+
     assert(val?.t === ITEM_STATE);
     assert(val.supplier === newRef);
     (val.v as Ref<T>).val = t;
@@ -1869,3 +1915,37 @@ export function endFrame() {
     keys.escPressed = false;
 }
 
+class ImmediateModeStringBuilder {
+    sb: string[] = [];
+    changed = false;
+    cached: string = "";
+    
+    s(str: string) {
+        this.sb.push(str);
+    }
+
+    toString() {
+        if (this.changed) {
+            this.changed = false;
+            this.cached = this.sb.join("");
+        }
+        return this.cached;
+    }
+
+    clear() {
+        this.changed = true;
+        this.sb.length = 0;
+    }
+};
+
+function newImmmediateModeStringBuilder() {
+    return new ImmediateModeStringBuilder();
+}
+
+export function imSb() {
+    return imState(newImmmediateModeStringBuilder);
+}
+
+function newArray<T>(): T[] {
+    return [];
+}

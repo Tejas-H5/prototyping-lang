@@ -507,6 +507,7 @@ type ExecutionState = {
     code: ExecutionSteps;
     i: number;
     argsCount: number;
+    fn: ProgramResultFunction | null;
     
     // TODO: replace with an array
     variables: Map<string, number>;
@@ -557,6 +558,7 @@ export type ProgramPlotOutput = {
 export type ProgramPlotOutputHeatmapFunction = {
     step: ProgramExecutionStep;
     fn: ProgramResultFunction;
+    color: Color | undefined;
 }
 
 export type ProgramOutputs = {
@@ -756,10 +758,11 @@ function getExecutionSteps(
                         // The errors are worse if we report 'too few arguments'. I'd rather see which type I was supposed to input, even though I
                         // haven't input all the args.
                         // We might want to bring it back if we add static types.
-                        // if (expr.arguments.length !== fn.expr.arguments.length) {
-                        //     addError(expr, "Expected " + fn.expr.arguments.length + " arguments, got " + expr.arguments.length);
-                        //     return false;
-                        // }
+                        // We must at least assert we don't have too many though.
+                        if (expr.arguments.length > fn.expr.arguments.length) {
+                            addError(expr, "Too many arguments for your function.");
+                            return false;
+                        }
 
                         step.call = { fn, numArgs: expr.arguments.length };
 
@@ -767,17 +770,21 @@ function getExecutionSteps(
                     } else {
                         const fn = getBuiltinFunction(expr.fnName.name);
                         if (fn) {
-                            // The errors are worse if we report 'too few arguments'. I'd rather see which type I was supposed to input, even though I 
+                            // The errors are worse if we report 'too few arguments'. I'd rather see which type I was supposed to input, even though I
                             // haven't input all the args.
                             // We might want to bring it back if we add static types.
-                            // if (expr.arguments.length < fn.minArgs || expr.arguments.length > fn.args.length) {
-                            //     if (fn.minArgs !== fn.args.length) {
-                            //         addError(expr, "Expected between " + fn.minArgs + " to " + fn.args.length + " arguments, got " + expr.arguments.length);
-                            //     } else {
-                            //         addError(expr, "Expected " + fn.args.length + " arguments, got " + expr.arguments.length);
-                            //     }
-                            //     return false;
-                            // }
+                            // We must at least assert we don't have too many though.
+                            if (
+                                // expr.arguments.length < fn.minArgs || 
+                                    expr.arguments.length > fn.args.length
+                            ) {
+                                if (fn.minArgs !== fn.args.length) {
+                                    addError(expr, "Expected between " + fn.minArgs + " to " + fn.args.length + " arguments, got " + expr.arguments.length);
+                                } else {
+                                    addError(expr, "Expected " + fn.args.length + " arguments, got " + expr.arguments.length);
+                                }
+                                return false;
+                            }
 
                             step.builtinCall = { fn, numArgs: expr.arguments.length, expr };
                             isValid = true;
@@ -918,6 +925,7 @@ export function startInterpreting(parseResult: ProgramParseResult, isDebugging: 
     }
 
     result.callStack.push({ 
+        fn: null,
         code: result.entryPoint, 
         argsCount: 0,
         i: 0, variables: new Map(), 
@@ -985,10 +993,47 @@ const ZERO_VEC2 = matrixZeroes([2]);
 const ZERO_VEC3 = matrixZeroes([3]);
 const ZERO_VEC4 = matrixZeroes([4]);
 
+function validateColor(
+    program: ProgramInterpretResult, step: ProgramExecutionStep,
+    colorRes: ProgramResult
+): Color | undefined {
+    let color: Color | undefined;
+
+    assert(colorRes.t === T_RESULT_STRING || colorRes.t === T_RESULT_MATRIX);
+    if (colorRes.t === T_RESULT_STRING) {
+        color = newColorFromHexOrUndefined(colorRes.val);
+        if (!color) {
+            addError(program, step, "hex colours are of the from #RRGGBB or #RGB. You can alternatively use a [r, g, b] vector as a color.");
+            return;
+        }
+    } else if (colorRes.t === T_RESULT_MATRIX) {
+        if (matrixShapesAreEqual(colorRes.val, ZERO_VEC3)) {
+            color = newColor(
+                getSliceValue(colorRes.val.values, 0),
+                getSliceValue(colorRes.val.values, 1),
+                getSliceValue(colorRes.val.values, 2),
+                1
+            );
+        } else if (matrixShapesAreEqual(colorRes.val, ZERO_VEC4)) {
+            color = newColor(
+                getSliceValue(colorRes.val.values, 0),
+                getSliceValue(colorRes.val.values, 1),
+                getSliceValue(colorRes.val.values, 2),
+                getSliceValue(colorRes.val.values, 3),
+            );
+        } else {
+            addError(program, step, "Vector colors must be a Vector3 or Vector4. You can alternatively use a \"#RGB\" string color.");
+            return;
+        }
+    }
+
+    return color;
+}
+
 // initialize builtin funcs
 {
     function builtinPlotLines(
-        result: ProgramInterpretResult, step: ProgramExecutionStep,
+        program: ProgramInterpretResult, step: ProgramExecutionStep,
         plotIdx: ProgramResult | null,
         lines: ProgramResult | null,
         colorMaybe: ProgramResult | null,
@@ -1003,6 +1048,10 @@ const ZERO_VEC4 = matrixZeroes([4]);
 
         let color: Color | undefined;
         if (colorMaybe) {
+            color = validateColor(program, step, colorMaybe);
+            if (!color) {
+                return;
+            }
             assert(colorMaybe.t === T_RESULT_STRING || colorMaybe.t === T_RESULT_MATRIX);
             if (colorMaybe.t === T_RESULT_STRING) {
                 color = newColorFromHexOrUndefined(colorMaybe.val);
@@ -1022,7 +1071,7 @@ const ZERO_VEC4 = matrixZeroes([4]);
                         getSliceValue(colorMaybe.val.values, 3),
                     );
                 } else {
-                    addError(result, step, "Vector colors must be a Vector3 or Vector4");
+                    addError(program, step, "Vector colors must be a Vector3 or Vector4");
                     return;
                 }
             }
@@ -1043,12 +1092,12 @@ const ZERO_VEC4 = matrixZeroes([4]);
                 if (val.t !== T_RESULT_MATRIX) {
                     // if only we could get the position of this value's expression.
                     // probably if we made a static type system, it would be easier to report this error in the right place.
-                    addError(result, step, "Expected every element in a list be a vector2");
+                    addError(program, step, "Expected every element in a list be a vector2");
                     return;
                 }
 
                 if (!matrixShapesAreEqual(val.val, ZERO_VEC2)) {
-                    addError(result, step, "Expected every element in a list be a vector2.");
+                    addError(program, step, "Expected every element in a list be a vector2.");
                     return;
                 }
 
@@ -1058,7 +1107,7 @@ const ZERO_VEC4 = matrixZeroes([4]);
         } else if (lines.t === T_RESULT_MATRIX) {
             const mat = lines.val;
             if (!matrixIsRank2(mat)) {
-                addError(result, step, "Only matrices of rank 2 may be plotted");
+                addError(program, step, "Only matrices of rank 2 may be plotted");
                 return;
             }
 
@@ -1082,14 +1131,14 @@ const ZERO_VEC4 = matrixZeroes([4]);
                     pointsY.push(y);
                 }
             } else {
-                addError(result, step, "One of the sides of the matrix must have a length of 2");
+                addError(program, step, "One of the sides of the matrix must have a length of 2");
                 return;
             }
         }
 
         assert(pointsY.length === pointsX.length);
 
-        const plot = getOrAddNewPlot(result, idx);
+        const plot = getOrAddNewPlot(program, idx);
 
         plot.lines.push({
             expr: step.expr,
@@ -1213,13 +1262,22 @@ const ZERO_VEC4 = matrixZeroes([4]);
         [
             newArg("idx", [T_RESULT_NUMBER]),
             newArg("fn", [T_RESULT_FN]),
+            newArg("hexColor", [T_RESULT_STRING, T_RESULT_MATRIX], true),
         ], 
-        (result, step, idx, fn) => {
+        (program, step, idx, fn, colorMaybe) => {
             assert(idx?.t === T_RESULT_NUMBER);
             assert(fn?.t === T_RESULT_FN);
 
-            const plot = getOrAddNewPlot(result, idx.val);
-            plot.functions.push({ step, fn });
+            let color: Color | undefined;
+            if (colorMaybe) {
+                color = validateColor(program, step, colorMaybe);
+                if (!color) {
+                    return;
+                }
+            }
+
+            const plot = getOrAddNewPlot(program, idx.val);
+            plot.functions.push({ step, fn, color });
 
             // can't be variadic, because print needs to return something...
             // That's ok, just put the args in a list, lol
@@ -1380,30 +1438,25 @@ function evaluateBuiltinFunction(
     }
 }
 
-function evaluateFunctionWithinProgram(
+function pushFunctionCallFrame(
     program: ProgramInterpretResult, 
     fn: ProgramResultFunction, 
     numArgs: number
 ) {
+    assert(numArgs <= fn.args.length);
     const variables = new Map<string, number>();
     for (let i = 0; i < numArgs; i++) {
         const argIdx = program.stackIdx - numArgs + i + 1;
         variables.set(fn.args[i].name, argIdx);
     }
 
-    const call = getCurrentCallstack(program);
-
-    program.stackIdx++;
+    program.stackIdx += 1;
 
     let returnAddress = program.stackIdx;
     let nextVarAddress = returnAddress + 1;
-    if (call) {
-        returnAddress = call.nextVarAddress;
-        nextVarAddress = call.nextVarAddress + 1;
-        call.i++;
-    }
 
     program.callStack.push({
+        fn,
         code: fn.code,
         argsCount: fn.args.length,
         i: 0, variables,
@@ -1429,7 +1482,7 @@ export function startEvaluatingFunctionWithingProgramWithArgs(
     }
 
 
-    evaluateFunctionWithinProgram(program, fn, args.length);
+    pushFunctionCallFrame(program, fn, args.length);
 
     return true;
 }
@@ -1693,7 +1746,8 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         }
     } else if (step.call) {
         const numArgs = step.call.numArgs;
-        evaluateFunctionWithinProgram(result, step.call.fn, numArgs);
+        pushFunctionCallFrame(result, step.call.fn, numArgs);
+        call.i++;
         return true;
     } else if (step.builtinCall) {
         const res = evaluateBuiltinFunction(step.builtinCall.fn, step.builtinCall.numArgs, result, step);
@@ -1766,7 +1820,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
     call.i = nextCallI;
     if (call.code.steps.length === call.i && result.callStack.length > 1) {
         // this was the thing we last computed
-        const val = result.stack[result.stackIdx];
+        const val = result.stack[call.returnAddress];
 
         result.callStack.pop();
         const current = getCurrentCallstack(result);

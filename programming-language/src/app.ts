@@ -1,5 +1,5 @@
 import { beginTextArea } from './components/text-area.ts';
-import { evaluateFunctionWithinProgramWithArgs, ProgramExecutionStep, ExecutionSteps, executionStepToString, getCurrentCallstack, interpret, newNumberResult, ProgramInterpretResult, ProgramPlotOutput, ProgramPlotOutputHeatmapFunction, ProgramResult, ProgramResultNumber, programResultTypeString, startInterpreting, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING } from './program-interpreter.ts';
+import { evaluateFunctionWithinProgramWithArgs, ProgramExecutionStep, ExecutionSteps, executionStepToString, getCurrentCallstack, interpret, newNumberResult, ProgramInterpretResult, ProgramPlotOutput, ProgramPlotOutputHeatmapFunction, ProgramResult, ProgramResultNumber, programResultTypeString, startInterpreting, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING, ProgramResultFunction } from './program-interpreter.ts';
 import {
     binOpToString,
     binOpToOpString as binOpToSymbolString,
@@ -28,8 +28,8 @@ import {
 } from './program-parser.ts';
 import { GlobalContext, GlobalState, newGlobalContext, saveState, startDebugging } from './state.ts';
 import "./styling.ts";
-import { cnApp, cssVars } from './styling.ts';
-import { abortListAndRewindUiStack, assert, beginFrame, beginList, cn, deferClickEventToParent, deltaTimeSeconds, div, el, elementHasMouseClick, elementHasMouseOver, elementWasLastClicked, end, endFrame, endList, getKeys, getMouse, imInit, beginMemo, imPreventScrollEventPropagation, imRef, imSetVal, imState, imStateInline, imVal, isShiftPressed, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setInnerText, setStyle, span, UIRoot, endMemo } from './utils/im-dom-utils.ts';
+import { cnApp, cssVars, getCurrentTheme } from './styling.ts';
+import { abortListAndRewindUiStack, assert, beginFrame, beginList, cn, deferClickEventToParent, deltaTimeSeconds, div, el, elementHasMouseClick, elementHasMouseOver, elementWasLastClicked, end, endFrame, endList, getKeys, getMouse, imInit, beginMemo, imPreventScrollEventPropagation, imRef, imSetVal, imState, imStateInline, imVal, isShiftPressed, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setInnerText, setStyle, span, UIRoot, endMemo, imSb } from './utils/im-dom-utils.ts';
 import { clamp, inverseLerp, lerp, max, min } from './utils/math-utils.ts';
 import { getSliceValue } from './utils/matrix-math.ts';
 import { getLineBeforePos, getLineEndPos, getLineStartPos } from './utils/text-utils.ts';
@@ -317,10 +317,12 @@ function ParserOutput(parseResult: ProgramParseResult | undefined) {
                 }
             }
 
+            beginList();
             for (let i = 0; i < statements.length; i++) {
                 const statement = statements[i];
                 dfs("Statement " + (i + 1), statement, 0);
             }
+            endList();
         } else {
             nextRoot();
             textSpan("Nothing parsed yet");
@@ -490,6 +492,7 @@ function renderFunctionInstructions(interpretResult: ProgramInterpretResult, { n
             beginCodeBlock(0); {
                 beginList(); 
                 if (nextRoot() && steps.length > 0) {
+                    beginList(); 
                     for (let i = 0; i < steps.length; i++) {
                         nextRoot();
 
@@ -515,6 +518,7 @@ function renderFunctionInstructions(interpretResult: ProgramInterpretResult, { n
                             rCurrent = currentStepDiv;
                         }
                     }
+                    endList();
                 } else {
                     nextRoot();
                     div(); {
@@ -552,6 +556,27 @@ function beginButton(toggled: boolean = false) {
     };
 
     return root;
+}
+
+function imFunctionName(fn: ProgramResultFunction | null) {
+    const sb = imSb();
+
+    if (beginMemo().val(fn).changed()) {
+        sb.clear();
+        if (!fn) {
+            sb.s("Entry point");
+        } else {
+            sb.s(fn.code.name);
+            sb.s("(");
+            for (let i = 0; i < fn.args.length; i++) {
+                if (i > 0) sb.s(", ");
+                sb.s(fn.args[i].name);
+            }
+            sb.s(")");
+        }
+    } endMemo();
+
+    return sb.toString();
 }
 
 function renderAppCodeOutput(ctx: GlobalContext) {
@@ -623,15 +648,8 @@ function renderAppCodeOutput(ctx: GlobalContext) {
                             nextRoot(); 
 
                             beginLayout(ROW | GAP); {
-                                const argsString = imRef<string>();
-                                if (argsString.val === null) {
-                                    argsString.val = "";
-                                }
-                                if (beginMemo().val(fn).changed()) {
-                                    argsString.val = fn.args.map(a => a.name).join(",");
-                                } endMemo();
-
-                                textSpan(fn.code.name + "(" + argsString.val + ")", H3 | BOLD);
+                                const fnName = imFunctionName(fn);
+                                textSpan(fnName, H3 | BOLD);
 
                                 beginButton(); {
                                     textSpan("Start debugging");
@@ -864,6 +882,11 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
             beginLayout(COL | FLEX); {
                 beginList();
                 if (nextRoot() && cs) {
+                    const fnName = imFunctionName(cs.fn);
+                    beginLayout(H3 | BOLD); {
+                        textSpan(fnName);
+                    } end();
+
                     renderFunctionInstructions(interpretResult, cs.code);
                 } endList()
             } end();
@@ -930,7 +953,13 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
                                         }
                                     }
 
-                                    // every callstack will have a different return address
+                                    beginList();
+                                    if (nextRoot() && callstackIdx !== -1) {
+                                        stackAddrArrow("r" + callstackIdx + "");
+                                    };
+                                    endList();
+
+                                    // every callstack will have a different next-variable address
                                     callstackIdx = -1;
                                     for (let i = 0; i < interpretResult.callStack.length; i++) {
                                         const cs = interpretResult.callStack[i];
@@ -938,7 +967,6 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
                                             callstackIdx = i;
                                         }
                                     }
-
 
                                     beginList();
                                     if (nextRoot() && callstackIdx !== -1) {
@@ -1332,7 +1360,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                         }
                     }
 
-                    let ctx = imVal<CanvasRenderingContext2D>(); 
+                    let ctx = imVal<CanvasRenderingContext2D | null>(null); 
                     if (!ctx) {
                         ctx = imSetVal(canvas.getContext("2d"));
                         if (!ctx) {
@@ -1345,7 +1373,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                         rows.val = [];
                     }
 
-                    if (beginMemo().objectVals(plotState).changed()) {
+                    if (beginMemo().val(plot).objectVals(plotState).changed()) {
                         problems.val.length = 0;
 
 
@@ -1443,6 +1471,9 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                                 }
 
                                 if (problems.val.length === 0) {
+                                    const theme = getCurrentTheme();
+                                    const color = output.color ?? theme.fg;
+
                                     for (let i = 0; i < n; i++) {
                                         for (let j = 0; j < n; j++) {
                                             const val = rows.val[i][j];
@@ -1454,7 +1485,9 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                                             const x0 = getCanvasElementX(plotState, evalPointX);
                                             const y0 = getCanvasElementY(plotState, evalPointY);
 
-                                            ctx.fillStyle = `rgba(255, 0,0, ${heat})`
+                                            
+
+                                            ctx.fillStyle = color.toCssString(heat);
                                             ctx.beginPath(); {
                                                 ctx.rect(x0, y0, sizeScreen, sizeScreen);
                                                 ctx.fill();
@@ -1601,18 +1634,25 @@ for size in 1 -> 6 {
 }`
     },
     {
-        name: "Signed distance field",
+        name: "Signed distance fields",
         code: `
-radius = 0.2
-thickness = 0.01
-
 sdf(a, b) { 
+    radius = 0.2
+    thickness = 0.01
     sqrt(a*a + b*b) 
     (radius - thickness) < ^ && ^ < (radius + thickness)
 }
 
-set_heatmap_subdiv(100)
-heatmap(1, sdf)
+sdf2(a, b) { 
+    radius = 0.3
+    thickness = 0.01
+    sqrt(a*a + b*b) 
+    (radius - thickness) < ^ && ^ < (radius + thickness)
+}
+
+set_heatmap_subdiv(40)
+heatmap(1, sdf, [0.5, 0, 0])
+heatmap(1, sdf2, "#F00")
 
 plot_points(1, 0.5 * [
     [0, 0],
@@ -1644,7 +1684,11 @@ export function renderApp() {
 
                     const { state } = ctx;
 
-                    if (beginMemo().objectVals(state).changed()) {
+                    if (beginMemo()
+                        .val(state.text)
+                        .val(state.autorun)
+                        .changed()
+                    ) {
                         const text = state.text;
                         ctx.lastParseResult = parse(text);
                         if (state.autorun) {

@@ -1,15 +1,15 @@
 export type Color = {
     r: number; g: number; b: number; a: number;
-    toCssString(): string;
+    toCssString(aOverride?: number): string;
     toString(): string;
 }
 
 export function newColor(r: number, g: number, b: number, a: number): Color {
     return {
         r, g, b, a,
-        toCssString() {
-            const { r, g, b, a} = this;
-            return `rgba(${Math.floor(r * 255)}, ${Math.floor(g * 255)}, ${Math.floor(b * 255)}, ${a})`;
+        toCssString(aOverride?: number) {
+            const { r, g, b, a } = this;
+            return `rgba(${Math.floor(r * 255)}, ${Math.floor(g * 255)}, ${Math.floor(b * 255)}, ${aOverride ?? a})`;
         },
         toString() {
             return this.toCssString();

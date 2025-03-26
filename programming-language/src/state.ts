@@ -72,7 +72,6 @@ export function newGlobalState(): GlobalState {
         autorun: false,
     };
 }
-
 export function loadStateFromJson(string: string): GlobalState {
     // trust me, bro
     return JSON.parse(string);
