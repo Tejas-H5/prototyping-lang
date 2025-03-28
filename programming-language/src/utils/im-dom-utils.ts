@@ -3,7 +3,7 @@
 // Right now, this one seems better, but the other one has a 'proven' track record of actually working.
 // But in a matter of hours/days, I was able to implement features in this framework that I wasn't able to for months/years in the other one...
 
-import { Color } from "./colour";
+import { CssColor } from "./colour";
 
 //////////
 // Assertion functions
@@ -201,7 +201,7 @@ export const cn = Object.freeze({
     debug1pxSolidRed: sb.cn("debug1pxSolidRed", [` { border: 1px solid red; }`]),
 });
 
-export function setCssVars(vars: Record<string, string | Color>, cssRoot?: HTMLElement) {
+export function setCssVars(vars: Record<string, string | CssColor>, cssRoot?: HTMLElement) {
     if (!cssRoot) {
         cssRoot = document.querySelector(":root") as HTMLElement;
     }
@@ -211,7 +211,7 @@ export function setCssVars(vars: Record<string, string | Color>, cssRoot?: HTMLE
     }
 }
 
-export function setCssVar(cssRoot: HTMLElement, varName: string, value: string | Color) {
+export function setCssVar(cssRoot: HTMLElement, varName: string, value: string | CssColor) {
     const fullVarName = `--${varName}`;
     cssRoot.style.setProperty(fullVarName, "" + value);
 }
@@ -1005,9 +1005,11 @@ let currentRoot: UIRoot | undefined;
 let currentListRenderer: ListRenderer | undefined;
 
 
-// Allows you to get the current root without having a reference to it.
-// You should use this very sparingly, if at all.
-export function getCurrentRoot<T extends ValidElement = ValidElement>(): UIRoot<T> {
+/**
+ * Allows you to get the current root without having a reference to it.
+ * Mainly for use when you don't care what the type of the root is.
+ */
+export function getCurrentRoot(): UIRoot {
     /** 
      * Can't call this method without opening a new UI root. Common mistakes include: 
      *  - using end() instead of endList() to end lists
@@ -1015,7 +1017,7 @@ export function getCurrentRoot<T extends ValidElement = ValidElement>(): UIRoot<
      */
     assert(currentRoot);
 
-    return currentRoot as UIRoot<T>;
+    return currentRoot as UIRoot;
 }
 
 // You probably don't want to use this, if you can help it
@@ -1946,6 +1948,35 @@ export function imSb() {
     return imState(newImmmediateModeStringBuilder);
 }
 
-function newArray<T>(): T[] {
-    return [];
+function newImGetSizeState() {
+    const r = getCurrentRoot();
+    const self = {
+        rect: {
+            top: 0,
+            left: 0,
+            bottom: 0,
+            right: 0,
+            width: 0,
+            height: 0, 
+        },
+        observer: new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const rect = entry.target.getBoundingClientRect();
+
+                self.rect.width = rect.width;
+                self.rect.height = rect.height;
+                self.rect.top = rect.top;
+                self.rect.left = rect.left;
+                self.rect.bottom = rect.bottom;
+                self.rect.right = rect.right;
+                break;
+            }
+        })
+    };
+    self.observer.observe(r.root);
+    return self;
+}
+
+export function imTrackRectSize() {
+    return imState(newImGetSizeState);
 }

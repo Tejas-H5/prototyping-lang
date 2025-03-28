@@ -1,10 +1,10 @@
-export type Color = {
+export type CssColor = {
     r: number; g: number; b: number; a: number;
     toCssString(aOverride?: number): string;
     toString(): string;
 }
 
-export function newColor(r: number, g: number, b: number, a: number): Color {
+export function newColor(r: number, g: number, b: number, a: number): CssColor {
     return {
         r, g, b, a,
         toCssString(aOverride?: number) {
@@ -18,7 +18,7 @@ export function newColor(r: number, g: number, b: number, a: number): Color {
 }
 
 // This one won't throw exceptions.
-export function newColorFromHexOrUndefined(hex: string): Color | undefined {
+export function newColorFromHexOrUndefined(hex: string): CssColor | undefined {
     if (hex.startsWith("#")) {
         hex = hex.substring(1);
     }
@@ -54,7 +54,7 @@ export function newColorFromHexOrUndefined(hex: string): Color | undefined {
     return undefined;
 }
 
-export function newColorFromHex(hex: string): Color {
+export function newColorFromHex(hex: string): CssColor {
     const col = newColorFromHexOrUndefined(hex);
     if (!col) {
         throw new Error("invalid hex: " + hex);
@@ -66,7 +66,7 @@ export function newColorFromHex(hex: string): Color {
 /**
  * Taken from https://gist.github.com/mjackson/5311256
  */
-export function newColorFromHsv(h: number, s: number, v: number): Color {
+export function newColorFromHsv(h: number, s: number, v: number): CssColor {
     let r = 0, g = 0, b = 0;
 
     if (s === 0) {
@@ -108,7 +108,7 @@ function lerp(a: number, b: number, factor: number) {
 /**
  * NOTE to self: try to use a CSS transition on the colour style before you reach for this!
  **/
-export function lerpColor(c1: Color, c2: Color, factor: number, dst: Color) {
+export function lerpColor(c1: CssColor, c2: CssColor, factor: number, dst: CssColor) {
     dst.r = lerp(c1.r, c2.r, factor);
     dst.g = lerp(c1.g, c2.g, factor);
     dst.b = lerp(c1.b, c2.b, factor);

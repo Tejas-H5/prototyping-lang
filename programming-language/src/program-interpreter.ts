@@ -1,4 +1,4 @@
-import { Color, newColor, newColorFromHexOrUndefined } from "src/utils/colour";
+import { CssColor, newColor, newColorFromHexOrUndefined } from "src/utils/colour";
 import { assert } from "src/utils/im-dom-utils";
 import { copyMatrix, getMatrixValue, getSliceValue, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, setSliceValue } from "src/utils/matrix-math";
 import {
@@ -20,6 +20,7 @@ import {
     unaryOpToOpString,
     unaryOpToString
 } from "./program-parser";
+import { inverseLerp } from "./utils/math-utils";
 
 export const T_RESULT_NUMBER = 1;
 export const T_RESULT_STRING = 2;
@@ -106,8 +107,8 @@ type NumberRange = {
 };
 
 function evaluateBinaryOpNumberXNumber(
-    l: ProgramResultNumber, 
-    r: ProgramResultNumber, 
+    l: ProgramResultNumber,
+    r: ProgramResultNumber,
     op: BinaryOperatorType,
 ): ProgramResultNumber | ProgramResultRange | null {
     let num: number | undefined;
@@ -125,7 +126,7 @@ function evaluateBinaryOpNumberXNumber(
         case BIN_OP_GREATER_THAN_EQ: num = (r.val >= l.val) ? 1 : 0; break;
         case BIN_OP_AND_AND: num = (r.val && l.val) ? 1 : 0; break;
         case BIN_OP_OR_OR: num = (r.val || l.val) ? 1 : 0; break;
-        case BIN_OP_INVALID: 
+        case BIN_OP_INVALID:
             // An invalid binary op was parsed, and added to the result tree somehow
             assert(false)
     }
@@ -142,34 +143,34 @@ function evaluateBinaryOpNumberXNumber(
 }
 
 function evaluateBinaryOpMatrixXMatrix(
-    l: ProgramResultMatrix, 
-    r: ProgramResultMatrix, 
+    l: ProgramResultMatrix,
+    r: ProgramResultMatrix,
     op: BinaryOperatorType,
 ): [ProgramResultNumber | ProgramResultMatrix | null, string] {
 
     let isBool = false;
     let bool = false;
-    let val: Matrix | null = null; 
+    let val: Matrix | null = null;
     let err: string;
 
     switch (op) {
         case BIN_OP_MULTIPLY:
             [val, err] = matrixMultiplyElements(l.val, r.val);
             break;
-        case BIN_OP_DIVIDE: 
+        case BIN_OP_DIVIDE:
             [val, err] = matrixDivideElements(l.val, r.val);
             break;
-        case BIN_OP_ADD: 
+        case BIN_OP_ADD:
             [val, err] = matrixAddElements(l.val, r.val);
             break;
-        case BIN_OP_SUBTRACT: 
+        case BIN_OP_SUBTRACT:
             [val, err] = matrixSubtractElements(l.val, r.val);
             break;
-        case BIN_OP_IS_EQUAL_TO: 
+        case BIN_OP_IS_EQUAL_TO:
             isBool = true;
             [bool, err] = matrixElementsEqual(l.val, r.val);
             break;
-        case BIN_OP_LESS_THAN: 
+        case BIN_OP_LESS_THAN:
             isBool = true;
             [bool, err] = matrixElementsLessThan(l.val, r.val);
             break;
@@ -191,7 +192,7 @@ function evaluateBinaryOpMatrixXMatrix(
         case BIN_OP_OR_OR:
             [val, err] = matrixLogicalOrElements(l.val, r.val);
             break;
-        case BIN_OP_INVALID: 
+        case BIN_OP_INVALID:
             // An invalid binary op was parsed, and added to the result tree somehow
             assert(false)
     }
@@ -212,8 +213,8 @@ function evaluateBinaryOpMatrixXMatrix(
 }
 
 function evaluateBinaryOpNumberXMatrix(
-    l: ProgramResultNumber, 
-    r: ProgramResultMatrix, 
+    l: ProgramResultNumber,
+    r: ProgramResultMatrix,
     numWasLhs: boolean,
     op: BinaryOperatorType,
 ): ProgramResultMatrix | null {
@@ -242,7 +243,7 @@ function evaluateBinaryOpNumberXMatrix(
                 setSliceValue(rCopy.values, i, x * num);
             }
         } break;
-        case BIN_OP_SUBTRACT: 
+        case BIN_OP_SUBTRACT:
             if (numWasLhs) {
                 // NOTE: this case is just copy-paste
                 for (let i = 0; i < rCopy.values.length; i++) {
@@ -306,7 +307,7 @@ function evaluateBinaryOpNumberXMatrix(
                 setSliceValue(rCopy.values, i, x || num ? 1 : 0);
             }
         } break;
-        case BIN_OP_INVALID: 
+        case BIN_OP_INVALID:
             // An invalid binary op was parsed, and added to the result tree somehow
             assert(false)
     }
@@ -315,8 +316,8 @@ function evaluateBinaryOpNumberXMatrix(
 }
 
 function evaluateBinaryOpNumberXList(
-    l: ProgramResultNumber, 
-    r: ProgramResultList, 
+    l: ProgramResultNumber,
+    r: ProgramResultList,
     numWasLhs: boolean,
     program: ProgramInterpretResult,
     step: ProgramExecutionStep,
@@ -347,7 +348,7 @@ function evaluateBinaryOpNumberXList(
 }
 
 function evaluateUnaryOp(result: ProgramInterpretResult, step: ProgramExecutionStep, val: ProgramResult, op: UnaryOperatorType): [ProgramResult | null, string] {
-    switch(op) {
+    switch (op) {
         case UNARY_OP_NOT: {
             if (val.t === T_RESULT_NUMBER) {
                 return [newNumberResult(val.val === 0 ? 1 : 0), ""];
@@ -356,13 +357,14 @@ function evaluateUnaryOp(result: ProgramInterpretResult, step: ProgramExecutionS
         case UNARY_OP_PRINT: {
             printResult(result, step, step.expr, val);
             return [val, ""];
-        } 
+        }
     }
 
     return [null, ""];
 }
 
 // Trying a product type isntead of a sum-type, will let u know how I go.
+// TODO: compress this type using the encoding pattern instead of booleans. It could be a LOT smaller.
 export type ProgramExecutionStep = {
     // which code did we type to generate this thing?
     expr: ProgramExpression;
@@ -378,7 +380,7 @@ export type ProgramExecutionStep = {
     // NOTE: turns out this is a pain to implement, so I'm removing it for now till I get the stack working. then it should be easy to re-add
     // loadPrevious?: boolean;
     // NOTE: same with this. they are related.
-    
+
     // did this top level statement just end?
     // yes if not undefined. true if it was a top-level statement.
     blockStatementEnd?: boolean;
@@ -476,7 +478,7 @@ export function executionStepToString(step: ProgramExecutionStep) {
     }
     if (step.incr !== undefined) {
         return "increment " + step.incr;
-    } 
+    }
     if (step.decr !== undefined) {
         return "decrement " + step.decr;
     }
@@ -487,12 +489,12 @@ export function executionStepToString(step: ProgramExecutionStep) {
         const value = step.call;
         const fn = value.fn;
         const name = fn.expr.fnName.name;
-        return ("Call " +  name + "(" + value.numArgs + " args) ");
+        return ("Call " + name + "(" + value.numArgs + " args) ");
     }
     if (step.builtinCall !== undefined) {
         const value = step.builtinCall;
         const name = value.fn.name
-        return ("[builtin] Call " +  name + "(" + value.numArgs + " args) ");
+        return ("[builtin] Call " + name + "(" + value.numArgs + " args) ");
     }
 
     return "Unhandled step";
@@ -508,7 +510,7 @@ type ExecutionState = {
     i: number;
     argsCount: number;
     fn: ProgramResultFunction | null;
-    
+
     // TODO: replace with an array
     variables: Map<string, number>;
     returnAddress: number;
@@ -545,9 +547,20 @@ export type ProgramPlotOutputLine = {
     expr: ProgramExpression;
     pointsX: number[];
     pointsY: number[];
-    color: Color | undefined;
+    color: CssColor | undefined;
     label: string | undefined;
     displayAsPoints: boolean;
+}
+
+export type ProgramImageOutput = {
+    pixels: number[];
+    // true -> pixels are [rgbrgbrgbrgb]
+    // false -> pixels are [vvvvvvvv] (grayscale);
+    rgb: boolean;
+    width: number;
+    height: number;
+    step: ProgramExecutionStep;
+    expr: ProgramExpression;
 }
 
 export type ProgramPlotOutput = {
@@ -558,11 +571,12 @@ export type ProgramPlotOutput = {
 export type ProgramPlotOutputHeatmapFunction = {
     step: ProgramExecutionStep;
     fn: ProgramResultFunction;
-    color: Color | undefined;
+    color: CssColor | undefined;
 }
 
 export type ProgramOutputs = {
     prints: ProgramPrintOutput[];
+    images: ProgramImageOutput[];
     plots: Map<number, ProgramPlotOutput>;
     heatmapSubdivisions: number;
 };
@@ -645,7 +659,7 @@ function getExecutionSteps(
                 dfs(expr.expr);
                 step.unaryOperator = expr.op;
             } break;
-            case T_VECTOR_LITERAL: 
+            case T_VECTOR_LITERAL:
             case T_LIST_LITERAL: {
                 for (const item of expr.items) {
                     dfs(item);
@@ -776,7 +790,7 @@ function getExecutionSteps(
                             // We must at least assert we don't have too many though.
                             if (
                                 // expr.arguments.length < fn.minArgs || 
-                                    expr.arguments.length > fn.args.length
+                                expr.arguments.length > fn.args.length
                             ) {
                                 if (fn.minArgs !== fn.args.length) {
                                     addError(expr, "Expected between " + fn.minArgs + " to " + fn.args.length + " arguments, got " + expr.arguments.length);
@@ -799,7 +813,7 @@ function getExecutionSteps(
             } break;
             case T_DATA_INDEX_OP: {
                 throw new Error("TODO: Implement data indexing");
-            } 
+            }
             default: {
                 throw new Error("Unhandled type: " + expressionTypeToString(expr));
             }
@@ -824,7 +838,7 @@ function getLengthHpMatrix(val: Matrix): number {
 }
 
 function getLength(result: ProgramResult): number | undefined {
-    switch(result.t) {
+    switch (result.t) {
         case T_RESULT_LIST: return result.values.length;
         case T_RESULT_STRING: return result.val.length;
         case T_RESULT_RANGE: return Math.abs(result.val.lo - result.val.hi);
@@ -884,12 +898,13 @@ export function startInterpreting(parseResult: ProgramParseResult, isDebugging: 
         errors: [],
         functions: new Map(),
 
-        stack: Array(64).fill(null),
+        stack: Array(1024).fill(null),
         stackIdx: 0,
         callStack: [],
 
         outputs: {
             prints: [],
+            images: [],
             plots: new Map(),
             heatmapSubdivisions: 20,
         }
@@ -924,11 +939,11 @@ export function startInterpreting(parseResult: ProgramParseResult, isDebugging: 
         getExecutionSteps(result, parseResult.statements, result.entryPoint.steps, true)
     }
 
-    result.callStack.push({ 
+    result.callStack.push({
         fn: null,
-        code: result.entryPoint, 
+        code: result.entryPoint,
         argsCount: 0,
-        i: 0, variables: new Map(), 
+        i: 0, variables: new Map(),
         returnAddress: 0,
         nextVarAddress: 1,
     });
@@ -945,7 +960,7 @@ function max(a: number, b: number): number {
     return a > b ? a : b;
 }
 
-function min (a: number, b: number): number {
+function min(a: number, b: number): number {
     return a < b ? a : b;
 }
 
@@ -971,7 +986,7 @@ function newArg(name: string, type: ProgramResult["t"][], optional = false, expr
 const builtinFunctions = new Map<string, BuiltinFunction>();
 
 function newBuiltinFunction(
-    name: string, 
+    name: string,
     args: BuiltinFunctionArgDesc[],
     fn: BuiltinFunctionSignature,
 ) {
@@ -996,8 +1011,8 @@ const ZERO_VEC4 = matrixZeroes([4]);
 function validateColor(
     program: ProgramInterpretResult, step: ProgramExecutionStep,
     colorRes: ProgramResult
-): Color | undefined {
-    let color: Color | undefined;
+): CssColor | undefined {
+    let color: CssColor | undefined;
 
     assert(colorRes.t === T_RESULT_STRING || colorRes.t === T_RESULT_MATRIX);
     if (colorRes.t === T_RESULT_STRING) {
@@ -1046,7 +1061,7 @@ function validateColor(
             label = labelMaybe.val;
         }
 
-        let color: Color | undefined;
+        let color: CssColor | undefined;
         if (colorMaybe) {
             color = validateColor(program, step, colorMaybe);
             if (!color) {
@@ -1162,7 +1177,7 @@ function validateColor(
         assert(val?.t === T_RESULT_NUMBER);
         return newNumberResult(Math.cos(val.val));
     })
-    newBuiltinFunction("tan", [newArg("t", [T_RESULT_NUMBER])], ( _result, _step, val) => {
+    newBuiltinFunction("tan", [newArg("t", [T_RESULT_NUMBER])], (_result, _step, val) => {
         assert(val?.t === T_RESULT_NUMBER);
         return newNumberResult(Math.tan(val.val));
     })
@@ -1249,7 +1264,7 @@ function validateColor(
         "set_heatmap_subdiv",
         [
             newArg("resolution", [T_RESULT_NUMBER]),
-        ], 
+        ],
         (result, _step, resolution) => {
             assert(resolution?.t === T_RESULT_NUMBER);
 
@@ -1263,12 +1278,12 @@ function validateColor(
             newArg("idx", [T_RESULT_NUMBER]),
             newArg("fn", [T_RESULT_FN]),
             newArg("hexColor", [T_RESULT_STRING, T_RESULT_MATRIX], true),
-        ], 
+        ],
         (program, step, idx, fn, colorMaybe) => {
             assert(idx?.t === T_RESULT_NUMBER);
             assert(fn?.t === T_RESULT_FN);
 
-            let color: Color | undefined;
+            let color: CssColor | undefined;
             if (colorMaybe) {
                 color = validateColor(program, step, colorMaybe);
                 if (!color) {
@@ -1284,27 +1299,149 @@ function validateColor(
             return fn;
         });
     newBuiltinFunction(
-        "plot_lines", 
+        "plot_lines",
         [
-            newArg("idx", [T_RESULT_NUMBER]), 
-            newArg("line", [T_RESULT_LIST, T_RESULT_MATRIX]), 
+            newArg("idx", [T_RESULT_NUMBER]),
+            newArg("line", [T_RESULT_LIST, T_RESULT_MATRIX]),
             newArg("hexColor", [T_RESULT_STRING, T_RESULT_MATRIX], true),
-            newArg("label", [T_RESULT_STRING], true), 
-        ], 
+            newArg("label", [T_RESULT_STRING], true),
+        ],
         (result, step, plotIdx, lines, colorMaybe, labelMaybe) => {
             return builtinPlotLines(result, step, plotIdx, lines, colorMaybe, labelMaybe, false);
         }
     );
     newBuiltinFunction(
-        "plot_points", 
+        "plot_points",
         [
-            newArg("idx", [T_RESULT_NUMBER]), 
-            newArg("line", [T_RESULT_LIST, T_RESULT_MATRIX]), 
+            newArg("idx", [T_RESULT_NUMBER]),
+            newArg("line", [T_RESULT_LIST, T_RESULT_MATRIX]),
             newArg("hexColor", [T_RESULT_STRING, T_RESULT_MATRIX], true),
-            newArg("label", [T_RESULT_STRING], true), 
-        ], 
+            newArg("label", [T_RESULT_STRING], true),
+        ],
         (result, step, plotIdx, lines, colorMaybe, labelMaybe) => {
             return builtinPlotLines(result, step, plotIdx, lines, colorMaybe, labelMaybe, true);
+        }
+    );
+    newBuiltinFunction(
+        "image",
+        [
+            newArg("vec", [T_RESULT_MATRIX]),
+        ],
+        (program, step, vec) => {
+            assert(vec?.t === T_RESULT_MATRIX);
+
+            let result: ProgramImageOutput | undefined = undefined;
+
+            const dim = vec.val.shape.length;
+            if (dim !== 1 && dim !== 2 && dim !== 3) {
+                addError(program, step, "We can only generate images from matrices that are 1,2 or 3d." + vec.val.shape.length + ")");
+                return;
+            }
+
+            if (vec.val.values.length === 0) {
+                result = { 
+                    rgb: false,
+                    pixels: [], 
+                    width: 0, 
+                    height: 0, 
+                    step, expr: step.expr 
+                };
+            } else if (
+                vec.val.shape.length === 1 ||
+                vec.val.shape.length === 2
+            ) {
+                // if 1d: greyscale line
+                let width, height;
+                if (vec.val.shape.length === 1) {
+                    width = vec.val.shape[0];
+                    height = 1;
+                } else {
+                    width = vec.val.shape[1];
+                    height = vec.val.shape[0];
+                }
+
+                let n = width * height;
+                const pixels: number[] = Array(n);
+
+                let minVal = getSliceValue(vec.val.values, 0);
+                let maxVal = minVal;
+                for (let i = 1; i < n; i++) {
+                    const val = getSliceValue(vec.val.values, i);
+                    minVal = min(val, minVal);
+                    maxVal = max(val, maxVal);
+                }
+
+                for (let i = 0; i < n; i++) {
+                    const val = getSliceValue(vec.val.values, i);
+                    const pixelVal = inverseLerp(minVal, maxVal, val);
+                    pixels[i] = pixelVal;
+                }
+
+                result = {
+                    pixels,
+                    rgb: false,
+                    width,
+                    height,
+                    step,
+                    expr: step.expr,
+                };
+            } else if (vec.val.shape.length === 3) {
+                // if 3d: use the third channel as an RGB channel
+                const width = vec.val.shape[1];
+                const height = vec.val.shape[0];
+
+                let n = width * height * 3;
+                const pixels: number[] = Array(n);
+
+                let rMinVal = getSliceValue(vec.val.values, 0);
+                let rMaxVal = rMinVal;
+                let gMinVal = getSliceValue(vec.val.values, 1);
+                let gMaxVal = rMinVal;
+                let bMinVal = getSliceValue(vec.val.values, 2);
+                let bMaxVal = rMinVal;
+                for (let i = 3; i < n; i += 3) {
+                    const rVal = getSliceValue(vec.val.values, i);
+                    rMinVal = min(rVal, rMinVal);
+                    rMaxVal = max(rVal, rMaxVal);
+
+                    const gVal = getSliceValue(vec.val.values, i);
+                    gMinVal = min(gVal, gMinVal);
+                    gMaxVal = max(gVal, gMaxVal);
+
+                    const bVal = getSliceValue(vec.val.values, i);
+                    bMinVal = min(bVal, bMinVal);
+                    bMaxVal = max(bVal, bMaxVal);
+                }
+
+                for (let i = 0; i < n; i += 3) {
+                    const rVal = getSliceValue(vec.val.values, i + 0);
+                    const rPixelVal = inverseLerp(rMinVal, rMaxVal, rVal);
+                    pixels[i + 0] = rPixelVal;
+
+                    const gVal = getSliceValue(vec.val.values, i + 1);
+                    const gPixelVal = inverseLerp(gMinVal, gMaxVal, gVal);
+                    pixels[i + 1] = gPixelVal;
+
+                    const bVal = getSliceValue(vec.val.values, i + 2);
+                    const bPixelVal = inverseLerp(bMinVal, bMaxVal, bVal);
+                    pixels[i + 2] = bPixelVal;
+                }
+
+                result = {
+                    pixels,
+                    rgb: true,
+                    width,
+                    height,
+                    step,
+                    expr: step.expr,
+                };
+            }
+
+
+            assert(result);
+            program.outputs.images.push(result);
+
+            return vec;
         }
     );
     // TODO: cool operator that does this?
@@ -1322,8 +1459,8 @@ function validateColor(
 function getOrAddNewPlot(result: ProgramInterpretResult, idx: number): ProgramPlotOutput {
     let plot = result.outputs.plots.get(idx);
     if (!plot) {
-        plot = { 
-            lines: [], 
+        plot = {
+            lines: [],
             functions: [],
         };
         result.outputs.plots.set(idx, plot);
@@ -1345,9 +1482,9 @@ function getBuiltinFunction(name: string): BuiltinFunction | undefined {
 }
 
 function evaluateBuiltinFunction(
-    fn: BuiltinFunction, 
+    fn: BuiltinFunction,
     numArgsInputted: number,
-    program: ProgramInterpretResult, 
+    program: ProgramInterpretResult,
     step: ProgramExecutionStep
 ): ProgramResult | undefined {
     let numArgsToPull = numArgsInputted;
@@ -1365,7 +1502,7 @@ function evaluateBuiltinFunction(
 
         if (typeInfo.type.length > 0) {
             if (
-                (!res && !typeInfo.optional) || 
+                (!res && !typeInfo.optional) ||
                 (res && !typeInfo.type.includes(res.t))
             ) {
                 let expectedType;
@@ -1381,15 +1518,15 @@ function evaluateBuiltinFunction(
 
                 const gotType = (res ? programResultTypeStringInternal(res.t) : "nothing");
 
-                addError(program, step, "Expected " + expectedType  + " for " + typeInfo.name + ", got " + gotType);
+                addError(program, step, "Expected " + expectedType + " for " + typeInfo.name + ", got " + gotType);
                 return null;
             }
         }
 
         return res;
     }
-    
-    switch(numArgsToPull) {
+
+    switch (numArgsToPull) {
         case 0: return fn.fn(program, step);
         case 1: {
             const arg1 = getArg(program, step, 0);
@@ -1439,8 +1576,8 @@ function evaluateBuiltinFunction(
 }
 
 function pushFunctionCallFrame(
-    program: ProgramInterpretResult, 
-    fn: ProgramResultFunction, 
+    program: ProgramInterpretResult,
+    fn: ProgramResultFunction,
     numArgs: number
 ) {
     assert(numArgs <= fn.args.length);
@@ -1466,9 +1603,9 @@ function pushFunctionCallFrame(
 }
 
 export function startEvaluatingFunctionWithingProgramWithArgs(
-    program: ProgramInterpretResult, 
+    program: ProgramInterpretResult,
     step: ProgramExecutionStep,    // the step to report the error against
-    fn: ProgramResultFunction, 
+    fn: ProgramResultFunction,
     args: ProgramResult[],
 ): boolean {
     if (program.isDebugging) {
@@ -1488,9 +1625,9 @@ export function startEvaluatingFunctionWithingProgramWithArgs(
 }
 
 export function evaluateFunctionWithinProgramWithArgs(
-    program: ProgramInterpretResult, 
+    program: ProgramInterpretResult,
     step: ProgramExecutionStep,    // the step to report the error against
-    fn: ProgramResultFunction, 
+    fn: ProgramResultFunction,
     args: ProgramResult[],
 ): ProgramResult | null {
     if (!startEvaluatingFunctionWithingProgramWithArgs(program, step, fn, args)) {
@@ -1705,7 +1842,7 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
                 if (innerT !== val.t) {
                     addError(result, step, "The items inside this vector/matrix have inconsistent types");
                     return false;
-                } 
+                }
 
                 if (innerLen !== rowLen) {
                     addError(result, step, "The items inside this vector/matrix have inconsistent lengths");
@@ -1859,7 +1996,7 @@ function interpretRestOfProgram(result: ProgramInterpretResult) {
         const step = call.code.steps[call.i];
 
         // Could do the funniest thing here - "Log in and purchase a premium account to unlock more iterations"
-        
+
         // TODO: allow user to override or disable this.
         addError(result, step, "The program terminated here, because it reached the maximum number of iterations (" + MAX_ITERATIONS + ")");
     }

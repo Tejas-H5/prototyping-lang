@@ -1,5 +1,5 @@
 import { beginTextArea } from './components/text-area.ts';
-import { evaluateFunctionWithinProgramWithArgs, ProgramExecutionStep, ExecutionSteps, executionStepToString, getCurrentCallstack, interpret, newNumberResult, ProgramInterpretResult, ProgramPlotOutput, ProgramPlotOutputHeatmapFunction, ProgramResult, ProgramResultNumber, programResultTypeString, startInterpreting, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING, ProgramResultFunction } from './program-interpreter.ts';
+import { evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getCurrentCallstack, interpret, newNumberResult, ProgramExecutionStep, ProgramInterpretResult, ProgramPlotOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, startInterpreting, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING } from './program-interpreter.ts';
 import {
     binOpToString,
     binOpToOpString as binOpToSymbolString,
@@ -29,7 +29,7 @@ import {
 import { GlobalContext, GlobalState, newGlobalContext, saveState, startDebugging } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars, getCurrentTheme } from './styling.ts';
-import { abortListAndRewindUiStack, assert, beginFrame, beginList, cn, deferClickEventToParent, deltaTimeSeconds, div, el, elementHasMouseClick, elementHasMouseOver, elementWasLastClicked, end, endFrame, endList, getKeys, getMouse, imInit, beginMemo, imPreventScrollEventPropagation, imRef, imSetVal, imState, imStateInline, imVal, isShiftPressed, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setInnerText, setStyle, span, UIRoot, endMemo, imSb } from './utils/im-dom-utils.ts';
+import { abortListAndRewindUiStack, assert, beginFrame, beginList, beginMemo, cn, deferClickEventToParent, deltaTimeSeconds, div, el, elementHasMouseClick, elementHasMouseOver, elementWasLastClicked, end, endFrame, endList, endMemo, getKeys, getMouse, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackRectSize, imVal, isShiftPressed, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setInnerText, setStyle, span, UIRoot } from './utils/im-dom-utils.ts';
 import { clamp, inverseLerp, lerp, max, min } from './utils/math-utils.ts';
 import { getSliceValue } from './utils/matrix-math.ts';
 import { getLineBeforePos, getLineEndPos, getLineStartPos } from './utils/text-utils.ts';
@@ -1014,18 +1014,23 @@ function newCanvasElement() {
     return document.createElement("canvas");
 }
 
+function verticalBar() {
+    div(); {
+        imInit() && setAttributes({
+            style: `width: 5px; background-color: ${cssVars.fg};`
+        });
+    } end();
+}
+
 function renderProgramOutputs(program: ProgramInterpretResult) {
     const outputs = program.outputs;
 
+    // TODO: scroll container, also collapse repeated prints.
     beginList();
     for (const result of outputs.prints) {
         nextRoot(); 
         beginLayout(ROW | GAP); {
-            div(); {
-                imInit() && setAttributes({
-                    style: `width: 5px; background-color: ${cssVars.fg};`
-                });
-            } end();
+            verticalBar();
 
             beginLayout(COL | GAP); {
                 beginCodeBlock(0); {
@@ -1036,6 +1041,89 @@ function renderProgramOutputs(program: ProgramInterpretResult) {
 
                 beginLayout(FLEX); {
                     renderProgramResult(result.val);
+                } end();
+            } end();
+        } end();
+    };
+    endList();
+    beginList();
+    for (const image of outputs.images) {
+        nextRoot(); 
+        beginLayout(ROW | GAP); {
+            verticalBar();
+
+            beginLayout(COL | GAP | FLEX); {
+                beginCodeBlock(0); {
+                    textSpan(
+                        expressionToString(image.expr)
+                    )
+                } end();
+
+                beginLayout(FLEX | RELATIVE); {
+                    const { rect } = imTrackRectSize();
+
+                    beginList();
+                    if (nextRoot() && (image.width !== 0)) {
+                        const [canvasRoot, ctx] = beginCanvasRenderingContext2D();
+                        const canvas = canvasRoot.root; {
+                            const { width: containerWidth, height: containerHeight } = rect;
+                            if (beginMemo().val(containerWidth).val(containerHeight).val(image).changed()) {
+                                let pixelSize = 30;
+                                let imageClientWidth = image.width * pixelSize;
+                                let imageClientHeight = image.height * pixelSize;
+
+                                if (imageClientWidth > containerWidth) {
+                                    pixelSize = containerWidth / image.width;
+                                    imageClientWidth = image.width * pixelSize;
+                                    imageClientHeight = image.height * pixelSize;
+                                }
+
+                                canvas.width = imageClientWidth;
+                                canvas.height = imageClientHeight;
+
+                                for (let i = 0; i < image.width; i++) {
+                                    for (let j = 0; j < image.height; j++) {
+                                        const x0 = i * pixelSize;
+                                        const y0 = j * pixelSize;
+                                        let color;
+                                        if (image.rgb) {
+                                            const idx = (j * image.width + i) * 3;
+                                            assert(idx + 2 < image.pixels.length);
+
+                                            const r = image.pixels[idx];
+                                            const g = image.pixels[idx + 1];
+                                            const b = image.pixels[idx + 2];
+
+                                            color = `rgb(${r * 255}, ${g * 255}, ${b * 255})`;
+                                        } else {
+                                            const idx = (j * image.width + i);
+                                            assert(idx < image.pixels.length);
+                                            const v = image.pixels[idx];
+                                            color = `rgb(${v * 255}, ${v * 255}, ${v * 255})`;
+                                        }
+
+                                        ctx.beginPath();
+                                        {
+                                            ctx.fillStyle = color;
+                                            drawRectSized(ctx, x0, y0, pixelSize, pixelSize);
+                                            ctx.fill();
+                                        }
+                                        ctx.closePath();
+                                    }
+                                }
+
+                                // draw boundary at the end, so we don't draw over it
+                                drawBoundary(ctx, imageClientWidth, imageClientHeight);
+                            } endMemo();
+                        } end();
+                    } else {
+                        nextRoot();
+                        beginLayout(COL | ALIGN_CENTER | JUSTIFY_CENTER); {
+                            textSpan("Value was empty");
+                        } end();
+                    }
+                    endList();
+
                 } end();
             } end();
         } end();
@@ -1207,6 +1295,56 @@ function drawPointAt(ctx: CanvasRenderingContext2D, x: number, y: number, halfSi
     ctx.closePath();
 }
 
+function beginCanvasRenderingContext2D() {
+    const canvasRoot = el(newCanvasElement);
+    const canvas = canvasRoot.root; 
+    let ctx = imVal<[UIRoot<HTMLCanvasElement>, CanvasRenderingContext2D] | null>(null);
+        if (!ctx) {
+            const context = canvas.getContext("2d");
+            if (!context) {
+                throw new Error("Canvas 2d isn't supported by your browser!!! I'd suggest _not_ plotting anything. Or updaing your browser");
+            }
+            ctx = imSetVal([canvasRoot, context]);
+        }
+
+    return ctx;
+}
+
+function drawRectSized(
+    ctx: CanvasRenderingContext2D,
+    x0: number, y0: number, 
+    w: number, h: number,
+) {
+    ctx.rect(x0, y0, w, h);
+}
+
+function drawRect(
+    ctx: CanvasRenderingContext2D,
+    x0: number, y0: number, 
+    x1: number, y1: number
+) {
+    ctx.rect(
+        x0, y0, 
+        x1 - x0, y1 - y0
+    );
+}
+
+function drawBoundary(ctx: CanvasRenderingContext2D, width: number, height: number) {
+    ctx.beginPath();
+    {
+        const offset = 1
+        ctx.strokeStyle = cssVars.fg;
+        ctx.lineWidth = 2;
+        drawRect(
+            ctx,
+            offset, offset,
+            width - offset, height - offset
+        );
+        ctx.stroke();
+    }
+    ctx.closePath();
+}
+
 function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
     const isMaximized = currentMaximizedPlot === plot;
 
@@ -1246,7 +1384,9 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                 } end();
             } end();
 
-            const container = beginLayout(FLEX | RELATIVE).root; {
+            beginLayout(FLEX | RELATIVE).root; {
+                const { rect } = imTrackRectSize();
+
                 const shiftScrollToZoomVal = imRef<number>();
 
                 const problems = imRef<string[]>();
@@ -1254,7 +1394,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                     problems.val = [];
                 }
 
-                const canvasRoot = el(newCanvasElement); 
+                const [canvasRoot, ctx] = beginCanvasRenderingContext2D();
                 const canvas = canvasRoot.root; {
                     if (imInit()) {
                         setStyle("cursor", "move");
@@ -1272,7 +1412,13 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
 
                     plotState.maximized = isMaximized;
 
-                    if (beginMemo().val(plot).changed()) {
+                    const { width, height } = rect;
+                    if (beginMemo().val(plot).val(width).val(height).changed()) {
+                        plotState.width = rect.width;
+                        plotState.height = rect.height;
+                        canvas.width = width;
+                        canvas.height = height;
+
                         let minX = Number.MAX_SAFE_INTEGER;
                         let maxX = Number.MIN_SAFE_INTEGER;
                         let minY = Number.MAX_SAFE_INTEGER;
@@ -1329,9 +1475,6 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                             // When we zoom in or out, we want the graph-point that the mouse is currently over
                             // to remain the same.
 
-                            // TODO: a better way to get boundingRect without triggering reflows
-                            const rect = container.getBoundingClientRect();
-
                             const mouseX = mouse.X - rect.left;
                             const mouseY = mouse.Y - rect.top;
                             const mouseXPlot = getPlotX(plotState, mouseX);
@@ -1360,14 +1503,6 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                         }
                     }
 
-                    let ctx = imVal<CanvasRenderingContext2D | null>(null); 
-                    if (!ctx) {
-                        ctx = imSetVal(canvas.getContext("2d"));
-                        if (!ctx) {
-                            throw new Error("Canvas 2d isn't supported by your browser!!! I'd suggest _not_ plotting anything. Or updaing your browser");
-                        }
-                    }
-
                     const rows = imRef<number[][]>();
                     if (!rows.val) {
                         rows.val = [];
@@ -1376,34 +1511,9 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                     if (beginMemo().val(plot).objectVals(plotState).changed()) {
                         problems.val.length = 0;
 
-
-                        // TODO: a better way to get boundingRect without triggering reflows
-                        const rect = container.getBoundingClientRect();
-
-                        canvas.width = rect.width;
-                        canvas.height = rect.height;
-
-                        plotState.width = rect.width;
-                        plotState.height = rect.height;
-
                         const { width, height } = plotState;
 
                         ctx.clearRect(0, 0, width, height);
-
-                        // draw boundary
-                        ctx.beginPath();
-                        {
-                            ctx.strokeStyle = cssVars.fg;
-                            ctx.lineWidth = 2;
-                            const offset = 1;
-                            ctx.moveTo(offset, offset);
-                            ctx.lineTo(offset, height - offset);
-                            ctx.lineTo(width - offset, height - offset);
-                            ctx.lineTo(width - offset, offset);
-                            ctx.lineTo(offset, offset);
-                            ctx.stroke();
-                        }
-                        ctx.closePath();
 
                         // draw function heatmaps (if the program had no errors, since we need to evaluate the function in the same program context)
                         if (program.errors.length === 0) {
@@ -1485,8 +1595,6 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                                             const x0 = getCanvasElementX(plotState, evalPointX);
                                             const y0 = getCanvasElementY(plotState, evalPointY);
 
-                                            
-
                                             ctx.fillStyle = color.toCssString(heat);
                                             ctx.beginPath(); {
                                                 ctx.rect(x0, y0, sizeScreen, sizeScreen);
@@ -1557,6 +1665,9 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                                 }
                             }
                         }
+
+                        // draw boundary at the end, so we don't draw over it
+                        drawBoundary(ctx, width, height)
                     } endMemo();
                 } end();
 
@@ -1584,7 +1695,6 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                     } end();
                 }
                 endList();
-
             } end();
         } end();
     } end();
