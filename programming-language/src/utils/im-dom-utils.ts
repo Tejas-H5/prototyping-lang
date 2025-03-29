@@ -510,6 +510,8 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     // If there was no supplier, then this root is attached to the same DOM element as another UI root that does have a supplier.
     readonly elementSupplier: (() => ValidElement) | null;
 
+    readonly destructors: (() => void)[] = [];
+
     readonly items = newImArray<UIRootItem>();
     lockImArray = false;
     
@@ -520,6 +522,7 @@ export class UIRoot<E extends ValidElement = ValidElement> {
 
     // Probably not needed, now that we're just rerendering the app in an animation frame.
     removed = true;
+    destroyed = false;
 
     began = false;
 
@@ -574,7 +577,8 @@ export class UIRoot<E extends ValidElement = ValidElement> {
 
         if (this.items.idx === -1) {
             // we rendered nothing to this root, so we should just remove it.
-            this.__removeAllDomElements();
+            // however, we may render to it again on a subsequent render.
+            this.__removeAllDomElements(false);
         }
     }
 
@@ -631,14 +635,28 @@ export class UIRoot<E extends ValidElement = ValidElement> {
         assert(this.elementSupplier !== null);
     }
 
-    __onRemove() {
+    __onRemove(destroy: boolean) {
         this.removed = true;
         for (let i = 0; i < this.items.items.length; i++) {
             const item = this.items.items[i];
             if (item.t === ITEM_UI_ROOT) {
-                item.v.__onRemove();
+                item.v.__onRemove(destroy);
             } else if (item.t === ITEM_LIST) {
-                item.v.__onRemove();
+                item.v.__onRemove(destroy);
+            }
+        }
+
+        if (destroy) {
+            // Don't call this twice.
+            assert(!this.destroyed);
+
+            this.destroyed = true;
+            for (const d of this.destructors) {
+                try {
+                    d();
+                } catch (e) {
+                    console.log("A destructor threw an exception: ", e);
+                }
             }
         }
     }
@@ -646,12 +664,12 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     // NOTE: If this is being called before we've rendered any components here, it should be ok.
     // if it's being called during a render, then that is typically an incorrect usage - the domAppender's index may or may not be incorrect now, because
     // we will have removed HTML elements out from underneath it. You'll need to ensure that this isn't happening in your use case.
-    __removeAllDomElements() {
+    __removeAllDomElements(destroy: boolean) {
         for (let i = 0; i < this.items.items.length; i++) {
             const item = this.items.items[i];
             if (item.t === ITEM_UI_ROOT) {
                 item.v.domAppender.root.remove();
-                item.v.__onRemove();
+                item.v.__onRemove(destroy);
             } else if (item.t === ITEM_LIST) {
                 // needs to be fully recursive. because even though our UI tree is like
                 //
@@ -660,9 +678,13 @@ export class UIRoot<E extends ValidElement = ValidElement> {
                 //     -list
                 // 
                 // They're still all rendering to the same DOM root!!!
-                item.v.__removeAllDomElementsFromList();
+                item.v.__removeAllDomElementsFromList(destroy);
             }
         }
+    }
+
+    addDestructor(destructor: () => void) {
+        this.destructors.push(destructor);
     }
 }
 
@@ -755,33 +777,33 @@ export class ListRenderer {
 
         // remove all the UI components that may have been added by other builders in the previous render.
         for (let i = this.builderIdx; i < this.builders.length; i++) {
-            this.builders[i].__removeAllDomElements();
+            this.builders[i].__removeAllDomElements(true);
         }
         this.builders.length = this.builderIdx;
         for (const [k, v] of this.keys) {
             if (!v.rendered) {
-                v.root.__removeAllDomElements();
+                v.root.__removeAllDomElements(true);
                 this.keys.delete(k);
             }
         }
     }
 
-    __onRemove() {
+    __onRemove(destroy: boolean) {
         for (let i = 0; i < this.builders.length; i++) {
-            this.builders[i].__onRemove();
+            this.builders[i].__onRemove(destroy);
         }
         for (const v of this.keys.values()) {
-            v.root.__onRemove();
+            v.root.__onRemove(destroy);
         }
     }
 
     // kinda have to assume that it's valid to remove these elements.
-    __removeAllDomElementsFromList() {
+    __removeAllDomElementsFromList(destroy: boolean) {
         for (let i = 0; i < this.builders.length; i++) {
-            this.builders[i].__removeAllDomElements();
+            this.builders[i].__removeAllDomElements(destroy);
         }
         for (const v of this.keys.values()) {
-            v.root.__removeAllDomElements();
+            v.root.__removeAllDomElements(destroy);
         }
     }
 
@@ -947,7 +969,11 @@ function imStateInternal<T>(supplier: () => T, skipSupplierCheck: boolean): T {
 
     let result = imGetNext(r.items);
     if (!result) {
-        result = imPush(r.items, { t: ITEM_STATE, v: supplier(), supplier });
+        // NOTE: supplier can call getCurrentRoot() internally, and even add destructors.
+        disableIm();
+        const val = supplier();
+        enableIm();
+        result = imPush(r.items, { t: ITEM_STATE, v: val, supplier });
     } else {
         if (result.t !== ITEM_STATE) {
             // The same hooks must be called in the same order every time
@@ -993,7 +1019,7 @@ export function imState<T>(supplier: () => T): T {
  * leading to potential data corruption. 
  *
  */
-export function imStateInline<T>(supplier: () => T): T {
+export function imStateInline<T>(supplier: () => T) : T {
     return imStateInternal(supplier, true);
 }
 
@@ -1387,7 +1413,7 @@ export function imTryCatch({
         } catch (error) {
 
             const recover = () => {
-                l.__removeAllDomElementsFromList();
+                l.__removeAllDomElementsFromList(false);
                 rerender();
             }
 
@@ -1410,7 +1436,7 @@ export function abortListAndRewindUiStack(l: ListRenderer) {
 
     const r = l.current;
     if (r) {
-        r.__removeAllDomElements();
+        r.__removeAllDomElements(false);
 
         // need to reset the dom root, since we've just removed elements underneath it
         resetDomAppender(r.domAppender);
@@ -1572,31 +1598,52 @@ export function endMemo() {
  * Seems like simply doing r.root.onwhatever = () => { blah } destroys performance,
  * so this  method exists now...
  *
- * NOTE: assumes that `type` never changes.
- *
- * TODO: verify if we actually need to remove event handlers or not. I haven't
- * ran into any issues by not doing this.
- * @deprecated
  */
-// export function imOn<K extends keyof HTMLElementEventMap>(
-//     type: K,
-//     listener: (this: HTMLElement, ev: HTMLElementEventMap[K]) => any,
-//     options?: boolean | AddEventListenerOptions
-// ) {
-//     const r = getCurrentRootInternal();
-//     const handlerRef = imRef<((ev: HTMLElementEventMap[K]) => any)>();
-//     if (handlerRef.val === null) {
-//         handlerRef.val = listener;
-//         r.root.addEventListener(type, (e) => {
-//             assert(!!handlerRef.val);
-//
-//             // @ts-expect-error I don't have the typescript skill to explain to typescript why this is actually fine.
-//             handlerRef.val!(e);
-//         }, options);
-//     } else {
-//         handlerRef.val = listener;
-//     }
-// }
+export function imOn<K extends keyof HTMLElementEventMap>(
+    type: K,
+): HTMLElementEventMap[K] | null {
+    const eventRef = imRef<HTMLElementEventMap[K]>();
+    const typeRef = imRef<string>();
+    const handlerRef = imRef<(this: HTMLElement, ev: HTMLElementEventMap[K]) => any>();
+
+    if (imInit()) {
+        const r = getCurrentRoot();
+        r.addDestructor(() => {
+            if (typeRef.val && handlerRef.val) {
+                r.root.removeEventListener(
+                    typeRef.val,
+                    // @ts-expect-error this thing is fine, actually.
+                    handlerRef.val
+                );
+            }
+        });
+    }
+
+    if (type !== typeRef.val) {
+        const r = getCurrentRoot();
+        if (typeRef.val && handlerRef.val) {
+            r.root.removeEventListener(
+                typeRef.val, 
+                // @ts-expect-error this thing is fine, actually.
+                handlerRef.val
+            );
+        }
+
+        typeRef.val = type;
+        handlerRef.val = (e) => eventRef.val = e;
+
+        r.root.addEventListener(
+            type, 
+            // @ts-expect-error this thing is fine, actually.
+            handlerRef.val
+        );
+    }
+
+    const ev = eventRef.val;
+    eventRef.val = null;
+
+    return ev;
+}
 
 
 /**
@@ -1703,18 +1750,33 @@ export function deltaTimeSeconds(): number {
     return dtSeconds;
 }
 
+let renderTwice = false;
+export function queueSecondRerender() {
+    renderTwice = true;
+}
+
 export function initializeDomRootAnimiationLoop(renderFn: () => void, renderRoot?: UIRoot) {
+    const doRender = () => {
+        startRendering(renderRoot);
+        renderFn();
+
+        // If this throws, then you've forgotten to pop some elements off the stack.
+        // inspect currentStack in the debugger for more info
+        assert(currentStack.length === 1);
+    }
     const animation = (t: number) => {
         dtSeconds = (t - lastTime) / 1000;
         lastTime = t;
 
-        if (dtSeconds > 0 && dtSeconds < MAX_VALID_DELTATIME_SECONDS) {
-            startRendering(renderRoot);
-            renderFn();
+        if (dtSeconds < MAX_VALID_DELTATIME_SECONDS) {
+            doRender();
+        }
 
-            // If this throws, then you've forgotten to pop some elements off the stack.
-            // inspect currentStack in the debugger for more info
-            assert(currentStack.length === 1);
+        if (renderTwice) {
+            // Used to allow for some off-by-one-frame events to actually not be off by one frame.
+            // Sometimes it works, sometimes it doesn't....
+            renderTwice = false;
+            doRender();
         }
 
         requestAnimationFrame(animation);
@@ -1766,7 +1828,10 @@ export function getKeys() {
 export function elementHasMouseClick() {
     const mouse = getMouse();
     const r = getCurrentRoot();
-    return mouse.leftMouseButton && r.root === clickedElement;
+    if (r.root === clickedElement) {
+        return mouse.leftMouseButton;
+    }
+    return  false;
 }
 
 export function elementWasLastClicked() {
@@ -1822,6 +1887,9 @@ export function initializeImEvents() {
         hoverElement = e.target;
 
     });
+    document.addEventListener("mouseenter", (e) => {
+        hoverElement = e.target;
+    });
     document.addEventListener("mouseup", (e) => {
         if (e.button === 0) {
             mouse.leftMouseButton = false;
@@ -1833,6 +1901,7 @@ export function initializeImEvents() {
     });
     document.addEventListener("wheel", (e) => {
         mouse.scrollY += e.deltaY;
+        hoverElement = e.target;
         e.preventDefault();
     });
     document.addEventListener("keydown", (e) => {
@@ -1948,8 +2017,11 @@ export function imSb() {
     return imState(newImmmediateModeStringBuilder);
 }
 
+let numResizeObservers = 0;
+
 function newImGetSizeState() {
     const r = getCurrentRoot();
+
     const self = {
         rect: {
             top: 0,
@@ -1963,6 +2035,7 @@ function newImGetSizeState() {
             for (const entry of entries) {
                 const rect = entry.target.getBoundingClientRect();
 
+                queueSecondRerender();
                 self.rect.width = rect.width;
                 self.rect.height = rect.height;
                 self.rect.top = rect.top;
@@ -1973,7 +2046,16 @@ function newImGetSizeState() {
             }
         })
     };
+
     self.observer.observe(r.root);
+    numResizeObservers++;
+    console.log(numResizeObservers);
+    r.addDestructor(() => {
+        numResizeObservers--;
+        self.observer.disconnect()
+        console.log(numResizeObservers);
+    });
+
     return self;
 }
 

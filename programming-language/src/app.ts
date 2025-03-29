@@ -1,5 +1,5 @@
 import { beginTextArea } from './components/text-area.ts';
-import { evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getCurrentCallstack, interpret, newNumberResult, ProgramExecutionStep, ProgramInterpretResult, ProgramPlotOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, startInterpreting, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING, UI_INPUT_SLIDER } from './program-interpreter.ts';
+import { evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getCurrentCallstack, interpret, newNumberResult, ProgramExecutionStep, ProgramImageOutput, ProgramGraphOutput, ProgramInterpretResult, ProgramPlotOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MAP, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING, UI_INPUT_SLIDER } from './program-interpreter.ts';
 import {
     binOpToString,
     binOpToOpString as binOpToSymbolString,
@@ -17,6 +17,7 @@ import {
     T_IDENTIFIER,
     T_IDENTIFIER_THE_RESULT_FROM_ABOVE,
     T_LIST_LITERAL,
+    T_MAP_LITERAL,
     T_NUMBER_LITERAL,
     T_RANGE_FOR,
     T_STRING_LITERAL,
@@ -182,24 +183,24 @@ function newH3() {
 
 // Don't forget to call end()
 function beginCodeBlock(indent: number) {
-    const root = beginLayout(CODE); { 
+    const root = beginLayout(CODE); {
         setStyle("paddingLeft", (4 * indent) + "ch");
-    } 
+    }
 
     return root;
 }
 
 
 function ParserOutput(parseResult: ProgramParseResult | undefined) {
-    beginList(); 
+    beginList();
     if (nextRoot() && parseResult) {
         const statements = parseResult.statements;
 
-        beginList(); 
+        beginList();
         if (nextRoot() && statements.length > 0) {
 
             function renderRow(title: string, type: string, depth: number, code?: string) {
-                nextRoot(); 
+                nextRoot();
                 div(); {
                     setStyle("paddingLeft", (depth * 20) + "px");
 
@@ -254,7 +255,15 @@ function ParserOutput(parseResult: ProgramParseResult | undefined) {
                         renderRow(title, unaryOpToString(expr.op), depth, text);
                         dfs("expr", expr.expr, depth + 1);
                     } break;
-                    case T_LIST_LITERAL: 
+                    case T_MAP_LITERAL: {
+                        renderRow(title, typeString, depth, expressionToString(expr));
+
+                        for (let i = 0; i < expr.kvPairs.length; i++) {
+                            dfs("key[" + i + "]", expr.kvPairs[i][0], depth + 1);
+                            dfs("val[" + i + "]", expr.kvPairs[i][1], depth + 1);
+                        }
+                    } break;
+                    case T_LIST_LITERAL:
                     case T_VECTOR_LITERAL: {
                         renderRow(title, typeString, depth, expressionToString(expr));
 
@@ -311,7 +320,7 @@ function ParserOutput(parseResult: ProgramParseResult | undefined) {
                         }
                     } break;
                     default: {
-                        throw new Error("Unhandled type: " + typeString);
+                        throw new Error("Unhandled type (parse view): " + typeString);
                     }
                 }
             }
@@ -354,9 +363,9 @@ function renderDiagnosticInfo(heading: string, info: DiagnosticInfo[], emptyText
         } end();
     } endList();
 
-    beginList(); 
+    beginList();
     for (const e of info) {
-        nextRoot(); 
+        nextRoot();
         div(); {
             textSpan("Line " + e.pos.line + " Col " + (e.pos.col + 1) + " - " + e.problem);
         } end();
@@ -391,7 +400,7 @@ function renderProgramResult(res: ProgramResult) {
                         break;
                     case T_RESULT_LIST:
                         beginCodeBlock(0); {
-                            textSpan("[", CODE);
+                            textSpan("list[", CODE);
                             beginCodeBlock(1); {
                                 beginList();
                                 for (let i = 0; i < res.values.length; i++) {
@@ -400,9 +409,24 @@ function renderProgramResult(res: ProgramResult) {
                                 }
                                 endList();
                             } end();
-                            textSpan("]L", CODE);
+                            textSpan("]", CODE);
                         } end();
                         break;
+                    case T_RESULT_MAP: {
+                        beginCodeBlock(0); {
+                            textSpan("map{", CODE);
+                            beginCodeBlock(1); {
+                                beginList();
+                                for (const [k, val] of res.map) {
+                                    nextRoot();
+                                    textSpan(k + "", CODE);
+                                    renderProgramResult(val);
+                                }
+                                endList();
+                            } end();
+                            textSpan("}", CODE);
+                        } end();
+                    } break;
                     case T_RESULT_MATRIX:
                         let idx = 0;
                         const dfs = (dim: number, isLast: boolean) => {
@@ -417,7 +441,7 @@ function renderProgramResult(res: ProgramResult) {
                                 beginList();
                                 if (nextRoot() && !isLast) {
                                     textSpan(", ");
-                                } 
+                                }
                                 endList();
 
                                 return;
@@ -474,7 +498,7 @@ function beginExpandableSectionHeading(text: string, isCollapsed: boolean) {
             setStyle("cursor", "pointer");
             setClass(cn.userSelectNone);
         }
-    } 
+    }
 
     return root;
 }
@@ -489,9 +513,9 @@ function renderFunctionInstructions(interpretResult: ProgramInterpretResult, { n
             let rCurrent: UIRoot<HTMLElement> | undefined;
 
             beginCodeBlock(0); {
-                beginList(); 
+                beginList();
                 if (nextRoot() && steps.length > 0) {
-                    beginList(); 
+                    beginList();
                     for (let i = 0; i < steps.length; i++) {
                         nextRoot();
 
@@ -523,7 +547,7 @@ function renderFunctionInstructions(interpretResult: ProgramInterpretResult, { n
                     div(); {
                         textSpan("no instructions present");
                     } end();
-                } 
+                }
                 endList();
             } end();
 
@@ -615,7 +639,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
         } end();
 
         beginList();
-        if(nextRoot() && !ctx.state.collapseInterpreterPass1Output) {
+        if (nextRoot() && !ctx.state.collapseInterpreterPass1Output) {
             beginList();
             if (nextRoot() && ctx.lastInterpreterResult) {
                 const interpretResult = ctx.lastInterpreterResult;
@@ -644,7 +668,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
                         renderFunctionInstructions(interpretResult, interpretResult.entryPoint);
 
                         for (const [, fn] of interpretResult.functions) {
-                            nextRoot(); 
+                            nextRoot();
 
                             beginLayout(ROW | GAP); {
                                 const fnName = imFunctionName(fn);
@@ -715,7 +739,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
             beginLayout(COL | GAP); {
                 beginList();
                 for (const eg of codeExamples) {
-                    nextRoot(); 
+                    nextRoot();
                     beginButton(); {
                         textSpan(eg.name);
 
@@ -723,23 +747,23 @@ function renderAppCodeOutput(ctx: GlobalContext) {
                             ctx.state.text = eg.code.trim();
                         }
                     } end();
-                } 
+                }
                 endList();
             } end();
-        } 
+        }
         endList();
     } end();
 }
 
 function renderDiagnosticInfoOverlay(
-    state: GlobalState, 
-    textAreaRef: Ref<HTMLTextAreaElement>, 
-    errors: DiagnosticInfo[], 
+    state: GlobalState,
+    textAreaRef: Ref<HTMLTextAreaElement>,
+    errors: DiagnosticInfo[],
     color: string
 ) {
-    beginList(); 
+    beginList();
     for (const e of errors) {
-        nextRoot(); 
+        nextRoot();
         beginLayout(PREWRAP | ABSOLUTE | W100 | H100 | CODE | TRANSPARENT); {
             imInit() && setClass(cn.pointerEventsNone);
 
@@ -836,7 +860,7 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
             beginLayout(FLEX); {
                 beginButton(); {
                     textSpan("Stop debugging");
-                    if(elementHasMouseClick()) {
+                    if (elementHasMouseClick()) {
                         ctx.isDebugging = false;
                     }
                 } end();
@@ -923,7 +947,7 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
                         for (let addr = 0; addr <= n; addr++) {
                             const res = interpretResult.stack[addr];
 
-                            nextRoot(); 
+                            nextRoot();
 
                             div(); {
                                 beginLayout(ROW | GAP); {
@@ -1136,6 +1160,201 @@ function renderSliderBody(
     return s;
 }
 
+function renderImageOutput(image: ProgramImageOutput) {
+    beginMaximizeableContainer(image); {
+        beginLayout(COL | OPAQUE | FLEX | GAP); {
+            beginLayout(ROW | GAP); {
+                maximizeItemButton(image);
+            } end();
+
+            beginLayout(FLEX | RELATIVE); {
+                const { rect } = imTrackRectSize();
+
+                beginList();
+                if (nextRoot() && (image.width !== 0)) {
+                    const [canvasRoot, ctx] = beginCanvasRenderingContext2D();
+                    const canvas = canvasRoot.root; {
+                        const { width: containerWidth, height: containerHeight } = rect;
+                        if (beginMemo().val(containerWidth).val(containerHeight).val(image).changed()) {
+                            let pixelSize = 30;
+                            let imageClientWidth = image.width * pixelSize;
+                            let imageClientHeight = image.height * pixelSize;
+
+                            if (imageClientWidth > containerWidth) {
+                                pixelSize = containerWidth / image.width;
+                                imageClientWidth = image.width * pixelSize;
+                                imageClientHeight = image.height * pixelSize;
+                            }
+
+                            canvas.width = imageClientWidth;
+                            canvas.height = imageClientHeight;
+
+                            for (let i = 0; i < image.width; i++) {
+                                for (let j = 0; j < image.height; j++) {
+                                    const x0 = i * pixelSize;
+                                    const y0 = j * pixelSize;
+                                    let color;
+                                    if (image.rgb) {
+                                        const idx = (j * image.width + i) * 3;
+                                        assert(idx + 2 < image.pixels.length);
+
+                                        const r = image.pixels[idx];
+                                        const g = image.pixels[idx + 1];
+                                        const b = image.pixels[idx + 2];
+
+                                        color = `rgb(${r * 255}, ${g * 255}, ${b * 255})`;
+                                    } else {
+                                        const idx = (j * image.width + i);
+                                        assert(idx < image.pixels.length);
+                                        const v = image.pixels[idx];
+                                        color = `rgb(${v * 255}, ${v * 255}, ${v * 255})`;
+                                    }
+
+                                    ctx.beginPath();
+                                    {
+                                        ctx.fillStyle = color;
+                                        drawRectSized(ctx, x0, y0, pixelSize, pixelSize);
+                                        ctx.fill();
+                                    }
+                                    ctx.closePath();
+                                }
+                            }
+
+                            drawBoundary(ctx, imageClientWidth, imageClientHeight);
+                        } endMemo();
+                    } end();
+                } else {
+                    nextRoot();
+                    beginLayout(COL | ALIGN_CENTER | JUSTIFY_CENTER); {
+                        textSpan("Value was empty");
+                    } end();
+                }
+                endList();
+
+            } end();
+        } end();
+    } end();
+}
+
+function renderGraph(graph: ProgramGraphOutput) {
+    const s = imStateInline((): {
+        plotState: PlotState;
+        nodeData: Map<string | number, {
+            position: { x: number, y: number };
+            adjacencies: (string | number)[];
+        }>;
+    } => {
+        return {
+            plotState: newPlotState(),
+            nodeData: new Map(),
+        };
+    });
+
+    if (beginMemo().val(graph).changed()) {
+        let minX = Number.MAX_SAFE_INTEGER;
+        let maxX = Number.MIN_SAFE_INTEGER;
+        let minY = Number.MAX_SAFE_INTEGER;
+        let maxY = Number.MIN_SAFE_INTEGER;
+
+        for (const node of s.nodeData.values()) {
+            const { x, y } = node.position;
+            minX = Math.min(x, minX);
+            maxX = Math.max(x, maxX);
+            minY = Math.min(y, minY);
+            maxY = Math.max(y, maxY);
+        }
+
+        recomputePlotExtent(s.plotState, minX, maxX, minY, maxY);
+    } endMemo();
+
+    beginLayout(FLEX | RELATIVE | H100).root; {
+        const { rect } = imTrackRectSize();
+
+        const { width, height } = rect;
+
+        const [canvasRoot, ctx] = beginCanvasRenderingContext2D();
+        const canvas = canvasRoot.root; {
+            const mouse = getMouse();
+            if (mouse.leftMouseButton && elementWasLastClicked()) {
+                const dxPlot = getPlotLength(s.plotState, mouse.dX);
+                const dyPlot = getPlotLength(s.plotState, mouse.dY);
+
+                s.plotState.posX -= dxPlot;
+                s.plotState.posY -= dyPlot;
+            }
+
+            if (beginMemo().val(width).val(height).val(graph).objectVals(s.plotState).changed()) {
+                s.plotState.width = rect.width;
+                s.plotState.height = rect.height;
+                canvas.width = width;
+                canvas.height = height;
+
+                ctx.clearRect(0, 0, width, height);
+
+                for (const [key] of s.nodeData) {
+                    if (!graph.graph.has(key)) {
+                        s.nodeData.delete(key);
+                    }
+                }
+
+                for (const [key, connections] of graph.graph) {
+                    let node = s.nodeData.get(key);
+                    if (!node) {
+                        node = {
+                            position: {
+                                x: Math.random(),
+                                y: Math.random(),
+                            },
+                            adjacencies: [],
+                        };
+                        s.nodeData.set(key, node);
+                    }
+
+                    node.adjacencies = [...connections];
+                }
+
+                const theme = getCurrentTheme();
+                const CIRCLE_RADIUS = 0.01;
+                const LINE_WIDTH = CIRCLE_RADIUS / 3;
+
+                // draw edges
+                ctx.strokeStyle = theme.mg.toString();
+                ctx.lineWidth = getCanvasElementLength(s.plotState, LINE_WIDTH);
+                for (const node of s.nodeData.values()) {
+                    const x0Canvas = getCanvasElementX(s.plotState, node.position.x);
+                    const y0Canvas = getCanvasElementY(s.plotState, node.position.y);
+
+                    for (const key of node.adjacencies) {
+                        const otherNode = s.nodeData.get(key);
+                        if (!otherNode) continue;
+
+                        const x1Canvas = getCanvasElementX(s.plotState, otherNode.position.x);
+                        const y1Canvas = getCanvasElementY(s.plotState, otherNode.position.y);
+
+                        ctx.beginPath(); {
+                            ctx.moveTo(x0Canvas, y0Canvas);
+                            ctx.lineTo(x1Canvas, y1Canvas);
+                            ctx.stroke();
+                        } ctx.closePath();
+                    }
+                }
+
+                // draw nodes over the edges
+                ctx.fillStyle = theme.fg.toString();
+                for (const node of s.nodeData.values()) {
+                    const xCanvas = getCanvasElementX(s.plotState, node.position.x);
+                    const yCanvas = getCanvasElementY(s.plotState, node.position.y);
+                    const rCanvas = getCanvasElementLength(s.plotState, CIRCLE_RADIUS);
+                    drawCircle(ctx, xCanvas, yCanvas, rCanvas);
+                    ctx.fill();
+                }
+
+                drawBoundary(ctx, width, height);
+            } endMemo();
+        } end();
+    } end();
+}
+
 function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResult) {
     const outputs = program.outputs;
 
@@ -1145,7 +1364,7 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
         for (const ui of outputs.uiInputs.values()) {
             nextRoot();
 
-            beginList(); 
+            beginList();
             nextRoot(ui.t);
             switch (ui.t) {
                 case UI_INPUT_SLIDER: {
@@ -1172,7 +1391,7 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
     } end();
     beginList();
     for (const result of outputs.prints) {
-        nextRoot(); 
+        nextRoot();
         beginLayout(ROW | GAP); {
             verticalBar();
 
@@ -1190,9 +1409,48 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
         } end();
     };
     endList();
+    beginLayout(COL | GAP); {
+        beginList();
+        for (const [idx, graph] of outputs.graphs) {
+            nextRoot();
+            beginLayout(COL | GAP); {
+                textSpan("Graph #" + idx, H3);
+            } end();
+            beginLayout(ROW | GAP); {
+                verticalBar();
+
+                beginLayout(COL | GAP | FLEX); {
+                    beginCodeBlock(0); {
+                        textSpan(
+                            expressionToString(graph.expr)
+                        )
+                    } end();
+
+                    beginCodeBlock(0); {
+                        textSpan(
+                            JSON.stringify(Object.fromEntries(graph.graph)),
+                        )
+                    } end();
+
+                    beginMaximizeableContainer(graph); {
+                        beginLayout(COL | OPAQUE | FLEX | GAP); {
+                            beginLayout(ROW | GAP); {
+                                maximizeItemButton(graph);
+                            } end();
+
+                            beginAspectRatio(16, 9); {
+                                renderGraph(graph);
+                            } end();
+                        } end();
+                    } end();
+                } end();
+            } end();
+        };
+        endList();
+    } end();
     beginList();
     for (const image of outputs.images) {
-        nextRoot(); 
+        nextRoot();
         beginLayout(ROW | GAP); {
             verticalBar();
 
@@ -1203,71 +1461,7 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
                     )
                 } end();
 
-                beginLayout(FLEX | RELATIVE); {
-                    const { rect } = imTrackRectSize();
-
-                    beginList();
-                    if (nextRoot() && (image.width !== 0)) {
-                        const [canvasRoot, ctx] = beginCanvasRenderingContext2D();
-                        const canvas = canvasRoot.root; {
-                            const { width: containerWidth, height: containerHeight } = rect;
-                            if (beginMemo().val(containerWidth).val(containerHeight).val(image).changed()) {
-                                let pixelSize = 30;
-                                let imageClientWidth = image.width * pixelSize;
-                                let imageClientHeight = image.height * pixelSize;
-
-                                if (imageClientWidth > containerWidth) {
-                                    pixelSize = containerWidth / image.width;
-                                    imageClientWidth = image.width * pixelSize;
-                                    imageClientHeight = image.height * pixelSize;
-                                }
-
-                                canvas.width = imageClientWidth;
-                                canvas.height = imageClientHeight;
-
-                                for (let i = 0; i < image.width; i++) {
-                                    for (let j = 0; j < image.height; j++) {
-                                        const x0 = i * pixelSize;
-                                        const y0 = j * pixelSize;
-                                        let color;
-                                        if (image.rgb) {
-                                            const idx = (j * image.width + i) * 3;
-                                            assert(idx + 2 < image.pixels.length);
-
-                                            const r = image.pixels[idx];
-                                            const g = image.pixels[idx + 1];
-                                            const b = image.pixels[idx + 2];
-
-                                            color = `rgb(${r * 255}, ${g * 255}, ${b * 255})`;
-                                        } else {
-                                            const idx = (j * image.width + i);
-                                            assert(idx < image.pixels.length);
-                                            const v = image.pixels[idx];
-                                            color = `rgb(${v * 255}, ${v * 255}, ${v * 255})`;
-                                        }
-
-                                        ctx.beginPath();
-                                        {
-                                            ctx.fillStyle = color;
-                                            drawRectSized(ctx, x0, y0, pixelSize, pixelSize);
-                                            ctx.fill();
-                                        }
-                                        ctx.closePath();
-                                    }
-                                }
-
-                                drawBoundary(ctx, imageClientWidth, imageClientHeight);
-                            } endMemo();
-                        } end();
-                    } else {
-                        nextRoot();
-                        beginLayout(COL | ALIGN_CENTER | JUSTIFY_CENTER); {
-                            textSpan("Value was empty");
-                        } end();
-                    }
-                    endList();
-
-                } end();
+                renderImageOutput(image);
             } end();
         } end();
     };
@@ -1276,12 +1470,11 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
     if (nextRoot() && outputs.plots.size > 0) {
         beginList();
         for (const [idx, plot] of outputs.plots) {
-            nextRoot(); 
-            beginLayout(); {
+            nextRoot();
+            beginLayout(COL | GAP); {
                 beginLayout(COL | GAP); {
                     textSpan("Plot #" + idx, H3);
                 } end();
-
 
                 const exprFrequencies = imStateInline(() => new Map<ProgramExpression, number>());
 
@@ -1295,7 +1488,7 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
 
                 beginList();
                 for (const [expr, count] of exprFrequencies) {
-                    nextRoot(); 
+                    nextRoot();
                     beginLayout(ROW | GAP); {
                         textSpan(count + "x: ");
                         textSpan(expressionToString(expr), CODE);
@@ -1316,7 +1509,7 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
     endList();
 }
 
-let currentMaximizedPlot: ProgramPlotOutput | null = null;
+let currentMaximizedItem: object | null = null;
 
 function setInset(amount: string) {
     if (amount) {
@@ -1339,7 +1532,7 @@ type PlotState = {
 }
 
 function newPlotState(): PlotState {
-    return { 
+    return {
         posX: 0,
         posY: 0,
         zoom: 1,
@@ -1348,6 +1541,28 @@ function newPlotState(): PlotState {
         height: 0,
         maximized: false
     };
+}
+
+function recomputePlotExtent(
+    state: PlotState,
+    minX: number, maxX: number,
+    minY: number, maxY: number,
+) {
+    if (minX === Number.MAX_SAFE_INTEGER || minX === maxX) {
+        state.zoom = 1;
+        state.originalExtent = 1;
+        state.posX = 0;
+        state.posY = 0;
+    } else {
+        let maxDist = Math.max(maxX - minX, maxY - minY);
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+
+        state.zoom = 1;
+        state.originalExtent = maxDist;
+        state.posX = centerX;
+        state.posY = centerY;
+    }
 }
 
 function getExtent(plot: PlotState): number {
@@ -1399,6 +1614,10 @@ function getPlotLength(plot: PlotState, l: number): number {
     return getPlotX(plot, l) - getPlotX(plot, 0);
 }
 
+function getCanvasElementLength(plot: PlotState, l: number): number {
+    return getCanvasElementX(plot, l) - getCanvasElementX(plot, 0);
+}
+
 function getPlotY(plot: PlotState, y: number): number {
     const { posY } = plot;
     const extent = getExtent(plot);
@@ -1440,22 +1659,33 @@ function drawPointAt(ctx: CanvasRenderingContext2D, x: number, y: number, halfSi
 
 function beginCanvasRenderingContext2D() {
     const canvasRoot = el(newCanvasElement);
-    const canvas = canvasRoot.root; 
+    const canvas = canvasRoot.root;
     let ctx = imVal<[UIRoot<HTMLCanvasElement>, CanvasRenderingContext2D] | null>(null);
-        if (!ctx) {
-            const context = canvas.getContext("2d");
-            if (!context) {
-                throw new Error("Canvas 2d isn't supported by your browser!!! I'd suggest _not_ plotting anything. Or updaing your browser");
-            }
-            ctx = imSetVal([canvasRoot, context]);
+    if (!ctx) {
+        const context = canvas.getContext("2d");
+        if (!context) {
+            throw new Error("Canvas 2d isn't supported by your browser!!! I'd suggest _not_ plotting anything. Or updaing your browser");
         }
+        ctx = imSetVal([canvasRoot, context]);
+    }
 
     return ctx;
 }
 
+function drawCircle(
+    ctx: CanvasRenderingContext2D,
+    x: number, y: number, r: number
+) {
+    ctx.beginPath();
+    {
+        ctx.arc(x, y, r, 0, 2 * Math.PI); 
+    }
+    ctx.closePath();
+}
+
 function drawRectSized(
     ctx: CanvasRenderingContext2D,
-    x0: number, y0: number, 
+    x0: number, y0: number,
     w: number, h: number,
 ) {
     ctx.rect(x0, y0, w, h);
@@ -1463,11 +1693,11 @@ function drawRectSized(
 
 function drawRect(
     ctx: CanvasRenderingContext2D,
-    x0: number, y0: number, 
+    x0: number, y0: number,
     x1: number, y1: number
 ) {
     ctx.rect(
-        x0, y0, 
+        x0, y0,
         x1 - x0, y1 - y0
     );
 }
@@ -1491,13 +1721,13 @@ function drawBoundary(ctx: CanvasRenderingContext2D, width: number, height: numb
     ctx.closePath();
 }
 
-function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
-    const isMaximized = currentMaximizedPlot === plot;
+function beginMaximizeableContainer(item: object) {
+    const isMaximized = item === currentMaximizedItem;
 
     let rootLayoutFlags = GAP | W100 | H100 | COL;
     if (isMaximized) {
         rootLayoutFlags = rootLayoutFlags | FIXED | TRANSLUCENT;
-    } 
+    }
 
     beginLayout(rootLayoutFlags).root; {
         if (beginMemo().val(isMaximized).changed()) {
@@ -1507,27 +1737,39 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                 setInset("");
             }
         } endMemo();
+    }
 
+}
+
+function maximizeItemButton(item: object) {
+    const isMaximized = currentMaximizedItem === item;
+
+    beginButton(isMaximized); {
+        textSpan(isMaximized ? "minimize" : "maximize");
+
+        const keys = getKeys();
+
+        if (isMaximized) {
+            if (
+                keys.escPressed ||
+                (elementHasMouseClick())
+            ) {
+                currentMaximizedItem = null;
+            }
+        } else {
+            if (elementHasMouseClick()) {
+                currentMaximizedItem = item;
+            }
+        }
+    } end();
+}
+
+function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
+    const isMaximized = plot === currentMaximizedItem;
+    beginMaximizeableContainer(plot); {
         beginLayout(COL | OPAQUE | FLEX | GAP); {
             beginLayout(ROW | GAP); {
-                beginButton(isMaximized); {
-                    textSpan(isMaximized ? "minimize" : "maximize");
-
-                    const keys = getKeys();
-
-                    if (isMaximized) {
-                        if (
-                            keys.escPressed ||
-                            (elementHasMouseClick())
-                        ) {
-                            currentMaximizedPlot = null;
-                        }
-                    } else {
-                        if (elementHasMouseClick()) {
-                            currentMaximizedPlot = plot;
-                        }
-                    }
-                } end();
+                maximizeItemButton(plot);
             } end();
 
             beginLayout(FLEX | RELATIVE).root; {
@@ -1582,24 +1824,10 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                             }
                         }
 
-                        if (minX === Number.MAX_SAFE_INTEGER || minX === maxX) {
-                            plotState.zoom = 1;
-                            plotState.originalExtent = 1;
-                            plotState.posX = 0;
-                            plotState.posY = 0;
-                        } else {
-                            let maxDist = Math.max(maxX - minX, maxY - minY);
-                            const centerX = (minX + maxX) / 2;
-                            const centerY = (minY + maxY) / 2;
-
-                            plotState.zoom = 1;
-                            plotState.originalExtent = maxDist / 2;;
-                            plotState.posX = centerX;
-                            plotState.posY = centerY;
-                        }
+                        recomputePlotExtent(plotState, minX, maxX, minY, maxY);
                     } endMemo();
 
-                    
+
                     if (mouse.leftMouseButton && elementWasLastClicked()) {
                         const dxPlot = getPlotLength(plotState, mouse.dX);
                         const dyPlot = getPlotLength(plotState, mouse.dY);
@@ -1673,12 +1901,12 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
 
                             for (const output of plot.functions) {
                                 if (program.isDebugging) {
-                                // TODO: we need to be able to run functions that we're debugging.
-                                // This will be useful when we want to implement a 'watch' window. Prob just as simple as
-                                // duplicating the program stack. 
+                                    // TODO: we need to be able to run functions that we're debugging.
+                                    // This will be useful when we want to implement a 'watch' window. Prob just as simple as
+                                    // duplicating the program stack. 
                                     problems.val.push("Can't render heatmaps while we're debugging - the program stack is still in use. ");
                                     break;
-                                } 
+                                }
 
                                 rows.val.length = 0
 
@@ -1799,7 +2027,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                                     renderPoints = numPointsOnScreen < 20;
                                 }
                                 if (renderPoints) {
-                                   for (let i = 0; i < line.pointsX.length; i++) {
+                                    for (let i = 0; i < line.pointsX.length; i++) {
                                         const x1 = line.pointsX[i];
                                         const y1 = line.pointsY[i];
 
@@ -1863,9 +2091,9 @@ type CodeExample = {
 // right now, I'm just using this mechanism to save and load various scenarios.
 const codeExamples: CodeExample[] = [
     {
-        name: "Plotting lines",
-        code: 
-    `
+        name: "Plotting",
+        code:
+            `
 // Multiple sine waves, each sine wave is made of multiple segments with gradually increasing colour
 
 n = 10
@@ -1875,7 +2103,7 @@ for size in range(1, 6) {
     pos = 0
 
     for i in range(0, n) {
-        sine_wave = []L
+        sine_wave = list[]
         for j in range(pos, pos + 3 / period) {
             push(
                 sine_wave, 
@@ -1928,7 +2156,7 @@ plot_points(1, 0.5 * [
 period = slider("period", 0, 100)
 resolution = slider("resolution", 1, 100)
 
-lines = []L
+lines = list[]
 
 one_over_res = 1 / resolution
 for i in range(0, 100, one_over_res) {
@@ -1937,6 +2165,33 @@ for i in range(0, 100, one_over_res) {
 
 plot_lines(1, lines)
         `
+    },
+    {
+        name: "Images",
+        code: `
+image([
+    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
+    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
+    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
+    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
+    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
+    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
+    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
+    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
+])
+
+`
+    },
+    {
+        name: "Graphs",
+        code: `
+// TODO: complete exmaple
+graph(1, map{
+    1 : list[1, 2, 3],
+    2 : list[1, 2, 3],
+    3 : list[1, 2, 3]
+})
+`
     }
 ]
 
@@ -1961,7 +2216,7 @@ export function renderApp() {
                     if (beginMemo()
                         .val(state.text)
                         .val(state.autorun)
-                        .changed() || 
+                        .changed() ||
                         ctx.reinterpretSignal
                     ) {
                         ctx.reinterpretSignal = false;
@@ -1981,14 +2236,14 @@ export function renderApp() {
                         } end();
                         beginLayout(FLEX); {
                             beginList();
-                            if(nextRoot() && ctx.isDebugging) {
+                            if (nextRoot() && ctx.isDebugging) {
                                 const interpretResult = ctx.lastInterpreterResult;
                                 assert(interpretResult);
                                 renderDebugger(ctx, interpretResult);
                             } else {
                                 nextRoot();
                                 renderAppCodeOutput(ctx);
-                            } 
+                            }
                             endList();
                         } end();
                     } end();

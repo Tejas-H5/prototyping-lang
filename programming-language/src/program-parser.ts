@@ -39,8 +39,8 @@ export const T_DATA_INDEX_OP = 10;
 export const T_FN = 11;
 export const T_RANGE_FOR = 12;
 export const T_ASSIGNMENT = 13;
-
 export const T_UNARY_OP = 14;
+export const T_MAP_LITERAL = 15;
 
 export function expressionTypeToString(expr: ProgramExpression): string {
     switch(expr.t) {
@@ -72,6 +72,8 @@ export function expressionTypeToString(expr: ProgramExpression): string {
             return "Range-for loop";
         case T_ASSIGNMENT:
             return "Assignment";
+        case T_MAP_LITERAL:
+            return "Map literal";
     }
 }
 
@@ -227,6 +229,11 @@ export type ProgramExpressionListLiteral = ProgramExpressionBase & {
     items: ProgramExpression[];
 }
 
+export type ProgramExpressionMapLiteral = ProgramExpressionBase & {
+    t: typeof T_MAP_LITERAL;
+    kvPairs: [ProgramExpression, ProgramExpression][];
+}
+
 export type ProgramExpressionStringLiteral = ProgramExpressionBase & {
     t: typeof T_STRING_LITERAL;
     val: string;
@@ -291,6 +298,7 @@ export type ProgramExpression = ProgramExpressionIdentifier
     | ProgramExpressionUnaryOperator
     | ProgramExpressionNumberLiteral
     | ProgramExpressionListLiteral
+    | ProgramExpressionMapLiteral
     | ProgramExpressionStringLiteral
     | ProgramExpressionTernaryIf
     | ProgramExpressionBlock
@@ -736,13 +744,87 @@ function parseExpressionsDelimiterSeparated(
     }
 }
 
-function parseListLiteral(ctx: ParserContext): ProgramExpressionListLiteral | undefined {
+function parseMapLiteral(ctx: ParserContext, pos: TextPosition): ProgramExpressionMapLiteral | undefined {
+    assert(currentChar(ctx) === "{");
+    advance(ctx);
+
+    const result: ProgramExpressionMapLiteral = {
+        t: T_MAP_LITERAL,
+        slice: newTextSlice(ctx.text, pos.i, 0),
+        pos,
+        kvPairs: [],
+    };
+
+    let foundClosingBrace = false;
+
+    while(!reachedEnd(ctx)) {
+        parseWhitespace(ctx);
+
+        const keyExpr = parseExpression(ctx);
+        if (keyExpr) {
+            parseWhitespace(ctx);
+
+            if (currentChar(ctx) !== ":") {
+                addErrorAtCurrentPosition(ctx, `Expected ':' key-value separator here`);
+                return undefined;
+            }
+
+            advance(ctx);
+            parseWhitespace(ctx);
+
+            const valueExpr = parseExpression(ctx);
+            if (!valueExpr) {
+                if (ctx.parseResult.errors.length === 0) {
+                    addErrorAtPosition(ctx, getParserPosition(ctx), "Expected value expression after this");
+                }
+                return undefined;
+            } 
+
+            parseWhitespace(ctx);
+
+            result.kvPairs.push([keyExpr, valueExpr]);
+        } 
+
+        const foundDelimiter = currentChar(ctx) === ",";
+        if (foundDelimiter) {
+            advance(ctx);
+            parseWhitespace(ctx);
+        }
+
+        if (currentChar(ctx) === "}") {
+            advance(ctx);
+            foundClosingBrace = true;
+            break;
+        }
+
+        if (!foundDelimiter) {
+            addErrorAtCurrentPosition(ctx, `Expected a delimiter , here`);
+            return undefined;
+        }
+    }
+    
+    if (!foundClosingBrace) {
+        addErrorAtPosition(ctx, result.pos, `Never found a closing brance for this`);
+        return undefined;
+    } 
+
+    result.slice.end = ctx.pos.i;
+    return result;
+}
+
+function parseListLiteral(
+    ctx: ParserContext, 
+    type: (typeof T_VECTOR_LITERAL | typeof T_LIST_LITERAL), 
+    pos?: TextPosition
+): ProgramExpressionListLiteral | undefined {
     assert(currentChar(ctx) === "[");
-    const pos = getParserPosition(ctx);
+    if (!pos) {
+        pos = getParserPosition(ctx);
+    }
 
     const result: ProgramExpressionListLiteral = {
-        t: T_VECTOR_LITERAL,
-        slice: newTextSlice(ctx.text, ctx.pos.i, 0),
+        t: type,
+        slice: newTextSlice(ctx.text, pos.i, 0),
         pos,
         items: [],
     };
@@ -750,11 +832,6 @@ function parseListLiteral(ctx: ParserContext): ProgramExpressionListLiteral | un
     advance(ctx);
 
     parseExpressionsDelimiterSeparated(ctx, result.items, "," ,"]");
-
-    if (currentChar(ctx) === "L") {
-        result.t = T_LIST_LITERAL;
-        advance(ctx);
-    }
 
     result.slice.end = ctx.pos.i;
     return result;
@@ -967,7 +1044,9 @@ function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boo
 
         const rhs = parseExpression(ctx);
         if (!rhs) {
-            addErrorAtPosition(ctx, getParserPosition(ctx), "Assignment expression is incomplete");
+            if (ctx.parseResult.errors.length === 0) {
+                addErrorAtPosition(ctx, getParserPosition(ctx), "Assignment expression is incomplete");
+            }
             return result;
         }
 
@@ -1127,13 +1206,36 @@ function parseExpression(ctx: ParserContext, canParseAssignment: boolean = false
     if (isLetter(c) || c === "^") {
         if (compareCurrent(ctx, "for")) {
             res = parseRangedFor(ctx);
+        } else if (compareCurrent(ctx, "list")) {
+            const start = getParserPosition(ctx);
+            for (let i = 0; i < "list".length; i++) {
+                advance(ctx);
+            }
+            parseWhitespace(ctx);
+            if (currentChar(ctx) !== "[") {
+                addErrorAtPosition(ctx, ctx.pos, "Expected a [ here");
+                return;
+            }
+            res = parseListLiteral(ctx, T_LIST_LITERAL, start);
+        } else if (compareCurrent(ctx, "map")) {
+            const start = getParserPosition(ctx);
+            for (let i = 0; i < "map".length; i++) {
+                advance(ctx);
+            }
+            parseWhitespace(ctx);
+            if (currentChar(ctx) !== "{") {
+                addErrorAtPosition(ctx, ctx.pos, "Expected a { here");
+                return;
+            }
+
+            res = parseMapLiteral(ctx, start);
         } else {
             res = parseIdentifierAndFollowOns(ctx, canParseAssignment);
         }
     } else if (canParseNumberLiteral(ctx)) {
         res = parseNumberLiteral(ctx);
     } else if (c === "[") {
-        res = parseListLiteral(ctx);
+        res = parseListLiteral(ctx, T_VECTOR_LITERAL);
     } else if (c === "{") {
         res = parseBlock(ctx);
     } else if (c === "(") {

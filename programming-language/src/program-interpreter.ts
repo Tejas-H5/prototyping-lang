@@ -1,5 +1,5 @@
 import { CssColor, newColor, newColorFromHexOrUndefined } from "src/utils/colour";
-import { assert, pushRoot } from "src/utils/im-dom-utils";
+import { assert } from "src/utils/im-dom-utils";
 import { copyMatrix, getMatrixRow, getMatrixRowLength, getMatrixValue, getSliceValue, isIndexInSliceBounds, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, setSliceValue, subMatrixShapeEqualsRowShape } from "src/utils/matrix-math";
 import {
     BIN_OP_ADD, BIN_OP_AND_AND, BIN_OP_DIVIDE, BIN_OP_GREATER_THAN, BIN_OP_GREATER_THAN_EQ, BIN_OP_INVALID, BIN_OP_IS_EQUAL_TO, BIN_OP_LESS_THAN, BIN_OP_LESS_THAN_EQ, BIN_OP_MULTIPLY, BIN_OP_OR_OR, BIN_OP_SUBTRACT,
@@ -7,13 +7,12 @@ import {
     binOpToOpString,
     binOpToString,
     DiagnosticInfo,
-    expressionToString,
     expressionTypeToString,
     ProgramExpression,
     ProgramExpressionFn,
     ProgramExpressionIdentifier,
     ProgramParseResult,
-    T_ASSIGNMENT, T_BINARY_OP, T_BLOCK, T_DATA_INDEX_OP, T_FN, T_IDENTIFIER, T_IDENTIFIER_THE_RESULT_FROM_ABOVE, T_LIST_LITERAL, T_NUMBER_LITERAL, T_RANGE_FOR, T_STRING_LITERAL, T_TERNARY_IF, T_UNARY_OP, T_VECTOR_LITERAL,
+    T_ASSIGNMENT, T_BINARY_OP, T_BLOCK, T_DATA_INDEX_OP, T_FN, T_IDENTIFIER, T_IDENTIFIER_THE_RESULT_FROM_ABOVE, T_LIST_LITERAL, T_NUMBER_LITERAL, T_RANGE_FOR, T_STRING_LITERAL, T_TERNARY_IF, T_UNARY_OP, T_VECTOR_LITERAL, T_MAP_LITERAL,
     TextPosition,
     UNARY_OP_NOT,
     UNARY_OP_PRINT,
@@ -29,6 +28,7 @@ export const T_RESULT_LIST = 3;
 export const T_RESULT_MATRIX = 4;
 export const T_RESULT_RANGE = 5;
 export const T_RESULT_FN = 6;
+export const T_RESULT_MAP = 7;
 
 export type ProgramResultNumber = {
     t: typeof T_RESULT_NUMBER;
@@ -63,10 +63,16 @@ export type ProgramResultList = {
     values: ProgramResult[];
 }
 
+export type ProgramResultMap = {
+    t: typeof T_RESULT_MAP;
+    map: Map<string | number, ProgramResult>;
+}
+
 export type ProgramResult = ProgramResultNumber
     | ProgramResultRange
     | ProgramResultString
     | ProgramResultList
+    | ProgramResultMap
     | ProgramResultMatrix
     | ProgramResultFunction;
 
@@ -96,6 +102,8 @@ export function programResultTypeStringInternal(t: ProgramResult["t"]): string {
             return "String";
         case T_RESULT_LIST:
             return "List";
+        case T_RESULT_MAP:
+            return "Map";
         case T_RESULT_MATRIX: {
             return "Matrix";
         }
@@ -402,6 +410,8 @@ export type ProgramExecutionStep = {
     unaryOperator?: UnaryOperatorType;
     // Pops the last n things off the stack and into a list
     list?: number;
+    // Pops the last 2n kv pairs off the stack and into a map
+    map?: number;
     // Pops the last n things off the stack and into a vector
     vector?: number;
     // Pushes this number to the stack
@@ -467,6 +477,9 @@ export function executionStepToString(step: ProgramExecutionStep) {
     }
     if (step.list !== undefined) {
         return ("List " + step.list);
+    }
+    if (step.map !== undefined) {
+        return ("Map " + step.map);
     }
     if (step.vector !== undefined) {
         return ("Vector " + step.vector);
@@ -577,6 +590,11 @@ export type ProgramPlotOutput = {
     functions: ProgramPlotOutputHeatmapFunction[];
 }
 
+export type ProgramGraphOutput = {
+    expr: ProgramExpression;
+    graph: Map<string | number, (string | number)[]>;
+};
+
 export type ProgramPlotOutputHeatmapFunction = {
     step: ProgramExecutionStep;
     fn: ProgramResultFunction;
@@ -603,6 +621,7 @@ export type ProgramUiInput = ProgramUiInputSlider;
 export type ProgramOutputs = {
     prints: ProgramPrintOutput[];
     images: ProgramImageOutput[];
+    graphs: Map<number, ProgramGraphOutput>;
     plots: Map<number, ProgramPlotOutput>;
     uiInputs: Map<string, ProgramUiInput>;
     heatmapSubdivisions: number;
@@ -628,6 +647,8 @@ function getExecutionSteps(
         addError(expr, "Found an incomplete expression");
     }
 
+    // This method should never 'error', since only valid parse-trees should be generated.
+    // it's return value indicates whether this was a no-op or not.
     const dfs = (expr: ProgramExpression): boolean => {
         if (result.errors.length > 0) {
             return false;
@@ -663,8 +684,7 @@ function getExecutionSteps(
                 if (expr.lhs.t === T_DATA_INDEX_OP) {
                     noOp = true;
 
-                    // TODO: like this everywhere else
-                    if (!dfs(expr.lhs.lhs)) return false;
+                    dfs(expr.lhs.lhs);
 
                     // Should have been checked at parse-time
                     assert(expr.lhs.indexes.length > 0);
@@ -672,17 +692,17 @@ function getExecutionSteps(
                     // index into the matrix, except for the very last index. we'll need to actually assign to that one.
                     for (let i = 0 ; i < expr.lhs.indexes.length; i++) { 
                         const idxExpr = expr.lhs.indexes[i];
-                        if (!dfs(idxExpr)) return false;
+                        dfs(idxExpr);
 
                         if (i === expr.lhs.indexes.length - 1) {
-                            if (!dfs(expr.rhs)) return false;
+                            dfs(expr.rhs);
                             steps.push({ expr, indexAssignment: true });
                         } else {
                             steps.push({ expr, index: true });
                         }
                     }
                 } else if (expr.lhs.t === T_IDENTIFIER) {
-                    if (!dfs(expr.rhs)) return false;
+                    dfs(expr.rhs);
                     step.set = expr.lhs.name;
                 }
             } break;
@@ -747,8 +767,9 @@ function getExecutionSteps(
             case T_BLOCK: {
                 noOp = true;
                 for (const s of expr.statements) {
-                    dfs(s);
-                    steps.push({ expr: s, blockStatementEnd: false });
+                    if (dfs(s)) {
+                        steps.push({ expr: s, blockStatementEnd: false });
+                    }
                 }
             } break;
             case T_RANGE_FOR: {
@@ -887,6 +908,13 @@ function getExecutionSteps(
                     steps.push({ expr: indexExpr, index: true });
                 }
             } break;
+            case T_MAP_LITERAL:{
+                for (const [k, v] of expr.kvPairs) {
+                    dfs(k);
+                    dfs(v);
+                }
+                step.map = expr.kvPairs.length;
+            } break;
             default: {
                 throw new Error("Unhandled type: " + expressionTypeToString(expr));
             }
@@ -904,6 +932,8 @@ function getExecutionSteps(
             steps.push({ expr: s, blockStatementEnd: topLevel });
         }
     }
+
+    return true;
 }
 
 function getLengthHpMatrix(val: Matrix): number {
@@ -969,6 +999,7 @@ export function startInterpreting(
     const outputs: ProgramOutputs = {
         prints: [],
         images: [],
+        graphs: new Map(),
         plots: new Map(),
         uiInputs: new Map(),
         heatmapSubdivisions: 20,
@@ -1012,7 +1043,9 @@ export function startInterpreting(
                 name: fn.fnName.name,
                 steps: [],
             };
-            getExecutionSteps(result, fn.body.statements, code.steps, false);
+            if (!getExecutionSteps(result, fn.body.statements, code.steps, false)) {
+            return result;
+            }
 
             result.functions.set(name, {
                 t: T_RESULT_FN,
@@ -1022,7 +1055,9 @@ export function startInterpreting(
             });
         }
 
-        getExecutionSteps(result, parseResult.statements, result.entryPoint.steps, true)
+        if (!getExecutionSteps(result, parseResult.statements, result.entryPoint.steps, true)) {
+            return result;
+        }
     }
 
     result.callStack.push({
@@ -1132,7 +1167,6 @@ const builtinFunctions = new Map<string, BuiltinFunction>();
 
         return color;
     }
-
 
 
     function builtinPlotLines(
@@ -1579,14 +1613,68 @@ const builtinFunctions = new Map<string, BuiltinFunction>();
             return newNumberResult(input.value);
         }
     );
-    newBuiltinFunction("range", [], (result, step, arg) => {
+    newBuiltinFunction("range", [], (result, step) => {
         addError(result, step, "'range' isn't really a funciton - it is only valid to use in ranged for-loops");
         return newNumberResult(0);
     });
-    newBuiltinFunction("rrange", [], (result, step, arg) => {
+    newBuiltinFunction("rrange", [], (result, step) => {
         addError(result, step, "'rrange' isn't really a funciton - it is only valid to use in ranged for-loops");
         return newNumberResult(0);
     });
+    newBuiltinFunction(
+        "graph", [
+            newArg("idx", [T_RESULT_NUMBER]),
+            newArg("graphMap", [T_RESULT_MAP]),
+        ], 
+        (result, step, idx, graphMap) => {
+            assert(idx?.t === T_RESULT_NUMBER);
+            assert(graphMap?.t === T_RESULT_MAP);
+
+            let graph = result.outputs.graphs.get(idx.val);
+
+            if (!graph) {
+                graph = {
+                    expr: step.expr,
+                    graph: new Map(),
+                };
+                result.outputs.graphs.set(idx.val, graph);
+            }
+
+            // TODO: support matrix representation for graphs, i.e
+            //    A B C
+            //  A 0 1 1
+            //  B 1 0 1
+            //  C 1 1 0 
+            //
+            // Looks something like:
+            //
+            //  A <=> B, C 
+            //  B <=> A, C
+            //  C <=> A, B
+            //
+            //  There is a 1 when things are connected. It could also be weighs, it could also be directional, i.e non-symetric matrix
+
+            for (const [k, v] of graphMap.map) {
+                if (v.t !== T_RESULT_LIST) {
+                    addError(result, step, "Map values be lists, but we got " + programResultTypeString(v));
+                    return graphMap;
+                }
+
+                for (const val of v.values) {
+                    if (val.t !== T_RESULT_STRING && val.t !== T_RESULT_NUMBER) {
+                        addError(result, step, "Elements inside the edge list must be of type <string/number>. We may add more types in the future.");
+                        return graphMap;
+                    }
+
+                    const entries = graph.graph.get(k) ?? [];
+                    entries.push(val.val);
+                    graph.graph.set(k, entries);
+                }
+            }
+
+            return graphMap;
+        }
+    );
 }
 
 function getOrAddNewPlot(result: ProgramInterpretResult, idx: number): ProgramPlotOutput {
@@ -1827,6 +1915,19 @@ function blockStatementEnd(program: ProgramInterpretResult, step: ProgramExecuti
     program.stackIdx = call.nextVarAddress - 1;
 }
 
+function validateMapKey(
+    program: ProgramInterpretResult,
+    step: ProgramExecutionStep,
+    idxResult: ProgramResult,
+): number | string | null {
+    if (idxResult.t !== T_RESULT_NUMBER && idxResult.t !== T_RESULT_STRING) {
+        addError(program, step, "Map keys must be numbers or strings for now");
+        return null;
+    }
+
+    return idxResult.val;
+}
+
 function validateIndex(
     program: ProgramInterpretResult,
     step: ProgramExecutionStep,
@@ -1965,6 +2066,26 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
         }
 
         push(program, list, step);
+    } else if (step.map !== undefined) {
+        program.stackIdx -= step.map * 2;
+
+        const map: ProgramResult = { t: T_RESULT_MAP, map: new Map() };
+        for (let i = 0; i < step.map; i++) {
+            const mapKey = program.stack[program.stackIdx + 2 * i + 1];
+            const mapVal = program.stack[program.stackIdx + 2 * i + 2];
+
+            assert(mapKey);
+            assert(mapVal);
+
+            const key = validateMapKey(program, step, mapKey);
+            if (key === null) {
+                return false;
+            }
+
+            map.map.set(key, mapVal);
+        }
+
+        push(program, map, step);
     } else if (step.vector !== undefined) {
 
         program.stackIdx -= step.vector;
@@ -1980,7 +2101,7 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
             assert(val);
 
             if (val.t !== T_RESULT_NUMBER && val.t !== T_RESULT_MATRIX) {
-                addError(program, step, "Vectors/Matrices can only contain other vectors/matrices/numbers. You can create a List instead, by appending an L on the end, like [1,2,\"3\"]L");
+                addError(program, step, "Vectors/Matrices can only contain other vectors/matrices/numbers. You can create a List instead, by prepending 'list', like list[1,2,\"3\"]");
                 return false;
             }
 
@@ -2068,39 +2189,62 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
         program.stack[call.returnAddress] = null;
     } else if (step.index) {
         const idxResult = pop(program);
-
-        const idx = validateIndex(program, step, idxResult);
-        if (idx === null) {
-            return false;
-        }
-
         const data = pop(program);
-        if (data.t === T_RESULT_LIST) {
-            if (idx >= data.values.length) {
-                addError(program, step, "Index was out of bounds");
+
+        let isValid = false;
+
+        if (data.t === T_RESULT_LIST || data.t === T_RESULT_MATRIX) {
+            const idx = validateIndex(program, step, idxResult);
+            if (idx === null) {
                 return false;
             }
 
-            push(program, data.values[idx], step);
-        } else if (data.t === T_RESULT_MATRIX) {
-            if (data.val.shape.length === 1) {
-                if (!isIndexInSliceBounds(data.val.values, idx)) {
+            if (data.t === T_RESULT_LIST) {
+                if (idx >= data.values.length) {
                     addError(program, step, "Index was out of bounds");
                     return false;
                 }
 
-                const value = getSliceValue(data.val.values, idx);
-                push(program, newNumberResult(value), step);
-            } else {
-                const subMatrix = getMatrixRow(data.val, idx);
-                if (!subMatrix) {
-                    addError(program, step, "Index was out of bounds");
-                    return false;
-                }
+                push(program, data.values[idx], step);
+                isValid = true;
+            } else if (data.t === T_RESULT_MATRIX) {
+                if (data.val.shape.length === 1) {
+                    if (!isIndexInSliceBounds(data.val.values, idx)) {
+                        addError(program, step, "Index was out of bounds");
+                        return false;
+                    }
 
-                push(program, { t: T_RESULT_MATRIX, val: subMatrix }, step);
+                    const value = getSliceValue(data.val.values, idx);
+                    push(program, newNumberResult(value), step);
+                    isValid = true;
+                } else {
+                    const subMatrix = getMatrixRow(data.val, idx);
+                    if (!subMatrix) {
+                        addError(program, step, "Index was out of bounds");
+                        return false;
+                    }
+
+                    push(program, { t: T_RESULT_MATRIX, val: subMatrix }, step);
+                    isValid = true;
+                }
             }
-        } else {
+        } else if (data.t === T_RESULT_MAP) {
+            const key = validateMapKey(program, step, idxResult);
+            if (key === null) {
+                return false;
+            }
+
+            const val = data.map.get(key);
+            if (val === undefined) {
+                addError(program, step, `Key ${val} wasn't present in the map`);
+                return false;
+            }
+
+            push(program, val, step);
+            isValid = true;
+        }
+
+        if (!isValid) {
             addError(program, step, "Can't index this datatype");
             return false;
         }
@@ -2124,46 +2268,63 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
         const idxResult = pop(program);
         const lhsToAssign = pop(program);
 
-        const idx = validateIndex(program, step, idxResult);
-        if (idx === null) {
-            return false;
-        }
+        let isValid = false;
 
-        if (lhsToAssign.t === T_RESULT_LIST) {
-            if (idx < 0 || idx >= lhsToAssign.values.length) {
-                addError(program, step, "Index was out of bounds: " + "list(" + lhsToAssign.values.length + ")[" + idx + "]")
+        if (lhsToAssign.t === T_RESULT_LIST || lhsToAssign.t === T_RESULT_MATRIX) {
+            const idx = validateIndex(program, step, idxResult);
+            if (idx === null) {
                 return false;
             }
-            lhsToAssign.values[idx] = rhsResult;
-        } else if (lhsToAssign.t === T_RESULT_MATRIX) {
-            if (lhsToAssign.val.shape.length === 1) {
-                if (rhsResult.t !== T_RESULT_NUMBER) {
-                    addError(program, step, "Can only assign numbers into " + programResultTypeString(lhsToAssign));
-                    return false;
-                }
-                setSliceValue(lhsToAssign.val.values, idx, rhsResult.val);
-            } else { 
-                if (rhsResult.t !== T_RESULT_MATRIX) {
-                    addError(program, step, "Can only assign vectors into " + programResultTypeString(lhsToAssign));
-                    return false;
-                }
 
-                if (!subMatrixShapeEqualsRowShape(lhsToAssign.val, rhsResult.val)) {
-                    addError(program, step, 
-                        "Can only assign " + 
-                        getMatrixTypeFromShape(lhsToAssign.val.shape.slice(1)) +
-                        " into " + programResultTypeString(lhsToAssign)
-                    );
+            if (lhsToAssign.t === T_RESULT_LIST) {
+                if (idx < 0 || idx >= lhsToAssign.values.length) {
+                    addError(program, step, "Index was out of bounds: " + "list(" + lhsToAssign.values.length + ")[" + idx + "]")
                     return false;
                 }
+                lhsToAssign.values[idx] = rhsResult;
+                isValid = true;
+            } else if (lhsToAssign.t === T_RESULT_MATRIX) {
+                if (lhsToAssign.val.shape.length === 1) {
+                    if (rhsResult.t !== T_RESULT_NUMBER) {
+                        addError(program, step, "Can only assign numbers into " + programResultTypeString(lhsToAssign));
+                        return false;
+                    }
+                    setSliceValue(lhsToAssign.val.values, idx, rhsResult.val);
+                    isValid = true;
+                } else {
+                    if (rhsResult.t !== T_RESULT_MATRIX) {
+                        addError(program, step, "Can only assign vectors into " + programResultTypeString(lhsToAssign));
+                        return false;
+                    }
 
-                const rowLen = getMatrixRowLength(lhsToAssign.val);
-                for (let i = 0; i < rowLen; i++) {
-                    const val = getSliceValue(rhsResult.val.values, i);
-                    setSliceValue(lhsToAssign.val.values, i, val);
+                    if (!subMatrixShapeEqualsRowShape(lhsToAssign.val, rhsResult.val)) {
+                        addError(program, step,
+                            "Can only assign " +
+                            getMatrixTypeFromShape(lhsToAssign.val.shape.slice(1)) +
+                            " into " + programResultTypeString(lhsToAssign)
+                        );
+                        return false;
+                    }
+
+                    const rowLen = getMatrixRowLength(lhsToAssign.val);
+                    for (let i = 0; i < rowLen; i++) {
+                        const val = getSliceValue(rhsResult.val.values, i);
+                        setSliceValue(lhsToAssign.val.values, i, val);
+                    }
+                    isValid = true;
                 }
             }
-        } else {
+        } else if (lhsToAssign.t === T_RESULT_MAP) {
+            const key = validateMapKey(program, step, idxResult);
+            if (key === null) {
+                return false;
+            }
+
+            lhsToAssign.map.set(key, rhsResult);
+            isValid = true;
+        }
+
+        if (!isValid) {
             addError(program, step, "Can't assign to a value of type " + programResultTypeString(lhsToAssign))
             return false;
         }

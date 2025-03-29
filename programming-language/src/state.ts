@@ -1,5 +1,6 @@
 import { evaluateFunctionWithinProgramWithArgs, interpret, ProgramInterpretResult, ProgramResultFunction, startEvaluatingFunctionWithingProgramWithArgs, startInterpreting } from "./program-interpreter";
 import { parse, ProgramParseResult } from "./program-parser";
+import { assert } from "./utils/im-dom-utils";
 
 export type GlobalState = {
     text: string;
@@ -29,6 +30,11 @@ export function startDebugging(ctx: GlobalContext): string {
     } 
 
     ctx.lastInterpreterResult = startInterpreting(ctx.lastParseResult, true, undefined);
+    if (ctx.lastInterpreterResult.errors.length > 0) {
+        // DEV: Fix instruction gen errors before you can start debugging
+        assert(false);
+    } 
+
     ctx.functionToDebug = null;
     ctx.isDebugging = true;
     return "";
