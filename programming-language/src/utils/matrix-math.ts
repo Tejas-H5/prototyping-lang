@@ -15,19 +15,20 @@ export function newSlice(values: number[]): NumberSlice {
     return { memory: values, start: 0, stride: 1, length: values.length };
 }
 
-export function getSlice(s: NumberSlice, start: number, len: number, stride: number): NumberSlice {
+export function getSlice(s: NumberSlice, start: number, len: number, stride: number): NumberSlice | undefined {
     // any index into the memory is multiplied by the existing stride. This can be inferred intuitively -
     // for example, "I want every third thing of every second thing" -> stride of 6.
     stride *= s.stride;
-    start *= s.start;
+    start *= s.stride;
 
-    const finalIdx = start + (len * stride);
-    if (finalIdx >= s.memory.length) {
-        throw new Error("Length was out of bounds");
+    const finalLen = start + (len * stride);
+    if (finalLen > s.memory.length) {
+        // out of bounds
+        return undefined;
     }
 
     if (start < 0 || len < 0 || stride <= 0) {
-        throw new Error("Broooo what are you even doing...");
+        return undefined;
     }
 
     return {
@@ -40,6 +41,11 @@ export function getSlice(s: NumberSlice, start: number, len: number, stride: num
 
 function getSliceIdx(s: NumberSlice, i: number): number {
     return s.start + s.stride * i;
+}
+
+export function isIndexInSliceBounds(s: NumberSlice, i: number) {
+    const idx = getSliceIdx(s, i);
+    return !(idx < 0 || idx >= s.memory.length);
 }
 
 export function getSliceValue(s: NumberSlice, i: number) {
@@ -78,7 +84,7 @@ export function len(m: Matrix) {
     return m.shape[0];
 }
 
-export function getRowLength(m: Matrix): number {
+export function getMatrixRowLength(m: Matrix): number {
     let stride = 1;
     for (let i = m.shape.length - 1; i >= 1; i--) {
         stride *= m.shape[i];
@@ -96,15 +102,19 @@ export function getRowLength(m: Matrix): number {
  * [matrix1][matrix2][matrix3][matrix4]
  * vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
  */
-export function getRow(m: Matrix, i: number): Matrix | undefined {
-    const rowLen = getRowLength(m);
+export function getMatrixRow(m: Matrix, i: number): Matrix | undefined {
+    const rowLen = getMatrixRowLength(m);
 
     const colLen = m.shape[0];
     if (i >= colLen) {
-        throw new Error("The row was out of bounds");
+        return undefined;
     }
 
     const values = getSlice(m.values, m.values.start + i * rowLen, rowLen, m.values.stride);
+    if (!values)  {
+        return values;
+    }
+
     const shape = m.shape.slice(1);
 
     return { values, shape };
@@ -115,7 +125,7 @@ export function getRow(m: Matrix, i: number): Matrix | undefined {
  * WARNING: if shape.length !== 2, you can still call this function, but I'm not sure if the result is useful.
  */
 export function getCol(m: Matrix, i: number): Matrix {
-    const rowLen = getRowLength(m);
+    const rowLen = getMatrixRowLength(m);
     const colLen = m.shape[0];
 
     if (i >= rowLen) {

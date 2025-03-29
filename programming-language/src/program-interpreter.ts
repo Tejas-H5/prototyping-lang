@@ -1,6 +1,6 @@
 import { CssColor, newColor, newColorFromHexOrUndefined } from "src/utils/colour";
 import { assert, pushRoot } from "src/utils/im-dom-utils";
-import { copyMatrix, getMatrixValue, getSliceValue, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, setSliceValue } from "src/utils/matrix-math";
+import { copyMatrix, getMatrixRow, getMatrixValue, getSliceValue, isIndexInSliceBounds, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, setSliceValue } from "src/utils/matrix-math";
 import {
     BIN_OP_ADD, BIN_OP_AND_AND, BIN_OP_DIVIDE, BIN_OP_GREATER_THAN, BIN_OP_GREATER_THAN_EQ, BIN_OP_INVALID, BIN_OP_IS_EQUAL_TO, BIN_OP_LESS_THAN, BIN_OP_LESS_THAN_EQ, BIN_OP_MULTIPLY, BIN_OP_OR_OR, BIN_OP_SUBTRACT,
     BinaryOperatorType,
@@ -855,8 +855,14 @@ function getExecutionSteps(
                 }
             } break;
             case T_DATA_INDEX_OP: {
-                throw new Error("TODO: Implement data indexing");
-            }
+                dfs(expr.lhs);
+
+                noOp = true;
+                for (const indexExpr of expr.indexes) {
+                    dfs(indexExpr);
+                    steps.push({ expr: indexExpr, index: true });
+                }
+            } break;
             default: {
                 throw new Error("Unhandled type: " + expressionTypeToString(expr));
             }
@@ -2039,16 +2045,28 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
             }
 
             push(program, data.values[idx], step);
-        }
+        } else if (data.t === T_RESULT_MATRIX) {
+            if (data.val.shape.length === 1) {
+                if (!isIndexInSliceBounds(data.val.values, idx)) {
+                    addError(program, step, "Index was out of bounds");
+                    return false;
+                }
 
-        if (data.t === T_RESULT_MATRIX) {
-            // TODO: implement
-            addError(program, step, "I haven't implemented this  yet :/");
+                const value = getSliceValue(data.val.values, idx);
+                push(program, newNumberResult(value), step);
+            } else {
+                const subMatrix = getMatrixRow(data.val, idx);
+                if (!subMatrix) {
+                    addError(program, step, "Index was out of bounds");
+                    return false;
+                }
+
+                push(program, { t: T_RESULT_MATRIX, val: subMatrix }, step);
+            }
+        } else {
+            addError(program, step, "Can't index this datatype");
             return false;
         }
-
-        addError(program, step, "Can't index this datatype");
-        return false;
     } else if (step.incr) {
         const stepVal = pop(program);
         if (stepVal.t !== T_RESULT_NUMBER) {
