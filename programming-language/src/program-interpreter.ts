@@ -1,5 +1,5 @@
 import { CssColor, newColor, newColorFromHexOrUndefined } from "src/utils/colour";
-import { assert } from "src/utils/im-dom-utils";
+import { assert, pushRoot } from "src/utils/im-dom-utils";
 import { copyMatrix, getMatrixValue, getSliceValue, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, setSliceValue } from "src/utils/matrix-math";
 import {
     BIN_OP_ADD, BIN_OP_AND_AND, BIN_OP_DIVIDE, BIN_OP_GREATER_THAN, BIN_OP_GREATER_THAN_EQ, BIN_OP_INVALID, BIN_OP_IS_EQUAL_TO, BIN_OP_LESS_THAN, BIN_OP_LESS_THAN_EQ, BIN_OP_MULTIPLY, BIN_OP_OR_OR, BIN_OP_SUBTRACT,
@@ -7,6 +7,7 @@ import {
     binOpToOpString,
     binOpToString,
     DiagnosticInfo,
+    expressionToString,
     expressionTypeToString,
     ProgramExpression,
     ProgramExpressionFn,
@@ -20,7 +21,7 @@ import {
     unaryOpToOpString,
     unaryOpToString
 } from "./program-parser";
-import { inverseLerp } from "./utils/math-utils";
+import { clamp, inverseLerp } from "./utils/math-utils";
 
 export const T_RESULT_NUMBER = 1;
 export const T_RESULT_STRING = 2;
@@ -414,12 +415,8 @@ export type ProgramExecutionStep = {
     // jumps the current instruction index to the step specified, if the last value is false.
     jumpIfFalse?: number;
 
-    // increments the given variable by 1
+    // increments the given variable by tha last thing on the stack.
     incr?: string;
-
-    // decr the given variable by 1
-    decr?: string;
-
 
     // pops several indexes, uses them to index into a datastructure
     index?: boolean;
@@ -479,9 +476,6 @@ export function executionStepToString(step: ProgramExecutionStep) {
     if (step.incr !== undefined) {
         return "increment " + step.incr;
     }
-    if (step.decr !== undefined) {
-        return "decrement " + step.decr;
-    }
     if (step.index !== undefined) {
         return "index op";
     }
@@ -495,6 +489,9 @@ export function executionStepToString(step: ProgramExecutionStep) {
         const value = step.builtinCall;
         const name = value.fn.name
         return ("[builtin] Call " + name + "(" + value.numArgs + " args) ");
+    }
+    if (step.fn) {
+        return "User function: " + step.fn.expr.fnName.name;
     }
 
     return "Unhandled step";
@@ -518,6 +515,8 @@ type ExecutionState = {
 };
 
 export type ProgramInterpretResult = {
+    parseResult: ProgramParseResult;
+
     isDebugging: boolean;
 
     errors: DiagnosticInfo[];
@@ -574,10 +573,28 @@ export type ProgramPlotOutputHeatmapFunction = {
     color: CssColor | undefined;
 }
 
+type ProgramUiInputBase = {
+    name: string;
+    fromThisRun: boolean;
+};
+
+export const UI_INPUT_SLIDER = 1;
+
+export type ProgramUiInputSlider = ProgramUiInputBase & {
+    t: typeof UI_INPUT_SLIDER;
+    start: number;
+    end: number;
+    value: number;
+    step: number | null;
+}
+
+export type ProgramUiInput = ProgramUiInputSlider;
+
 export type ProgramOutputs = {
     prints: ProgramPrintOutput[];
     images: ProgramImageOutput[];
     plots: Map<number, ProgramPlotOutput>;
+    uiInputs: Map<string, ProgramUiInput>;
     heatmapSubdivisions: number;
 };
 
@@ -718,24 +735,37 @@ function getExecutionSteps(
                 // if we don't know whether the range expression is looping upwards or downards, so 
                 // I'll have to introduce two new operators that range upwards and downards...
 
-                if (expr.ascending) {
-                    dfs(expr.loExpr);
-                } else {
-                    dfs(expr.hiExpr);
-                    steps.push({ expr, number: 1 });
-                    steps.push({ expr, binaryOperator: BIN_OP_SUBTRACT });
+                const rangeExpr = expr.rangeExpr;
+                if (
+                    rangeExpr.t !== T_FN
+                    || (rangeExpr.fnName.name !== "range" && rangeExpr.fnName.name !== "rrange")
+                ) {
+                    addError(expr, "Currently, only range or rrange (reverse range) can be used as arguments to a ranged for-loop");
+                    return false;
                 }
+
+                if (rangeExpr.arguments.length !== 2 && rangeExpr.arguments.length !== 3) {
+                    addError(expr, "range or rrange expect 2 (start, end) or 3 (start, end, step) arguments");
+                    return false;
+                }
+
+                const ascending = rangeExpr.fnName.name === "range";
+                const loExpr = rangeExpr.arguments[0];
+                const hiExpr = rangeExpr.arguments[1];
+
+                const stepExpr: ProgramExpression | undefined = rangeExpr.arguments[2];
+
+                dfs(loExpr);
                 steps.push({ expr, set: expr.loopVar.name });
 
                 const loopStartIdx = steps.length;
 
                 steps.push({ expr, load: expr.loopVar.name });
-                if (expr.ascending) {
-                    dfs(expr.hiExpr);
+                dfs(hiExpr);
+                if (ascending) {
                     steps.push({ expr, binaryOperator: BIN_OP_LESS_THAN });
                 } else {
-                    dfs(expr.loExpr);
-                    steps.push({ expr, binaryOperator: BIN_OP_GREATER_THAN_EQ });
+                    steps.push({ expr, binaryOperator: BIN_OP_GREATER_THAN });
                 }
 
                 const jumpToLoopEndIfFalse = newExecutionStep(expr);
@@ -745,11 +775,20 @@ function getExecutionSteps(
 
                 dfs(expr.body);
 
-                if (expr.ascending) {
-                    steps.push({ expr, incr: expr.loopVar.name });
+
+                if (stepExpr) {
+                    dfs(stepExpr);
                 } else {
-                    steps.push({ expr, decr: expr.loopVar.name });
+                    if (ascending) {
+                        steps.push({ expr, number: 1 });
+                    } else {
+                        steps.push({ expr, number: -1 });
+                    }
                 }
+
+                steps.push({ expr, incr: expr.loopVar.name });
+
+                steps.push({ expr, blockStatementEnd: true });
 
                 steps.push({ expr, jump: loopStartIdx });
 
@@ -758,9 +797,13 @@ function getExecutionSteps(
             } break;
             case T_FN: {
                 if (expr.body) {
+                    const fn = result.functions.get(expr.fnName.name);
+
                     // We've already pre-extracted and linearlized every function declaration,
-                    // so we don't need to do anything here.
-                    noOp = true;
+                    // so it's got to exist.
+                    assert(fn);
+
+                    step.fn = fn;
                 } else {
                     for (const arg of expr.arguments) {
                         dfs(arg);
@@ -888,8 +931,26 @@ function push(result: ProgramInterpretResult, val: ProgramResult, step: ProgramE
     result.stack[result.stackIdx] = { ...val };
 }
 
-export function startInterpreting(parseResult: ProgramParseResult, isDebugging: boolean): ProgramInterpretResult {
+export function startInterpreting(
+    parseResult: ProgramParseResult, 
+    isDebugging: boolean,
+    previousProgramResult: ProgramInterpretResult | undefined
+): ProgramInterpretResult {
+    const outputs: ProgramOutputs = {
+        prints: [],
+        images: [],
+        plots: new Map(),
+        uiInputs: new Map(),
+        heatmapSubdivisions: 20,
+    };
+    if (previousProgramResult) {
+        for (const input of previousProgramResult.outputs.uiInputs.values()) {
+            outputs.uiInputs.set(input.name, { ...input, fromThisRun: false });
+        }
+    }
+
     const result: ProgramInterpretResult = {
+        parseResult,
         isDebugging,
         entryPoint: {
             name: "Entry point",
@@ -902,12 +963,7 @@ export function startInterpreting(parseResult: ProgramParseResult, isDebugging: 
         stackIdx: 0,
         callStack: [],
 
-        outputs: {
-            prints: [],
-            images: [],
-            plots: new Map(),
-            heatmapSubdivisions: 20,
-        }
+        outputs,
     };
 
     if (parseResult.errors.length > 0) {
@@ -983,70 +1039,72 @@ function newArg(name: string, type: ProgramResult["t"][], optional = false, expr
     return { name, type, optional, expr };
 }
 
-const builtinFunctions = new Map<string, BuiltinFunction>();
-
-function newBuiltinFunction(
-    name: string,
-    args: BuiltinFunctionArgDesc[],
-    fn: BuiltinFunctionSignature,
-) {
-    if (builtinFunctions.has(name)) {
-        throw new Error("We already have a function called " + name);
-    }
-
-    let minArgs = 0;
-    for (const arg of args) {
-        if (!arg.optional) {
-            minArgs += 1;
-        }
-    }
-
-    builtinFunctions.set(name, { name, fn, args, minArgs });
-}
-
 const ZERO_VEC2 = matrixZeroes([2]);
 const ZERO_VEC3 = matrixZeroes([3]);
 const ZERO_VEC4 = matrixZeroes([4]);
 
-function validateColor(
-    program: ProgramInterpretResult, step: ProgramExecutionStep,
-    colorRes: ProgramResult
-): CssColor | undefined {
-    let color: CssColor | undefined;
-
-    assert(colorRes.t === T_RESULT_STRING || colorRes.t === T_RESULT_MATRIX);
-    if (colorRes.t === T_RESULT_STRING) {
-        color = newColorFromHexOrUndefined(colorRes.val);
-        if (!color) {
-            addError(program, step, "hex colours are of the from #RRGGBB or #RGB. You can alternatively use a [r, g, b] vector as a color.");
-            return;
-        }
-    } else if (colorRes.t === T_RESULT_MATRIX) {
-        if (matrixShapesAreEqual(colorRes.val, ZERO_VEC3)) {
-            color = newColor(
-                getSliceValue(colorRes.val.values, 0),
-                getSliceValue(colorRes.val.values, 1),
-                getSliceValue(colorRes.val.values, 2),
-                1
-            );
-        } else if (matrixShapesAreEqual(colorRes.val, ZERO_VEC4)) {
-            color = newColor(
-                getSliceValue(colorRes.val.values, 0),
-                getSliceValue(colorRes.val.values, 1),
-                getSliceValue(colorRes.val.values, 2),
-                getSliceValue(colorRes.val.values, 3),
-            );
-        } else {
-            addError(program, step, "Vector colors must be a Vector3 or Vector4. You can alternatively use a \"#RGB\" string color.");
-            return;
-        }
-    }
-
-    return color;
-}
+const builtinFunctions = new Map<string, BuiltinFunction>();
 
 // initialize builtin funcs
 {
+    function newBuiltinFunction(
+        name: string,
+        args: BuiltinFunctionArgDesc[],
+        fn: BuiltinFunctionSignature,
+    ) {
+        if (builtinFunctions.has(name)) {
+            throw new Error("We already have a function called " + name);
+        }
+
+        let minArgs = 0;
+        for (const arg of args) {
+            if (!arg.optional) {
+                minArgs += 1;
+            }
+        }
+
+        builtinFunctions.set(name, { name, fn, args, minArgs });
+    }
+
+    function validateColor(
+        program: ProgramInterpretResult, step: ProgramExecutionStep,
+        colorRes: ProgramResult
+    ): CssColor | undefined {
+        let color: CssColor | undefined;
+
+        assert(colorRes.t === T_RESULT_STRING || colorRes.t === T_RESULT_MATRIX);
+        if (colorRes.t === T_RESULT_STRING) {
+            color = newColorFromHexOrUndefined(colorRes.val);
+            if (!color) {
+                addError(program, step, "hex colours are of the from #RRGGBB or #RGB. You can alternatively use a [r, g, b] vector as a color.");
+                return;
+            }
+        } else if (colorRes.t === T_RESULT_MATRIX) {
+            if (matrixShapesAreEqual(colorRes.val, ZERO_VEC3)) {
+                color = newColor(
+                    getSliceValue(colorRes.val.values, 0),
+                    getSliceValue(colorRes.val.values, 1),
+                    getSliceValue(colorRes.val.values, 2),
+                    1
+                );
+            } else if (matrixShapesAreEqual(colorRes.val, ZERO_VEC4)) {
+                color = newColor(
+                    getSliceValue(colorRes.val.values, 0),
+                    getSliceValue(colorRes.val.values, 1),
+                    getSliceValue(colorRes.val.values, 2),
+                    getSliceValue(colorRes.val.values, 3),
+                );
+            } else {
+                addError(program, step, "Vector colors must be a Vector3 or Vector4. You can alternatively use a \"#RGB\" string color.");
+                return;
+            }
+        }
+
+        return color;
+    }
+
+
+
     function builtinPlotLines(
         program: ProgramInterpretResult, step: ProgramExecutionStep,
         plotIdx: ProgramResult | null,
@@ -1166,8 +1224,6 @@ function validateColor(
 
         return lines;
     }
-
-
 
     newBuiltinFunction("sin", [newArg("t", [T_RESULT_NUMBER])], (_result, _step, val) => {
         assert(val?.t === T_RESULT_NUMBER);
@@ -1339,12 +1395,12 @@ function validateColor(
             }
 
             if (vec.val.values.length === 0) {
-                result = { 
+                result = {
                     rgb: false,
-                    pixels: [], 
-                    width: 0, 
-                    height: 0, 
-                    step, expr: step.expr 
+                    pixels: [],
+                    width: 0,
+                    height: 0,
+                    step, expr: step.expr
                 };
             } else if (
                 vec.val.shape.length === 1 ||
@@ -1454,6 +1510,53 @@ function validateColor(
 
         return list;
     });
+    newBuiltinFunction(
+        "slider", 
+        [
+            newArg("name", [T_RESULT_STRING]), 
+            newArg("start", [T_RESULT_NUMBER]), 
+            newArg("end", [T_RESULT_NUMBER]), 
+            newArg("step", [T_RESULT_NUMBER], true), 
+        ], 
+        (result, step, name, start, end, sliderStep) => {
+            assert(name?.t === T_RESULT_STRING);
+            assert(start?.t === T_RESULT_NUMBER);
+            assert(end?.t === T_RESULT_NUMBER);
+            if (sliderStep) {
+                assert(sliderStep.t === T_RESULT_NUMBER);
+            }
+
+            let input = result.outputs.uiInputs.get(name.val);
+            if (!input || input.t !== UI_INPUT_SLIDER) {
+                input = { 
+                    t: UI_INPUT_SLIDER, 
+                    name: name.val, 
+                    fromThisRun: true, 
+                    start: start.val, 
+                    end: end.val, 
+                    value: start.val, 
+                    step: null 
+                }
+                result.outputs.uiInputs.set(input.name, input);
+            }
+
+            input.start = start.val;
+            input.end = end.val;
+            input.value = clamp(input.value, start.val, end.val);
+            input.step = sliderStep ? sliderStep.val : null;
+            input.fromThisRun = true;
+
+            return newNumberResult(input.value);
+        }
+    );
+    newBuiltinFunction("range", [], (result, step, arg) => {
+        addError(result, step, "'range' isn't really a funciton - it is only valid to use in ranged for-loops");
+        return newNumberResult(0);
+    });
+    newBuiltinFunction("rrange", [], (result, step, arg) => {
+        addError(result, step, "'rrange' isn't really a funciton - it is only valid to use in ranged for-loops");
+        return newNumberResult(0);
+    });
 }
 
 function getOrAddNewPlot(result: ProgramInterpretResult, idx: number): ProgramPlotOutput {
@@ -1481,18 +1584,26 @@ function getBuiltinFunction(name: string): BuiltinFunction | undefined {
     return builtinFunctions.get(name);
 }
 
-function evaluateBuiltinFunction(
-    fn: BuiltinFunction,
-    numArgsInputted: number,
+function evaluateBuiltinFunctionCall(
     program: ProgramInterpretResult,
-    step: ProgramExecutionStep
+    step: ProgramExecutionStep,
 ): ProgramResult | undefined {
+    assert(step.builtinCall);
+    const fn = step.builtinCall.fn;
+    const numArgsInputted = step.builtinCall.numArgs;
+    const expr = step.builtinCall.expr;
+
+    assert(step.builtinCall);
+
     let numArgsToPull = numArgsInputted;
     if (numArgsToPull < fn.minArgs) {
         numArgsToPull = fn.minArgs;
     }
 
     function getArg(program: ProgramInterpretResult, step: ProgramExecutionStep, i: number): ProgramResult | null {
+        assert(step.builtinCall);
+        const argExpr: ProgramExpression | undefined = expr.arguments[i];
+
         if (program.errors.length > 0) {
             return null;
         }
@@ -1518,7 +1629,7 @@ function evaluateBuiltinFunction(
 
                 const gotType = (res ? programResultTypeStringInternal(res.t) : "nothing");
 
-                addError(program, step, "Expected " + expectedType + " for " + typeInfo.name + ", got " + gotType);
+                addError(program, step, "Expected " + expectedType + " for " + typeInfo.name + ", got " + gotType, argExpr?.pos);
                 return null;
             }
         }
@@ -1686,8 +1797,8 @@ function blockStatementEnd(program: ProgramInterpretResult, step: ProgramExecuti
     program.stackIdx = call.nextVarAddress - 1;
 }
 
-export function stepProgram(result: ProgramInterpretResult): boolean {
-    const call = getCurrentCallstack(result);
+export function stepProgram(program: ProgramInterpretResult): boolean {
+    const call = getCurrentCallstack(program);
     if (!call) {
         return false;
     }
@@ -1709,100 +1820,100 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         const fn = getBuiltinFunction(varName);
         if (fn) {
             // TODO: implement this
-            addError(result, step, "We don't have a way to load a builtin function as a variable yet");
+            addError(program, step, "We don't have a way to load a builtin function as a variable yet");
             return false;
         }
 
-        const userFn = result.functions.get(varName);
+        const userFn = program.functions.get(varName);
         let resultToPush: ProgramResult | undefined;
 
         if (userFn) {
             resultToPush = userFn;
         } else {
-            const s = getVarExecutionState(result, varName);
+            const s = getVarExecutionState(program, varName);
             if (!s) {
-                addError(result, step, "This variable hasn't been set yet");
+                addError(program, step, "This variable hasn't been set yet");
                 return false;
             }
 
             const addr = s.variables.get(varName);
             assert(addr !== undefined);
-            const val = result.stack[addr];
+            const val = program.stack[addr];
             assert(val);
 
             resultToPush = val;
         }
 
-        push(result, resultToPush, step);
+        push(program, resultToPush, step);
     } else if (step.loadLastBlockResult) {
-        const val = result.stack[call.returnAddress];
+        const val = program.stack[call.returnAddress];
         if (!val) {
-            addError(result, step, "This block doesn't have any results in it yet");
+            addError(program, step, "This block doesn't have any results in it yet");
             return false;
         }
-        push(result, val, step);
+        push(program, val, step);
     } else if (step.set) {
         // NOTE: setting a variable doesn't remove it from the stack, because assignment will return the value that was assigned.
-        const val = get(result);
+        const val = get(program);
         if (!val) {
-            addError(result, step, "Last wn pstep didn't generate any results")
+            addError(program, step, "Last wn pstep didn't generate any results")
             return false;
         }
 
-        const s = getVarExecutionState(result, step.set);
+        const s = getVarExecutionState(program, step.set);
         if (!s) {
-            if (result.stackIdx !== call.nextVarAddress) {
-                addError(result, step, "Nothing was computed to assign");
+            if (program.stackIdx !== call.nextVarAddress) {
+                addError(program, step, "Nothing was computed to assign");
                 return false;
             }
-            call.variables.set(step.set, result.stackIdx);
+            call.variables.set(step.set, program.stackIdx);
             call.nextVarAddress++;
         } else {
             const addr = s.variables.get(step.set)!;
-            result.stack[addr] = val;
+            program.stack[addr] = val;
         }
     } else if (step.binaryOperator) {
-        const lhs = pop(result);
-        const rhs = pop(result);
+        const lhs = pop(program);
+        const rhs = pop(program);
 
         let calcResult: ProgramResult | null = null;
 
-        calcResult = evaluateBinaryOperatorNumber(lhs, rhs, result, step);
+        calcResult = evaluateBinaryOperatorNumber(lhs, rhs, program, step);
 
         if (!calcResult) {
-            addError(result, step, `We don't have a way to compute ${programResultTypeString(lhs)} ${binOpToOpString(step.binaryOperator)} ${programResultTypeString(rhs)} yet.`);
+            addError(program, step, `We don't have a way to compute ${programResultTypeString(lhs)} ${binOpToOpString(step.binaryOperator)} ${programResultTypeString(rhs)} yet.`);
             return false;
         }
 
-        push(result, calcResult, step);
+        push(program, calcResult, step);
     } else if (step.unaryOperator) {
-        const val = pop(result);
-        const [res, err] = evaluateUnaryOp(result, step, val, step.unaryOperator);
+        const val = pop(program);
+        const [res, err] = evaluateUnaryOp(program, step, val, step.unaryOperator);
         if (err) {
-            addError(result, step, err);
+            addError(program, step, err);
             return false;
         }
 
         if (!res) {
-            addError(result, step, `We don't have a way to compute ${unaryOpToOpString(step.unaryOperator)}${programResultTypeString(val)} yet.`);
+            addError(program, step, `We don't have a way to compute ${unaryOpToOpString(step.unaryOperator)}${programResultTypeString(val)} yet.`);
             return false;
         }
 
-        push(result, res, step);
+        push(program, res, step);
     } else if (step.list !== undefined) {
-        result.stackIdx -= step.list;
+        program.stackIdx -= step.list;
 
         const list: ProgramResult = { t: T_RESULT_LIST, values: [] };
         for (let i = 0; i < step.list; i++) {
-            const val = result.stack[result.stackIdx + i + 1];
+            const val = program.stack[program.stackIdx + i + 1];
             assert(val);
             list.values.push(val);
         }
 
-        push(result, list, step);
+        push(program, list, step);
     } else if (step.vector !== undefined) {
 
-        result.stackIdx -= step.vector;
+        program.stackIdx -= step.vector;
 
         let innerLen = 0;
         let innerT = 0;
@@ -1811,11 +1922,11 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
 
         const len = step.vector;
         for (let i = 0; i < len; i++) {
-            const val = result.stack[result.stackIdx + i + 1];
+            const val = program.stack[program.stackIdx + i + 1];
             assert(val);
 
             if (val.t !== T_RESULT_NUMBER && val.t !== T_RESULT_MATRIX) {
-                addError(result, step, "Vectors/Matrices can only contain other vectors/matrices/numbers. You can create a List instead, by appending an L on the end, like [1,2,\"3\"]L");
+                addError(program, step, "Vectors/Matrices can only contain other vectors/matrices/numbers. You can create a List instead, by appending an L on the end, like [1,2,\"3\"]L");
                 return false;
             }
 
@@ -1840,12 +1951,12 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
                 }
             } else {
                 if (innerT !== val.t) {
-                    addError(result, step, "The items inside this vector/matrix have inconsistent types");
+                    addError(program, step, "The items inside this vector/matrix have inconsistent types");
                     return false;
                 }
 
                 if (innerLen !== rowLen) {
-                    addError(result, step, "The items inside this vector/matrix have inconsistent lengths");
+                    addError(program, step, "The items inside this vector/matrix have inconsistent lengths");
                     return false;
                 }
             }
@@ -1853,14 +1964,14 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
 
         const newShape = innerShape ? [len, ...innerShape] : [len];
 
-        push(result, {
+        push(program, {
             t: T_RESULT_MATRIX,
             val: { values: newSlice(values), shape: newShape }
         }, step);
     } else if (step.number !== undefined) {
-        push(result, newNumberResult(step.number), step);
+        push(program, newNumberResult(step.number), step);
     } else if (step.string !== undefined) {
-        push(result, { t: T_RESULT_STRING, val: step.string }, step);
+        push(program, { t: T_RESULT_STRING, val: step.string }, step);
     } else if (step.jump !== undefined) {
         assert(step.jump >= 0);
         assert(step.jump < steps.length);
@@ -1869,11 +1980,11 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         assert(step.jumpIfFalse >= 0);
         assert(step.jumpIfFalse <= steps.length);
 
-        const val = pop(result,);
+        const val = pop(program,);
         if (val.t !== T_RESULT_NUMBER) {
             // -0 is fine to be `true` imo.
             // (Won't be a problem if we implement this in a real language with integer types);
-            addError(result, step, "True/false queries must be numbers. You can get a 0/1 number by using logical ops like ==, <=, etc, but that is not the only way to do so.");
+            addError(program, step, "True/false queries must be numbers. You can get a 0/1 number by using logical ops like ==, <=, etc, but that is not the only way to do so.");
             return false;
         }
 
@@ -1883,90 +1994,91 @@ export function stepProgram(result: ProgramInterpretResult): boolean {
         }
     } else if (step.call) {
         const numArgs = step.call.numArgs;
-        pushFunctionCallFrame(result, step.call.fn, numArgs);
+        pushFunctionCallFrame(program, step.call.fn, numArgs);
         call.i++;
         return true;
     } else if (step.builtinCall) {
-        const res = evaluateBuiltinFunction(step.builtinCall.fn, step.builtinCall.numArgs, result, step);
-        if (result.errors.length > 0) {
+        const res = evaluateBuiltinFunctionCall(program, step);
+        if (program.errors.length > 0) {
             return false;
         }
         // Should always push an error if we're returning undefined
         assert(res);
 
-        result.stackIdx -= step.builtinCall.numArgs;
-        push(result, res, step);
+        program.stackIdx -= step.builtinCall.numArgs;
+        push(program, res, step);
     } else if (step.blockStatementEnd !== undefined) {
         // need this to clean up after the last 'statement'.
-        blockStatementEnd(result, step);
+        blockStatementEnd(program, step);
     } else if (step.clearLastBlockResult) {
-        result.stack[call.returnAddress] = null;
+        program.stack[call.returnAddress] = null;
     } else if (step.index) {
-        const idxResult = pop(result);
+        const idxResult = pop(program);
 
         if (idxResult.t !== T_RESULT_NUMBER) {
-            addError(result, step, "Indexers must be numbers");
+            addError(program, step, "Indexers must be numbers");
             return false;
         }
 
         const idx = idxResult.val;
         if ((idx % 1) !== 0) {
-            addError(result, step, "Indexers can't have a decimal component");
+            addError(program, step, "Indexers can't have a decimal component");
             return false;
         }
 
         if (idx < 0) {
-            addError(result, step, "Indexers can't be negative");
+            addError(program, step, "Indexers can't be negative");
             return false;
         }
 
-        const data = pop(result);
+        const data = pop(program);
         if (data.t === T_RESULT_LIST) {
             if (idx >= data.values.length) {
-                addError(result, step, "Index was out of bounds");
+                addError(program, step, "Index was out of bounds");
                 return false;
             }
 
-            push(result, data.values[idx], step);
+            push(program, data.values[idx], step);
         }
 
         if (data.t === T_RESULT_MATRIX) {
             // TODO: implement
-            addError(result, step, "I haven't implemented this  yet :/");
+            addError(program, step, "I haven't implemented this  yet :/");
             return false;
         }
 
-        addError(result, step, "Can't index this datatype");
+        addError(program, step, "Can't index this datatype");
         return false;
     } else if (step.incr) {
+        const stepVal = pop(program);
+        if (stepVal.t !== T_RESULT_NUMBER) {
+            addError(program, step, "Can't increment by non-numerical values");
+            return false;
+        }
+
         const addr = call.variables.get(step.incr);
         assert(addr !== undefined);
-        const val = result.stack[addr];
+        const val = program.stack[addr];
         assert(val);
         assert(val.t === T_RESULT_NUMBER);
-        val.val++;
-    } else if (step.decr) {
-        const addr = call.variables.get(step.decr);
-        assert(addr !== undefined);
-        const val = result.stack[addr];
-        assert(val);
-        assert(val.t === T_RESULT_NUMBER);
-        val.val--;
+        val.val += stepVal.val;
+    }  else if (step.fn) {
+        push(program, step.fn, step);
     }
 
     call.i = nextCallI;
-    if (call.code.steps.length === call.i && result.callStack.length > 1) {
+    if (call.code.steps.length === call.i && program.callStack.length > 1) {
         // this was the thing we last computed
-        const val = result.stack[call.returnAddress];
+        const val = program.stack[call.returnAddress];
 
-        result.callStack.pop();
-        const current = getCurrentCallstack(result);
+        program.callStack.pop();
+        const current = getCurrentCallstack(program);
 
         // this is the previous call frame's return address
-        result.stackIdx = current ? current.returnAddress : 0;
-        result.stack[result.stackIdx] = val;
+        program.stackIdx = current ? current.returnAddress : 0;
+        program.stack[program.stackIdx] = val;
     }
-    return result.callStack.length > 0;
+    return program.callStack.length > 0;
 }
 
 export function newNumberResult(val: number): ProgramResultNumber {
@@ -1977,7 +2089,7 @@ function interpretRestOfProgram(result: ProgramInterpretResult) {
     // I've kept it low, because matrix ops and array programming can result in singular iterations
     // actually doing quite a lot of computations.
     let safetyCounter = 0;
-    const MAX_ITERATIONS = 1000 * 1000;
+    const MAX_ITERATIONS = 1000 * 1000
     while (result.callStack.length > 0) {
         safetyCounter++;
         if (safetyCounter >= MAX_ITERATIONS) {
@@ -2002,13 +2114,22 @@ function interpretRestOfProgram(result: ProgramInterpretResult) {
     }
 }
 
-export function interpret(parseResult: ProgramParseResult): ProgramInterpretResult {
-    const result = startInterpreting(parseResult, false);
+export function interpret(
+    parseResult: ProgramParseResult, 
+    previousProgramResult: ProgramInterpretResult | undefined
+): ProgramInterpretResult {
+    const result = startInterpreting(parseResult, false, previousProgramResult);
     if (result.errors.length > 0) {
         return result;
     }
 
     interpretRestOfProgram(result);
+
+    for (const input of result.outputs.uiInputs.values()) {
+        if (!input.fromThisRun) {
+            result.outputs.uiInputs.delete(input.name);
+        }
+    }
 
     return result;
 }

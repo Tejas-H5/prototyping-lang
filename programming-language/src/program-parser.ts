@@ -275,9 +275,7 @@ export type ProgramExpressionFn = ProgramExpressionBase & {
 export type ProgramExpressionRangedFor = ProgramExpressionBase & {
     t: typeof T_RANGE_FOR;
     loopVar: ProgramExpressionIdentifier;
-    ascending: boolean;
-    loExpr: ProgramExpression;
-    hiExpr: ProgramExpression;
+    rangeExpr: ProgramExpression;
     body: ProgramExpression;
 };
 
@@ -317,6 +315,7 @@ export type DiagnosticInfo = {
 // Not sure why I called it parser context and not just 'Parser'. 
 // Must be a residual in my mind of my last implementation.
 type ParserContext = {
+    isInForLoopRangeExpr: boolean;
     text: string;
     parseResult: ProgramParseResult;
     pos: TextPosition;
@@ -634,7 +633,7 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
     parseWhitespace(ctx);
 
     if (!isLetter(currentChar(ctx))) {
-        addErrorAtCurrentPosition(ctx, "Expected an identifier to assign the current loop variable to here");
+        addErrorAtCurrentPosition(ctx, "Example for-loop: `for i in range(0, 100) { // forwards loop }`");
         return undefined;
     }
     const loopVar = parseIdentifier(ctx);
@@ -642,7 +641,7 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
     parseWhitespace(ctx);
 
     if (!compareCurrent(ctx, "in")) {
-        addErrorAtCurrentPosition(ctx, `Expected the ranged for-loop keyword "in" here`);
+        addErrorAtCurrentPosition(ctx, "Example for-loop: `for i in rrange(0, 100) { // backwards loop }`");
         return undefined;
     }
     for (let i = 0; i < 2; i++) {
@@ -651,33 +650,19 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
 
     parseWhitespace(ctx);
 
-    const loExpr = parseExpression(ctx);
-    if (!loExpr) {
-        addErrorAtCurrentPosition(ctx, `Expected a range expression to begin here, e.g for i in 0 -> 100`);
+    ctx.isInForLoopRangeExpr = true;
+
+    const rangeExpr = parseExpression(ctx);
+    if (!rangeExpr) {
+        addErrorAtCurrentPosition(ctx, "Example for-loop: `for i in rrange(0, 100, 0.1) { // you can optionally add a 'step' }`");
         return undefined;
     }
 
-    parseWhitespace(ctx);
-    const ascending = compareCurrent(ctx, "->");
-    const descending = compareCurrent(ctx, "<-");
-    if (!ascending && !descending) {
-        addErrorAtCurrentPosition(ctx, `Expected the ranged for-loop operator <- or -> here (we need to know which way to loop at compile-time, so that we can generate the right instructions)`);
-        return undefined;
-    }
-    for (let i = 0; i < 2; i++) {
-        advance(ctx);
-    }
-
-    parseWhitespace(ctx);
-    const hiExpr = parseExpression(ctx);
-    if (!hiExpr) {
-        addErrorAtCurrentPosition(ctx, `Expected the higher portion of the range-expression here`);
-        return undefined;
-    }
+    ctx.isInForLoopRangeExpr = false;
 
     parseWhitespace(ctx);
     if (currentChar(ctx) !== "{") {
-        addErrorAtCurrentPosition(ctx, "Expected a block here for the loop body. E.g `for i in 0..<100 { log(i) }`");
+        addErrorAtCurrentPosition(ctx, "Coming soon: for-loop: `for i in [1, 2, 3] { // looping through other things!? aint noway? }`");
         return undefined;
     }
 
@@ -691,9 +676,7 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
         slice: newTextSlice(ctx.text, start, ctx.pos.i),
         pos,
         loopVar,
-        loExpr,
-        ascending,
-        hiExpr,
+        rangeExpr,
         body: loopExpr,
     };
 
@@ -926,7 +909,7 @@ function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boo
 
         parseWhitespace(ctx);
 
-        if (currentChar(ctx) === "{") {
+        if (currentChar(ctx) === "{" && !ctx.isInForLoopRangeExpr) {
             const argNames: ProgramExpressionIdentifier[] = [];
             for (let i = 0; i < result.arguments.length; i++) {
                 const arg = result.arguments[i];
@@ -1359,6 +1342,7 @@ export function parse(text: string): ProgramParseResult {
     };
 
     const ctx: ParserContext = {
+        isInForLoopRangeExpr: false,
         text,
         parseResult: program,
         pos: newTextPosition(0, 0, 0),

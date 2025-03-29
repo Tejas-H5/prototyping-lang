@@ -1,5 +1,5 @@
 import { beginTextArea } from './components/text-area.ts';
-import { evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getCurrentCallstack, interpret, newNumberResult, ProgramExecutionStep, ProgramInterpretResult, ProgramPlotOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, startInterpreting, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING } from './program-interpreter.ts';
+import { evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getCurrentCallstack, interpret, newNumberResult, ProgramExecutionStep, ProgramInterpretResult, ProgramPlotOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, startInterpreting, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING, UI_INPUT_SLIDER } from './program-interpreter.ts';
 import {
     binOpToString,
     binOpToOpString as binOpToSymbolString,
@@ -290,8 +290,7 @@ function ParserOutput(parseResult: ProgramParseResult | undefined) {
                     case T_RANGE_FOR: {
                         renderRow(title, typeString, depth);
                         dfs("loop var", expr.loopVar, depth + 1);
-                        dfs("loop hi", expr.hiExpr, depth + 1);
-                        dfs("loop lo", expr.loExpr, depth + 1);
+                        dfs("range expr", expr.rangeExpr, depth + 1);
                         dfs("loop body", expr.body, depth + 1);
                     } break;
                     case T_FN: {
@@ -696,7 +695,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
 
         beginList();
         if (nextRoot() && ctx.lastInterpreterResult) {
-            renderProgramOutputs(ctx.lastInterpreterResult);
+            renderProgramOutputs(ctx, ctx.lastInterpreterResult);
         } else {
             nextRoot();
             beginLayout(); {
@@ -861,7 +860,7 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
                     textSpan("Reset");
                     if (elementHasMouseClick()) {
                         assert(ctx.lastParseResult);
-                        ctx.lastInterpreterResult = startInterpreting(ctx.lastParseResult, true);
+                        ctx.reinterpretSignal = true;
                         message.val = "";
                     }
                 } end();
@@ -1003,7 +1002,7 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
                         textSpan("Results");
                     } end();
 
-                    renderProgramOutputs(interpretResult);
+                    renderProgramOutputs(ctx, interpretResult);
                 } end();
             } end();
         } end();
@@ -1022,10 +1021,155 @@ function verticalBar() {
     } end();
 }
 
-function renderProgramOutputs(program: ProgramInterpretResult) {
+function newSliderState() {
+    return {
+        value: 0,
+        start: 0,
+        end: 1,
+        step: 0 as number | null,
+        t: 0,
+    };
+}
+
+function renderSliderBody(
+    sliderStart: number,
+    sliderEnd: number,
+    step: number | null,
+    value: number = sliderStart,
+) {
+    const s = imState(newSliderState);
+
+    // slider body
+    beginLayout(FLEX | RELATIVE); {
+        const { rect } = imTrackRectSize();
+
+        if (imInit()) {
+            setStyle("backgroundColor", cssVars.bg2);
+            setStyle("borderRadius", "1000px");
+            setStyle("cursor", "ew-resize");
+            setStyle("userSelect", "none");
+        }
+
+        s.start = sliderStart;
+        s.end = sliderEnd;
+        if (s.end < s.start) {
+            [s.start, s.end] = [s.end, s.start];
+        }
+        s.step = step;
+
+        if (beginMemo().val(value).changed()) {
+            s.value = value;
+        } endMemo();
+
+        s.value = clamp(s.value, s.start, s.end);
+
+        const sliderHandleSize = rect.height;
+        const x0 = rect.left + sliderHandleSize / 2;
+        const x1 = rect.right - sliderHandleSize / 2;
+
+        // little dots for every step
+        beginList(); {
+            if (s.step) {
+                const width = s.end - s.start;
+                const count = Math.floor(width / s.step);
+                if (count < 50) {
+                    for (let i = 0; i < count - 1; i++) {
+                        let t = (i + 1) / count;
+                        const sliderPos = lerp(0, rect.width - sliderHandleSize, t);
+
+                        nextRoot();
+
+                        beginLayout(ABSOLUTE); {
+                            if (imInit()) {
+                                setStyle("aspectRatio", "1 / 1");
+                                setStyle("height", "100%");
+                                setStyle("backgroundColor", cssVars.mg);
+                                setStyle("transformOrigin", "center");
+                                setStyle("transform", "scale(0.4) rotate(45deg)");
+                            }
+
+                            setStyle("left", sliderPos + "px");
+                        } end();
+                    }
+                }
+            }
+        }
+        endList();
+
+        // slider handle
+        beginLayout(ABSOLUTE); {
+            if (imInit()) {
+                setStyle("backgroundColor", cssVars.fg);
+                setStyle("borderRadius", "1000px");
+                setStyle("aspectRatio", "1 / 1");
+                setStyle("height", "100%");
+
+                setStyle("userSelect", "none");
+                setStyle("cursor", "ew-resize");
+            }
+
+            if (beginMemo().objectVals(s).changed()) {
+                const t = inverseLerp(s.start, s.end, s.value);
+                const sliderPos = lerp(0, rect.width - sliderHandleSize, t);
+                setStyle("left", sliderPos + "px");
+            } endMemo();
+
+            deferClickEventToParent();
+        } end();
+
+        const mouse = getMouse();
+        if (mouse.leftMouseButton && elementWasLastClicked()) {
+            let t = inverseLerp(x0, x1, mouse.X);
+            t = clamp(t, 0, 1);
+
+            s.value = lerp(s.start, s.end, t);
+            s.t = s.value;
+            if (s.step && s.step > 0.0001) {
+                s.value = Math.round(s.value / s.step) * s.step;
+            }
+            s.value = clamp(s.value, s.start, s.end);
+
+        }
+
+    } end();
+
+    return s;
+}
+
+function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResult) {
     const outputs = program.outputs;
 
     // TODO: scroll container, also collapse repeated prints.
+    beginLayout(COL | GAP); {
+        beginList();
+        for (const ui of outputs.uiInputs.values()) {
+            nextRoot();
+
+            beginList(); 
+            nextRoot(ui.t);
+            switch (ui.t) {
+                case UI_INPUT_SLIDER: {
+                    beginLayout(ROW | GAP); {
+                        beginLayout(); {
+                            textSpan(ui.name);
+                        } end();
+
+                        const s = renderSliderBody(ui.start, ui.end, ui.step);
+
+                        if (beginMemo().val(s.value).changed()) {
+                            ui.value = s.value;
+                            ctx.reinterpretSignal = true;
+                        } endMemo();
+                    } end();
+                } break;
+                default: {
+                    throw new Error("Unhandled UI input type");
+                }
+            }
+            endList();
+        }
+        endList();
+    } end();
     beginList();
     for (const result of outputs.prints) {
         nextRoot(); 
@@ -1112,7 +1256,6 @@ function renderProgramOutputs(program: ProgramInterpretResult) {
                                     }
                                 }
 
-                                // draw boundary at the end, so we don't draw over it
                                 drawBoundary(ctx, imageClientWidth, imageClientHeight);
                             } endMemo();
                         } end();
@@ -1329,12 +1472,15 @@ function drawRect(
     );
 }
 
+// normally done at the end, so that it doesn't get drown over
 function drawBoundary(ctx: CanvasRenderingContext2D, width: number, height: number) {
+    const theme = getCurrentTheme();
+    ctx.strokeStyle = theme.fg.toString();
+
+    const offset = 1
+    ctx.lineWidth = 2;
     ctx.beginPath();
     {
-        const offset = 1
-        ctx.strokeStyle = cssVars.fg;
-        ctx.lineWidth = 2;
         drawRect(
             ctx,
             offset, offset,
@@ -1413,7 +1559,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                     plotState.maximized = isMaximized;
 
                     const { width, height } = rect;
-                    if (beginMemo().val(plot).val(width).val(height).changed()) {
+                    if (beginMemo().val(program.parseResult.text).val(width).val(height).changed()) {
                         plotState.width = rect.width;
                         plotState.height = rect.height;
                         canvas.width = width;
@@ -1666,8 +1812,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                             }
                         }
 
-                        // draw boundary at the end, so we don't draw over it
-                        drawBoundary(ctx, width, height)
+                        drawBoundary(ctx, width, height);
                     } endMemo();
                 } end();
 
@@ -1725,14 +1870,17 @@ const codeExamples: CodeExample[] = [
 
 n = 10
 
-for size in 1 -> 6 {
+for size in range(1, 6) {
     period = 0.1
     pos = 0
 
-    for i in 0 -> n {
+    for i in range(0, n) {
         sine_wave = []L
-        for j in pos -> pos + 3 / period {
-            push(sine_wave, [j, size * 10 * sin(j * period)])
+        for j in range(pos, pos + 3 / period) {
+            push(
+                sine_wave, 
+                [j, size * 10 * sin(j * period) + i]
+            )
         }
         pos = pos + 3
 
@@ -1741,28 +1889,28 @@ for size in 1 -> 6 {
         // try changing this 1 to i
         plot_lines(1, sine_wave, col)
     }
-}`
+}
+`
     },
     {
         name: "Signed distance fields",
         code: `
-sdf(a, b) { 
+// Try increasing this, if your PC allows for it 
+set_heatmap_subdiv(40)
+
+heatmap(1, sdf(a, b) { 
     radius = 0.2
     thickness = 0.01
     sqrt(a*a + b*b) 
     (radius - thickness) < ^ && ^ < (radius + thickness)
-}
+}, [0.5, 0, 0])
 
-sdf2(a, b) { 
+heatmap(1, sdf2(a, b) { 
     radius = 0.3
     thickness = 0.01
     sqrt(a*a + b*b) 
     (radius - thickness) < ^ && ^ < (radius + thickness)
-}
-
-set_heatmap_subdiv(40)
-heatmap(1, sdf, [0.5, 0, 0])
-heatmap(1, sdf2, "#F00")
+}, "#F00")
 
 plot_points(1, 0.5 * [
     [0, 0],
@@ -1771,8 +1919,24 @@ plot_points(1, 0.5 * [
     [0, 1],
     [0, -1],
 ])
-        `
+`
 
+    },
+    {
+        name: "Slider inputs",
+        code: `
+period = slider("period", 0, 100)
+resolution = slider("resolution", 1, 100)
+
+lines = []L
+
+one_over_res = 1 / resolution
+for i in range(0, 100, one_over_res) {
+    push(lines, [i, sin(i * period)])
+}
+
+plot_lines(1, lines)
+        `
     }
 ]
 
@@ -1797,12 +1961,15 @@ export function renderApp() {
                     if (beginMemo()
                         .val(state.text)
                         .val(state.autorun)
-                        .changed()
+                        .changed() || 
+                        ctx.reinterpretSignal
                     ) {
+                        ctx.reinterpretSignal = false;
+
                         const text = state.text;
                         ctx.lastParseResult = parse(text);
                         if (state.autorun) {
-                            ctx.lastInterpreterResult = interpret(ctx.lastParseResult);
+                            ctx.lastInterpreterResult = interpret(ctx.lastParseResult, ctx.lastInterpreterResult);
                         }
 
                         saveStateDebounced(ctx);

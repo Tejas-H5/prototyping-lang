@@ -17,6 +17,8 @@ export type GlobalContext = {
 
     // This stuff is actually saved and persisted between runs
     state: GlobalState;
+
+    reinterpretSignal: boolean;
 }
 
 export function startDebugging(ctx: GlobalContext): string {
@@ -26,7 +28,7 @@ export function startDebugging(ctx: GlobalContext): string {
         return "Fix parsing errors before you can start debugging";
     } 
 
-    ctx.lastInterpreterResult = startInterpreting(ctx.lastParseResult, true);
+    ctx.lastInterpreterResult = startInterpreting(ctx.lastParseResult, true, undefined);
     ctx.functionToDebug = null;
     ctx.isDebugging = true;
     return "";
@@ -41,7 +43,7 @@ export function startDebuggingFunction(ctx: GlobalContext, functionName: string)
         return "Fix parsing errors before you can start debugging";
     } 
 
-    const program = interpret(ctx.lastParseResult);;
+    const program = interpret(ctx.lastParseResult, undefined);
     ctx.lastInterpreterResult = program;
     const fn = program.functions.get(functionName);
     if (!fn) {
@@ -61,7 +63,8 @@ export function newGlobalContext(): GlobalContext {
         functionToDebug: null,
 
         lastParseResult: undefined, 
-        lastInterpreterResult: undefined 
+        lastInterpreterResult: undefined,
+        reinterpretSignal: true,
     };
 }
 export function newGlobalState(): GlobalState {
