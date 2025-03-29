@@ -1,6 +1,6 @@
 import { CssColor, newColor, newColorFromHexOrUndefined } from "src/utils/colour";
 import { assert, pushRoot } from "src/utils/im-dom-utils";
-import { copyMatrix, getMatrixRow, getMatrixValue, getSliceValue, isIndexInSliceBounds, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, setSliceValue } from "src/utils/matrix-math";
+import { copyMatrix, getMatrixRow, getMatrixRowLength, getMatrixValue, getSliceValue, isIndexInSliceBounds, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, setSliceValue, subMatrixShapeEqualsRowShape } from "src/utils/matrix-math";
 import {
     BIN_OP_ADD, BIN_OP_AND_AND, BIN_OP_DIVIDE, BIN_OP_GREATER_THAN, BIN_OP_GREATER_THAN_EQ, BIN_OP_INVALID, BIN_OP_IS_EQUAL_TO, BIN_OP_LESS_THAN, BIN_OP_LESS_THAN_EQ, BIN_OP_MULTIPLY, BIN_OP_OR_OR, BIN_OP_SUBTRACT,
     BinaryOperatorType,
@@ -73,13 +73,17 @@ export type ProgramResult = ProgramResultNumber
 export function programResultTypeString(output: ProgramResult): string {
     switch (output.t) {
         case T_RESULT_MATRIX: {
-            return output.val.shape.length === 1 ? `Vector${output.val.shape[0]}` : (
-                `Matrix${output.val.shape.map(s => "" + s).join("x")}`
-            );
+            return getMatrixTypeFromShape(output.val.shape);
         }
     }
 
     return programResultTypeStringInternal(output.t);
+}
+
+export function getMatrixTypeFromShape(shape: number[]): string {
+    return shape.length === 1 ? `Vector${shape[0]}` : (
+        `Matrix${shape.map(s => "" + s).join("x")}`
+    );
 }
 
 export function programResultTypeStringInternal(t: ProgramResult["t"]): string {
@@ -421,6 +425,12 @@ export type ProgramExecutionStep = {
     // pops several indexes, uses them to index into a datastructure
     index?: boolean;
 
+    // pops the last three (matrx, index, value) and assigns matrix[index] = value;
+    // the behaviour depends on the type of `value`. The op might fail if the matricies are the wrong size.
+    // [1, 2, 3][0] = [2] -> [2, 2, 3]
+    // [[1, 2, 3]][0] = [2, 2, 2] -> [[2, 2, 2]]
+    indexAssignment?: boolean;
+
     // calls a user function with some number of args.
     call?: { fn: ProgramResultFunction; numArgs: number; };
 
@@ -651,14 +661,28 @@ function getExecutionSteps(
                 }
 
                 if (expr.lhs.t === T_DATA_INDEX_OP) {
-                    dfs(expr.lhs);
+                    noOp = true;
 
-                    for (const idxEpr of expr.lhs.indexes) {
-                        dfs(idxEpr);
-                        steps.push({ expr, index: true });
+                    // TODO: like this everywhere else
+                    if (!dfs(expr.lhs.lhs)) return false;
+
+                    // Should have been checked at parse-time
+                    assert(expr.lhs.indexes.length > 0);
+
+                    // index into the matrix, except for the very last index. we'll need to actually assign to that one.
+                    for (let i = 0 ; i < expr.lhs.indexes.length; i++) { 
+                        const idxExpr = expr.lhs.indexes[i];
+                        if (!dfs(idxExpr)) return false;
+
+                        if (i === expr.lhs.indexes.length - 1) {
+                            if (!dfs(expr.rhs)) return false;
+                            steps.push({ expr, indexAssignment: true });
+                        } else {
+                            steps.push({ expr, index: true });
+                        }
                     }
                 } else if (expr.lhs.t === T_IDENTIFIER) {
-                    dfs(expr.rhs);
+                    if (!dfs(expr.rhs)) return false;
                     step.set = expr.lhs.name;
                 }
             } break;
@@ -1803,6 +1827,30 @@ function blockStatementEnd(program: ProgramInterpretResult, step: ProgramExecuti
     program.stackIdx = call.nextVarAddress - 1;
 }
 
+function validateIndex(
+    program: ProgramInterpretResult,
+    step: ProgramExecutionStep,
+    idxResult: ProgramResult,
+): number | null {
+    if (idxResult.t !== T_RESULT_NUMBER) {
+        addError(program, step, "Indexers must be numbers");
+        return null;
+    }
+
+    const idx = idxResult.val;
+    if ((idx % 1) !== 0) {
+        addError(program, step, "Indexers can't have a decimal component");
+        return null;
+    }
+
+    if (idx < 0) {
+        addError(program, step, "Indexers can't be negative");
+        return null;
+    }
+
+    return idx;
+}
+
 export function stepProgram(program: ProgramInterpretResult): boolean {
     const call = getCurrentCallstack(program);
     if (!call) {
@@ -2021,19 +2069,8 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
     } else if (step.index) {
         const idxResult = pop(program);
 
-        if (idxResult.t !== T_RESULT_NUMBER) {
-            addError(program, step, "Indexers must be numbers");
-            return false;
-        }
-
-        const idx = idxResult.val;
-        if ((idx % 1) !== 0) {
-            addError(program, step, "Indexers can't have a decimal component");
-            return false;
-        }
-
-        if (idx < 0) {
-            addError(program, step, "Indexers can't be negative");
+        const idx = validateIndex(program, step, idxResult);
+        if (idx === null) {
             return false;
         }
 
@@ -2080,8 +2117,58 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
         assert(val);
         assert(val.t === T_RESULT_NUMBER);
         val.val += stepVal.val;
-    }  else if (step.fn) {
+    } else if (step.fn) {
         push(program, step.fn, step);
+    } else if (step.indexAssignment) {
+        const rhsResult = pop(program);
+        const idxResult = pop(program);
+        const lhsToAssign = pop(program);
+
+        const idx = validateIndex(program, step, idxResult);
+        if (idx === null) {
+            return false;
+        }
+
+        if (lhsToAssign.t === T_RESULT_LIST) {
+            if (idx < 0 || idx >= lhsToAssign.values.length) {
+                addError(program, step, "Index was out of bounds: " + "list(" + lhsToAssign.values.length + ")[" + idx + "]")
+                return false;
+            }
+            lhsToAssign.values[idx] = rhsResult;
+        } else if (lhsToAssign.t === T_RESULT_MATRIX) {
+            if (lhsToAssign.val.shape.length === 1) {
+                if (rhsResult.t !== T_RESULT_NUMBER) {
+                    addError(program, step, "Can only assign numbers into " + programResultTypeString(lhsToAssign));
+                    return false;
+                }
+                setSliceValue(lhsToAssign.val.values, idx, rhsResult.val);
+            } else { 
+                if (rhsResult.t !== T_RESULT_MATRIX) {
+                    addError(program, step, "Can only assign vectors into " + programResultTypeString(lhsToAssign));
+                    return false;
+                }
+
+                if (!subMatrixShapeEqualsRowShape(lhsToAssign.val, rhsResult.val)) {
+                    addError(program, step, 
+                        "Can only assign " + 
+                        getMatrixTypeFromShape(lhsToAssign.val.shape.slice(1)) +
+                        " into " + programResultTypeString(lhsToAssign)
+                    );
+                    return false;
+                }
+
+                const rowLen = getMatrixRowLength(lhsToAssign.val);
+                for (let i = 0; i < rowLen; i++) {
+                    const val = getSliceValue(rhsResult.val.values, i);
+                    setSliceValue(lhsToAssign.val.values, i, val);
+                }
+            }
+        } else {
+            addError(program, step, "Can't assign to a value of type " + programResultTypeString(lhsToAssign))
+            return false;
+        }
+
+        push(program, rhsResult, step);
     }
 
     call.i = nextCallI;

@@ -128,11 +128,10 @@ export function getCol(m: Matrix, i: number): Matrix {
     const rowLen = getMatrixRowLength(m);
     const colLen = m.shape[0];
 
-    if (i >= rowLen) {
+    const values = getSlice(m.values, m.values.start + i, colLen, rowLen);
+    if (!values) {
         throw new Error("The column was out of bounds");
     }
-
-    const values = getSlice(m.values, m.values.start + i, colLen, rowLen);
 
     return { values, shape: [] };
 }
@@ -169,6 +168,20 @@ export function matrixShapesAreEqual(a: Matrix, b: Matrix) {
 
     for (let i = 0; i < a.shape.length; i++) {
         if (a.shape[i] !== b.shape[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+export function subMatrixShapeEqualsRowShape(a: Matrix, subMatrix: Matrix) {
+    if (a.shape.length !== subMatrix.shape.length + 1) {
+        return false;
+    }
+
+    for (let i = 0; i < subMatrix.shape.length; i++) {
+        if (a.shape[i + 1] !== subMatrix.shape[i]) {
             return false;
         }
     }
