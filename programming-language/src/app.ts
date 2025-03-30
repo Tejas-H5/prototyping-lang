@@ -1,5 +1,5 @@
 import { beginTextArea } from './components/text-area.ts';
-import { evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getCurrentCallstack, interpret, newNumberResult, ProgramExecutionStep, ProgramImageOutput, ProgramGraphOutput, ProgramInterpretResult, ProgramPlotOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MAP, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING, UI_INPUT_SLIDER } from './program-interpreter.ts';
+import { evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getCurrentCallstack, interpret, newNumberResult, ProgramExecutionStep, ProgramImageOutput, ProgramGraphOutput, ProgramInterpretResult, ProgramPlotOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MAP, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING, UI_INPUT_SLIDER, getBuiltinFunctionsMap, programResultTypeStringFromType } from './program-interpreter.ts';
 import {
     binOpToString,
     binOpToOpString as binOpToSymbolString,
@@ -7,6 +7,7 @@ import {
     expressionToString,
     expressionTypeToString,
     parse,
+    parseIdentifierBackwardsFromPoint,
     ProgramExpression,
     ProgramParseResult,
     T_ASSIGNMENT,
@@ -24,13 +25,14 @@ import {
     T_TERNARY_IF,
     T_UNARY_OP,
     T_VECTOR_LITERAL,
+    TextPosition,
     unaryOpToOpString,
     unaryOpToString
 } from './program-parser.ts';
 import { GlobalContext, GlobalState, newGlobalContext, saveState, startDebugging } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars, getCurrentTheme } from './styling.ts';
-import { abortListAndRewindUiStack, assert, beginFrame, beginList, beginMemo, cn, deferClickEventToParent, deltaTimeSeconds, div, el, elementHasMouseClick, elementHasMouseOver, elementWasLastClicked, end, endFrame, endList, endMemo, getKeys, getMouse, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackRectSize, imVal, isShiftPressed, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setInnerText, setStyle, span, UIRoot } from './utils/im-dom-utils.ts';
+import { abortListAndRewindUiStack, assert, beginFrame, beginList, beginMemo, cn, deferClickEventToParent, deltaTimeSeconds, div, el, elementHasMouseClick, elementHasMouseOver, elementWasLastClicked, end, endFrame, endList, endMemo, getKeys, getMouse, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackRectSize, imVal, isShiftPressed, newCssBuilder, nextRoot, Ref, scrollIntoView, setAttributes, setClass, setInnerText, setStyle, SizeState, span, UIRoot } from './utils/im-dom-utils.ts';
 import { clamp, inverseLerp, lerp, max, min } from './utils/math-utils.ts';
 import { getSliceValue } from './utils/matrix-math.ts';
 import { getLineBeforePos, getLineEndPos, getLineStartPos } from './utils/text-utils.ts';
@@ -755,6 +757,20 @@ function renderAppCodeOutput(ctx: GlobalContext) {
     } end();
 }
 
+function renderInvisibleSpanUpToPos(
+    text: string,
+    idx: number
+) {
+    span(); {
+        imInit() && setAttributes({ style: "color: transparent" });
+
+        const line = getLineBeforePos(text, idx);
+        setInnerText(
+            text.substring(0, idx + 1) + "\n" + " ".repeat(line.length)
+        );
+    } end();
+}
+
 function renderDiagnosticInfoOverlay(
     state: GlobalState,
     textAreaRef: Ref<HTMLTextAreaElement>,
@@ -767,14 +783,7 @@ function renderDiagnosticInfoOverlay(
         beginLayout(PREWRAP | ABSOLUTE | W100 | H100 | CODE | TRANSPARENT); {
             imInit() && setClass(cn.pointerEventsNone);
 
-            const line = getLineBeforePos(state.text, e.pos.i);
-            span(); {
-                imInit() && setAttributes({ style: "color: transparent" });
-
-                setInnerText(
-                    state.text.substring(0, e.pos.i + 1) + "\n" + " ".repeat(line.length)
-                );
-            } end();
+            renderInvisibleSpanUpToPos(state.text, e.pos.i);
 
             span(); {
                 imInit() && setAttributes({
@@ -831,18 +840,110 @@ function renderAppCodeEditor({
                 tabStopSize: 4
             },
         }); {
+            // error overlays
             beginList();
             const errors = lastInterpreterResult?.errors;
             if (nextRoot() && errors) {
                 renderDiagnosticInfoOverlay(state, textAreaRef, errors, "red");
             }
+            // warning overlays
             const warnings = lastParseResult?.warnings;
             if (nextRoot() && warnings) {
                 renderDiagnosticInfoOverlay(state, textAreaRef, warnings, "orange");
             };
             endList();
+
+            // autocomplete
+            // right now you can't interact with it - it is more so that I actually remember all the crap I've put into here
+            {
+                // TODO: when we do the AST editor, this will completely change, or be ripped out.
+
+                assert(textAreaRef.val);
+                const pos = textAreaRef.val.selectionStart;
+                const lastIdentifier = parseIdentifierBackwardsFromPoint(
+                    state.text,
+                    pos - 1
+                );
+
+                beginList();
+                if (nextRoot() && lastIdentifier.length > 0) {
+                    beginLayout(PREWRAP | ABSOLUTE | W100 | H100 | CODE | TRANSPARENT); {
+                        renderInvisibleSpanUpToPos(state.text, pos - 1);
+
+                        span(); {
+                            if (imInit()) {
+                                setStyleFlags(RELATIVE);
+                            }
+
+                            beginLayout(ABSOLUTE); {
+                                setStyle("left", "0px");
+                                setStyle("top", "0px");
+                                setStyle("border", "1px solid black");
+
+                                beginList();
+                                const funcs = getBuiltinFunctionsMap();
+                                let i = 0;
+                                for (const [k, v] of funcs) {
+                                    if (!filterString(k, lastIdentifier)) {
+                                        continue;
+                                    }
+
+                                    i++;
+                                    if (i > 5) {
+                                        break;
+                                    }
+                                    nextRoot();
+
+                                    beginLayout(CODE); {
+                                        setStyle("border", "1px solid black");
+                                        textSpan(k);
+                                        textSpan("(");
+                                        beginList();
+                                        for (let i = 0; i < v.args.length; i++) {
+                                            const arg = v.args[i];
+                                            nextRoot();
+                                            textSpan(arg.name);
+
+                                            beginList();
+                                            if (nextRoot() && arg.optional) {
+                                                textSpan("?");
+                                            }
+                                            endList();
+
+                                            textSpan(":");
+
+                                            let type;
+                                            if (arg.type.length === 0) {
+                                                type = "any"
+                                            } else {
+                                                type = arg.type.map(programResultTypeStringFromType)
+                                                    .join("|");
+                                            }
+                                            textSpan(type);
+
+                                            beginList();
+                                            if (nextRoot() && i < v.args.length - 1) {
+                                                textSpan(", ");
+                                            }
+                                            endList();
+                                        }
+                                        endList();
+                                        textSpan(")");
+                                    } end();
+                                }
+                                endList();
+                            } end();
+                        } end();
+                    } end();
+                }
+                endList();
+            }
         } end();
     } end();
+}
+
+function filterString(text: string, query: string) {
+    return text.includes(query);
 }
 
 function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretResult) {
@@ -1172,22 +1273,27 @@ function renderImageOutput(image: ProgramImageOutput) {
 
                 beginList();
                 if (nextRoot() && (image.width !== 0)) {
+                    const plotState = imState(newPlotState);
+
                     const [canvasRoot, ctx] = beginCanvasRenderingContext2D();
                     const canvas = canvasRoot.root; {
-                        const { width: containerWidth, height: containerHeight } = rect;
-                        if (beginMemo().val(containerWidth).val(containerHeight).val(image).changed()) {
-                            let pixelSize = 30;
-                            let imageClientWidth = image.width * pixelSize;
-                            let imageClientHeight = image.height * pixelSize;
+                        imPlotZoomingAndPanning(plotState, true, rect);
 
-                            if (imageClientWidth > containerWidth) {
-                                pixelSize = containerWidth / image.width;
-                                imageClientWidth = image.width * pixelSize;
-                                imageClientHeight = image.height * pixelSize;
-                            }
+                        const { width, height } = rect;
+                        const pixelSize = 10;
 
-                            canvas.width = imageClientWidth;
-                            canvas.height = imageClientHeight;
+                        if (beginMemo().val(image).changed()) {
+                            const minX = 0,
+                                minY = 0,
+                                maxX = image.width * pixelSize,
+                                maxY = image.height * pixelSize;
+
+                            recomputePlotExtent(plotState, minX, maxX, minY, maxY);
+                        } endMemo();
+
+                        if (beginMemo().val(image).objectVals(plotState).changed()) {
+                            canvas.width = width;
+                            canvas.height = width * 9 / 16;
 
                             for (let i = 0; i < image.width; i++) {
                                 for (let j = 0; j < image.height; j++) {
@@ -1213,14 +1319,23 @@ function renderImageOutput(image: ProgramImageOutput) {
                                     ctx.beginPath();
                                     {
                                         ctx.fillStyle = color;
-                                        drawRectSized(ctx, x0, y0, pixelSize, pixelSize);
+                                        const x0Canvas = getCanvasElementX(plotState, x0);
+                                        const y0Canvas = getCanvasElementY(plotState, y0);
+                                        const size = getCanvasElementLength(plotState, pixelSize);
+                                        drawRectSized(
+                                            ctx, 
+                                            x0Canvas, 
+                                            y0Canvas, 
+                                            size, 
+                                            size
+                                        );
                                         ctx.fill();
                                     }
                                     ctx.closePath();
                                 }
                             }
 
-                            drawBoundary(ctx, imageClientWidth, imageClientHeight);
+                            drawBoundary(ctx, width, height);
                         } endMemo();
                     } end();
                 } else {
@@ -1236,16 +1351,69 @@ function renderImageOutput(image: ProgramImageOutput) {
     } end();
 }
 
+function imPlotZoomingAndPanning(
+    plotState: PlotState,
+    canZoom: boolean,
+    rect: SizeState,
+) {
+    if (imInit()) {
+        setStyle("cursor", "move");
+    }
+
+    plotState.width = rect.width;
+    plotState.height = rect.height;
+
+    const mouse = getMouse();
+
+    if (mouse.leftMouseButton && elementWasLastClicked()) {
+        const dxPlot = getPlotLength(plotState, mouse.dX);
+        const dyPlot = getPlotLength(plotState, mouse.dY);
+
+        plotState.posX -= dxPlot;
+        plotState.posY -= dyPlot;
+    }
+
+    const scrollBlocker = imPreventScrollEventPropagation();
+    scrollBlocker.isBlocking = canZoom;
+
+    if (canZoom) {
+        if (mouse.scrollY !== 0) {
+            // When we zoom in or out, we want the graph-point that the mouse is currently over
+            // to remain the same.
+
+            const mouseX = mouse.X - rect.left;
+            const mouseY = mouse.Y - rect.top;
+            const mouseXPlot = getPlotX(plotState, mouseX);
+            const mouseYPlot = getPlotY(plotState, mouseY);
+
+            plotState.zoom -= mouse.scrollY / 100;
+            plotState.zoom = clamp(plotState.zoom, 0.5, 10);
+
+            const newMouseX = getCanvasElementX(plotState, mouseXPlot);
+            const newMouseY = getCanvasElementY(plotState, mouseYPlot);
+
+            const mouseDX = newMouseX - mouseX;
+            const mouseDY = newMouseY - mouseY;
+
+            const dX = getPlotLength(plotState, mouseDX);
+            const dY = getPlotLength(plotState, mouseDY);
+
+            plotState.posX += dX;
+            plotState.posY += dY;
+        }
+    }
+}
+
 function renderGraph(graph: ProgramGraphOutput) {
+    const plotState = imState(newPlotState);
+
     const s = imStateInline((): {
-        plotState: PlotState;
         nodeData: Map<string | number, {
             position: { x: number, y: number };
             adjacencies: (string | number)[];
         }>;
     } => {
         return {
-            plotState: newPlotState(),
             nodeData: new Map(),
         };
     });
@@ -1264,7 +1432,7 @@ function renderGraph(graph: ProgramGraphOutput) {
             maxY = Math.max(y, maxY);
         }
 
-        recomputePlotExtent(s.plotState, minX, maxX, minY, maxY);
+        recomputePlotExtent(plotState, minX, maxX, minY, maxY);
     } endMemo();
 
     beginLayout(FLEX | RELATIVE | H100).root; {
@@ -1274,18 +1442,9 @@ function renderGraph(graph: ProgramGraphOutput) {
 
         const [canvasRoot, ctx] = beginCanvasRenderingContext2D();
         const canvas = canvasRoot.root; {
-            const mouse = getMouse();
-            if (mouse.leftMouseButton && elementWasLastClicked()) {
-                const dxPlot = getPlotLength(s.plotState, mouse.dX);
-                const dyPlot = getPlotLength(s.plotState, mouse.dY);
+            imPlotZoomingAndPanning(plotState, true, rect);
 
-                s.plotState.posX -= dxPlot;
-                s.plotState.posY -= dyPlot;
-            }
-
-            if (beginMemo().val(width).val(height).val(graph).objectVals(s.plotState).changed()) {
-                s.plotState.width = rect.width;
-                s.plotState.height = rect.height;
+            if (beginMemo().val(width).val(height).val(graph).objectVals(plotState).changed()) {
                 canvas.width = width;
                 canvas.height = height;
 
@@ -1319,17 +1478,17 @@ function renderGraph(graph: ProgramGraphOutput) {
 
                 // draw edges
                 ctx.strokeStyle = theme.mg.toString();
-                ctx.lineWidth = getCanvasElementLength(s.plotState, LINE_WIDTH);
+                ctx.lineWidth = getCanvasElementLength(plotState, LINE_WIDTH);
                 for (const node of s.nodeData.values()) {
-                    const x0Canvas = getCanvasElementX(s.plotState, node.position.x);
-                    const y0Canvas = getCanvasElementY(s.plotState, node.position.y);
+                    const x0Canvas = getCanvasElementX(plotState, node.position.x);
+                    const y0Canvas = getCanvasElementY(plotState, node.position.y);
 
                     for (const key of node.adjacencies) {
                         const otherNode = s.nodeData.get(key);
                         if (!otherNode) continue;
 
-                        const x1Canvas = getCanvasElementX(s.plotState, otherNode.position.x);
-                        const y1Canvas = getCanvasElementY(s.plotState, otherNode.position.y);
+                        const x1Canvas = getCanvasElementX(plotState, otherNode.position.x);
+                        const y1Canvas = getCanvasElementY(plotState, otherNode.position.y);
 
                         ctx.beginPath(); {
                             ctx.moveTo(x0Canvas, y0Canvas);
@@ -1342,9 +1501,9 @@ function renderGraph(graph: ProgramGraphOutput) {
                 // draw nodes over the edges
                 ctx.fillStyle = theme.fg.toString();
                 for (const node of s.nodeData.values()) {
-                    const xCanvas = getCanvasElementX(s.plotState, node.position.x);
-                    const yCanvas = getCanvasElementY(s.plotState, node.position.y);
-                    const rCanvas = getCanvasElementLength(s.plotState, CIRCLE_RADIUS);
+                    const xCanvas = getCanvasElementX(plotState, node.position.x);
+                    const yCanvas = getCanvasElementY(plotState, node.position.y);
+                    const rCanvas = getCanvasElementLength(plotState, CIRCLE_RADIUS);
                     drawCircle(ctx, xCanvas, yCanvas, rCanvas);
                     ctx.fill();
                 }
@@ -1368,17 +1527,26 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
             nextRoot(ui.t);
             switch (ui.t) {
                 case UI_INPUT_SLIDER: {
-                    beginLayout(ROW | GAP); {
-                        beginLayout(); {
-                            textSpan(ui.name);
+                    beginLayout(COL | GAP); {
+                        beginLayout(ROW | GAP); {
+                            beginLayout(); {
+                                textSpan(ui.name);
+                            } end();
+
+                            beginLayout(CODE); {
+                                textSpan(ui.value + "");
+                            } end();
                         } end();
-
-                        const s = renderSliderBody(ui.start, ui.end, ui.step);
-
-                        if (beginMemo().val(s.value).changed()) {
-                            ui.value = s.value;
-                            ctx.reinterpretSignal = true;
-                        } endMemo();
+                        beginLayout(ROW); {
+                            if (imInit()) {
+                                setStyle("height", "1em");
+                            }
+                            const s = renderSliderBody(ui.start, ui.end, ui.step);
+                            if (beginMemo().val(s.value).changed()) {
+                                ui.value = s.value;
+                                ctx.reinterpretSignal = true;
+                            } endMemo();
+                        } end();
                     } end();
                 } break;
                 default: {
@@ -1575,6 +1743,11 @@ function getDim(plot: PlotState): number {
     return max(width, height);
 }
 
+function getOtherDim(plot: PlotState): number {
+    const { width, height } = plot;
+    return min(width, height);
+}
+
 function getMaxDim(plot: PlotState): number {
     const { width, height } = plot;
     return max(width, height);
@@ -1598,7 +1771,12 @@ function getCanvasElementY(plot: PlotState, y: number): number {
     const extent = getExtent(plot);
     const y0Extent = posY - extent;
     const y1Extent = posY + extent;
-    return inverseLerp(y0Extent, y1Extent, y) * getDim(plot);
+
+    const dim = getDim(plot);
+    const other = getOtherDim(plot);
+    const diff = dim - other;
+
+    return inverseLerp(y0Extent, y1Extent, y) * dim - (diff / 2);
 }
 
 function getPlotX(plot: PlotState, x: number): number {
@@ -1624,7 +1802,14 @@ function getPlotY(plot: PlotState, y: number): number {
     const y0Extent = posY - extent;
     const y1Extent = posY + extent;
 
-    return lerp(y0Extent, y1Extent, (y / getDim(plot)));
+    const dim = getDim(plot);
+    const other = getOtherDim(plot);
+    const diff = dim - other;
+
+
+    // NOTE: needs to be an exact inverse of getCanvasElementY
+    // for zooming in and out to work properly
+    return lerp(y0Extent, y1Extent, ((y + (diff / 2)) / getDim(plot)));
 }
 
 function isPointOnScreen(plot: PlotState, x: number, y: number) {
@@ -1784,10 +1969,6 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
 
                 const [canvasRoot, ctx] = beginCanvasRenderingContext2D();
                 const canvas = canvasRoot.root; {
-                    if (imInit()) {
-                        setStyle("cursor", "move");
-                    }
-
                     const mouse = getMouse();
                     const canZoom = elementHasMouseOver() && (isShiftPressed() || isMaximized);
 
@@ -1797,8 +1978,9 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
 
                     // init canvas 
                     const plotState = imState(newPlotState);
-
                     plotState.maximized = isMaximized;
+
+                    imPlotZoomingAndPanning(plotState, canZoom, rect);
 
                     const { width, height } = rect;
                     if (beginMemo().val(program.parseResult.text).val(width).val(height).changed()) {
@@ -1828,54 +2010,6 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                     } endMemo();
 
 
-                    if (mouse.leftMouseButton && elementWasLastClicked()) {
-                        const dxPlot = getPlotLength(plotState, mouse.dX);
-                        const dyPlot = getPlotLength(plotState, mouse.dY);
-
-                        plotState.posX -= dxPlot;
-                        plotState.posY -= dyPlot;
-                    }
-
-                    const scrollBlocker = imPreventScrollEventPropagation();
-                    scrollBlocker.isBlocking = canZoom;
-
-                    let mx0 = 0;
-                    let my0 = 0;
-                    let mx1 = 0;
-                    let my1 = 0;
-
-                    if (canZoom) {
-                        if (mouse.scrollY !== 0) {
-                            // When we zoom in or out, we want the graph-point that the mouse is currently over
-                            // to remain the same.
-
-                            const mouseX = mouse.X - rect.left;
-                            const mouseY = mouse.Y - rect.top;
-                            const mouseXPlot = getPlotX(plotState, mouseX);
-                            const mouseYPlot = getPlotY(plotState, mouseY);
-
-                            plotState.zoom -= mouse.scrollY / 100;
-                            plotState.zoom = clamp(plotState.zoom, 0.5, 10);
-
-                            const newMouseX = getCanvasElementX(plotState, mouseXPlot);
-                            const newMouseY = getCanvasElementY(plotState, mouseYPlot);
-
-                            const mouseDX = newMouseX - mouseX;
-                            const mouseDY = newMouseY - mouseY;
-
-                            const dX = getPlotLength(plotState, mouseDX);
-                            const dY = getPlotLength(plotState, mouseDY);
-
-                            mx0 = mouseXPlot;
-                            my0 = mouseYPlot;
-
-                            mx1 = newMouseX;
-                            my1 = newMouseY;
-
-                            plotState.posX += dX;
-                            plotState.posY += dY;
-                        }
-                    }
 
                     const rows = imRef<number[][]>();
                     if (!rows.val) {
@@ -2186,11 +2320,42 @@ image([
         name: "Graphs",
         code: `
 // TODO: complete exmaple
-graph(1, map{
-    1 : list[1, 2, 3],
-    2 : list[1, 2, 3],
-    3 : list[1, 2, 3]
-})
+g = map{}
+
+for i in range(0, 10) {
+    adj = list[]
+    for j in range(0, 10) {
+        push(adj, j)
+    }
+
+    g[i] = adj
+}
+
+graph(1, g)
+`
+    },
+    {
+        name: "Matrices",
+        code: `
+
+angle = slider("angle", 0, 2 * PI)
+
+rot_matrix(a) {
+    [[cos(a), -sin(a)],
+     [sin(a), cos(a)]]
+}
+
+A = rot_matrix(angle)
+
+plot_points(1, [
+    [0, 1],
+    [1, 0],
+    [0, -1],
+    [-1, 0],
+
+    mul(A, [0, 0.5]),
+])
+
 `
     }
 ]
@@ -2217,7 +2382,7 @@ export function renderApp() {
                         .val(state.text)
                         .val(state.autorun)
                         .changed() ||
-                        ctx.reinterpretSignal
+                        (ctx.reinterpretSignal && !ctx.isDebugging)
                     ) {
                         ctx.reinterpretSignal = false;
 

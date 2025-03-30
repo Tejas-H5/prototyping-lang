@@ -1102,6 +1102,23 @@ function parseIdentifier(ctx: ParserContext): ProgramExpressionIdentifier  {
     };
 }
 
+export function parseIdentifierBackwardsFromPoint(
+    text: string, 
+    pos: number
+): string {
+    const start = pos;
+    while (pos >= 0 && pos < text.length) {
+        const c = text[pos]
+        if (!isAllowedIdentifierSymbol(c)) {
+            break;
+        }
+
+        pos--;
+    }
+
+    return text.substring(pos + 1, start + 1).trim();
+}
+
 function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
     let op: BinaryOperatorType = BIN_OP_INVALID;
 

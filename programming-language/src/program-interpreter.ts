@@ -1,6 +1,6 @@
 import { CssColor, newColor, newColorFromHexOrUndefined } from "src/utils/colour";
 import { assert } from "src/utils/im-dom-utils";
-import { copyMatrix, getMatrixRow, getMatrixRowLength, getMatrixValue, getSliceValue, isIndexInSliceBounds, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, setSliceValue, subMatrixShapeEqualsRowShape } from "src/utils/matrix-math";
+import { copyMatrix, getMatrixRow, getMatrixRowLength, getMatrixValue, getSliceValue, isIndexInSliceBounds, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMul, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, orthographicMatrix3D, perspectiveMatrix3D, rotationMatrix2D, rotationMatrix3DX, rotationMatrix3DY, rotationMatrix3DZ, rotationMatrixTranslate2D, rotationMatrixTranslate3D, scaleMatrix2D, scaleMatrix3D, setSliceValue, sliceToArray, subMatrixShapeEqualsRowShape } from "src/utils/matrix-math";
 import {
     BIN_OP_ADD, BIN_OP_AND_AND, BIN_OP_DIVIDE, BIN_OP_GREATER_THAN, BIN_OP_GREATER_THAN_EQ, BIN_OP_INVALID, BIN_OP_IS_EQUAL_TO, BIN_OP_LESS_THAN, BIN_OP_LESS_THAN_EQ, BIN_OP_MULTIPLY, BIN_OP_OR_OR, BIN_OP_SUBTRACT,
     BinaryOperatorType,
@@ -83,7 +83,7 @@ export function programResultTypeString(output: ProgramResult): string {
         }
     }
 
-    return programResultTypeStringInternal(output.t);
+    return programResultTypeStringFromType(output.t);
 }
 
 export function getMatrixTypeFromShape(shape: number[]): string {
@@ -92,7 +92,7 @@ export function getMatrixTypeFromShape(shape: number[]): string {
     );
 }
 
-export function programResultTypeStringInternal(t: ProgramResult["t"]): string {
+export function programResultTypeStringFromType(t: ProgramResult["t"]): string {
     switch (t) {
         case T_RESULT_NUMBER:
             return "Number";
@@ -1110,6 +1110,10 @@ const ZERO_VEC4 = matrixZeroes([4]);
 
 const builtinFunctions = new Map<string, BuiltinFunction>();
 
+export function getBuiltinFunctionsMap() {
+    return builtinFunctions;
+}
+
 // initialize builtin funcs
 {
     function newBuiltinFunction(
@@ -1229,12 +1233,12 @@ const builtinFunctions = new Map<string, BuiltinFunction>();
                 if (val.t !== T_RESULT_MATRIX) {
                     // if only we could get the position of this value's expression.
                     // probably if we made a static type system, it would be easier to report this error in the right place.
-                    addError(program, step, "Expected every element in a list be a vector2");
+                    addError(program, step, "Expected every element in a list must be a vector");
                     return;
                 }
 
-                if (!matrixShapesAreEqual(val.val, ZERO_VEC2)) {
-                    addError(program, step, "Expected every element in a list be a vector2.");
+                if (val.val.shape[0] < 2) {
+                    addError(program, step, "Expected every element in a list must atl least be a vector2");
                     return;
                 }
 
@@ -1251,7 +1255,7 @@ const builtinFunctions = new Map<string, BuiltinFunction>();
             const m = mat.shape[0];
             const n = mat.shape[1];
 
-            if (n === 2) {
+            if (n >= 2) {
                 for (let i = 0; i < m; i++) {
                     const x = getMatrixValue(mat, i, 0);
                     const y = getMatrixValue(mat, i, 1);
@@ -1259,16 +1263,8 @@ const builtinFunctions = new Map<string, BuiltinFunction>();
                     pointsX.push(x);
                     pointsY.push(y);
                 }
-            } else if (m === 2) {
-                for (let i = 0; i < n; i++) {
-                    const x = getMatrixValue(mat, 0, i);
-                    const y = getMatrixValue(mat, 1, i);
-
-                    pointsX.push(x);
-                    pointsY.push(y);
-                }
-            } else {
-                addError(program, step, "One of the sides of the matrix must have a length of 2");
+            }  else {
+                addError(program, step, "Can't plot a matrix with fewer than 2 columns");
                 return;
             }
         }
@@ -1614,13 +1610,145 @@ const builtinFunctions = new Map<string, BuiltinFunction>();
         }
     );
     newBuiltinFunction("range", [], (result, step) => {
-        addError(result, step, "'range' isn't really a funciton - it is only valid to use in ranged for-loops");
-        return newNumberResult(0);
+        addError(result, step, "'range' is invalid outside of ranged for-loops. Try range_vec or range_list");
+        return undefined;
     });
+
+    const RANGE_UPPER_LIMIT = 100000;
+
+    function evaluateRange(
+        result: ProgramInterpretResult, execStep: ProgramExecutionStep, 
+        start: ProgramResult, end: ProgramResult, step: ProgramResult | null, reverseRange: boolean
+    ): number[] | null {
+        assert(start?.t === T_RESULT_NUMBER);
+        assert(end?.t === T_RESULT_NUMBER);
+
+        const startVal = start.val;
+        const endVal = end.val;
+
+        let stepVal = 1;
+        if (step) {
+            assert(step.t === T_RESULT_NUMBER);
+            stepVal = step.val;
+        }
+
+        const nums: number[] = [];
+        if (reverseRange) {
+            for (let i = startVal; i > endVal; i += stepVal) {
+                if (nums.length > RANGE_UPPER_LIMIT) {
+                    addError(result, execStep, "range function hit the safety counter of " + RANGE_UPPER_LIMIT + " items max");
+                    return null
+                }
+                nums.push(i);
+            }
+        } else {
+            for (let i = startVal; i < endVal; i += stepVal) {
+                if (nums.length > RANGE_UPPER_LIMIT) {
+                    addError(result, execStep, "range function hit the safety counter of " + RANGE_UPPER_LIMIT + " items max");
+                    return null
+                }
+                nums.push(i);
+            }
+        }
+        return nums;
+    }
+
+    newBuiltinFunction(
+        "range_vec", 
+        [
+            newArg("start", [T_RESULT_NUMBER]),
+            newArg("end", [T_RESULT_NUMBER]),
+            newArg("step", [T_RESULT_NUMBER], true),
+        ], 
+        (result, step, start, end, rangeStep) => {
+            const nums = evaluateRange(result, step, start!, end!, rangeStep, false);
+            if (!nums) {
+                return;
+            }
+
+            return {
+                t: T_RESULT_MATRIX,
+                val: {
+                    values: newSlice(nums),
+                    shape: [nums.length],
+                }
+            };
+        }
+    );
+    newBuiltinFunction(
+        "range_list", 
+        [
+            newArg("start", [T_RESULT_NUMBER]),
+            newArg("end", [T_RESULT_NUMBER]),
+            newArg("step", [T_RESULT_NUMBER], true),
+        ], 
+        (result, step, start, end, rangeStep) => {
+            const nums = evaluateRange(result, step, start!, end!, rangeStep, false);
+            if (!nums) {
+                return;
+            }
+
+            if (nums === null) {
+                addError(result, step, "range function hit the safety counter of " + RANGE_UPPER_LIMIT + " items max");
+                return;
+            }
+
+            return {
+                t: T_RESULT_LIST,
+                values: nums.map(newNumberResult),
+            };
+        }
+    );
     newBuiltinFunction("rrange", [], (result, step) => {
-        addError(result, step, "'rrange' isn't really a funciton - it is only valid to use in ranged for-loops");
-        return newNumberResult(0);
+        addError(result, step, "'rrange' is invalid outside of ranged for-loops. Try rrange_vec or rrange_list");
+        return undefined;
     });
+    newBuiltinFunction(
+        "rrange_vec", 
+        [
+            newArg("start", [T_RESULT_NUMBER]),
+            newArg("end", [T_RESULT_NUMBER]),
+            newArg("step", [T_RESULT_NUMBER], true),
+        ], 
+        (result, step, start, end, rangeStep) => {
+            const nums = evaluateRange(result, step, start!, end!, rangeStep, true);
+            if (!nums) {
+                return;
+            }
+
+            return {
+                t: T_RESULT_MATRIX,
+                val: {
+                    values: newSlice(nums),
+                    shape: [nums.length],
+                }
+            };
+        }
+    );
+    newBuiltinFunction(
+        "rrange_list", 
+        [
+            newArg("start", [T_RESULT_NUMBER]),
+            newArg("end", [T_RESULT_NUMBER]),
+            newArg("step", [T_RESULT_NUMBER], true),
+        ], 
+        (result, step, start, end, rangeStep) => {
+            const nums = evaluateRange(result, step, start!, end!, rangeStep, true);
+            if (!nums) {
+                return;
+            }
+
+            if (nums === null) {
+                addError(result, step, "range function hit the safety counter of " + RANGE_UPPER_LIMIT + " items max");
+                return;
+            }
+
+            return {
+                t: T_RESULT_LIST,
+                values: nums.map(newNumberResult),
+            };
+        }
+    );
     newBuiltinFunction(
         "graph", [
             newArg("idx", [T_RESULT_NUMBER]),
@@ -1673,6 +1801,196 @@ const builtinFunctions = new Map<string, BuiltinFunction>();
             }
 
             return graphMap;
+        }
+    );
+    newBuiltinFunction(
+        "zeroes", [
+        newArg("shape", [T_RESULT_MATRIX]),
+    ],
+        (result, step, shape) => {
+            assert(shape?.t === T_RESULT_MATRIX);
+            const mat = matrixZeroes(sliceToArray(shape.val.values));
+            return { t: T_RESULT_MATRIX, val: mat };
+        }
+    );
+
+    function toMatrixAlias(name: string) {
+        newBuiltinFunction(
+            name, [
+            newArg("list", [T_RESULT_LIST]),
+        ],
+            (result, step, list) => {
+                assert(list?.t === T_RESULT_LIST);
+
+                const mat: Matrix = matrixZeroes([]);
+
+                const values: number[] = [];
+
+                for (let i = 0; i < list.values.length; i++) {
+                    const vec = list.values[i];
+                    if (vec.t !== T_RESULT_MATRIX) {
+                        addError(result, step, "Only lists ");
+                        return;
+                    }
+
+                    if (i === 0) {
+                        mat.shape = vec.val.shape;
+                    } else {
+                        if (!matrixShapesAreEqual(vec.val, mat)) {
+                            addError(result, step, "Only lists ");
+                            return;
+                        }
+                    }
+
+                    for (let i = 0; i < vec.val.values.length; i++) {
+                        const val = getSliceValue(vec.val.values, i);
+                        values.push(val);
+                    }
+                }
+
+                mat.values = newSlice(values);
+                mat.shape.unshift(list.values.length);
+
+                return { t: T_RESULT_MATRIX, val: mat };
+            }
+        )
+    }
+
+    toMatrixAlias("to_vec");
+    toMatrixAlias("to_mat");
+
+    newBuiltinFunction(
+        "mul", [
+        newArg("mat_a", [T_RESULT_MATRIX]),
+        newArg("mat_b", [T_RESULT_MATRIX]),
+    ],
+        (result, step, a, b) => {
+            assert(a?.t === T_RESULT_MATRIX);
+            assert(b?.t === T_RESULT_MATRIX);
+            const [val, err] = matrixMul(a.val, b.val);
+
+            if (err || val === null) {
+                addError(result, step, err ?? "Couldn't multiply the matrices for some unkown reason (???)");
+                return;
+            }
+
+            return { t: T_RESULT_MATRIX, val };
+        }
+    );
+    newBuiltinFunction(
+        "translate2d", [
+        newArg("x", [T_RESULT_NUMBER]),
+        newArg("y", [T_RESULT_NUMBER]),
+    ],
+        (result, step, x, y) => {
+            assert(x?.t === T_RESULT_NUMBER);
+            assert(y?.t === T_RESULT_NUMBER);
+            const val = rotationMatrixTranslate2D(x.val, y.val);
+            return { t: T_RESULT_MATRIX, val };
+        }
+    );
+    newBuiltinFunction(
+        "translate3d", [
+        newArg("x", [T_RESULT_NUMBER]),
+        newArg("y", [T_RESULT_NUMBER]),
+        newArg("z", [T_RESULT_NUMBER]),
+    ],
+        (result, step, x, y, z) => {
+            assert(x?.t === T_RESULT_NUMBER);
+            assert(y?.t === T_RESULT_NUMBER);
+            assert(z?.t === T_RESULT_NUMBER);
+            const val = rotationMatrixTranslate3D(x.val, y.val, z.val);
+            return { t: T_RESULT_MATRIX, val };
+        }
+    );
+    newBuiltinFunction(
+        "scale2d", [
+        newArg("x", [T_RESULT_NUMBER]),
+        newArg("y", [T_RESULT_NUMBER]),
+    ],
+        (result, step, x, y) => {
+            assert(x?.t === T_RESULT_NUMBER);
+            assert(y?.t === T_RESULT_NUMBER);
+            const val = scaleMatrix2D(x.val, y.val);
+            return { t: T_RESULT_MATRIX, val };
+        }
+    );
+    newBuiltinFunction(
+        "scale3d", [
+        newArg("x", [T_RESULT_NUMBER]),
+        newArg("y", [T_RESULT_NUMBER]),
+        newArg("z", [T_RESULT_NUMBER]),
+    ],
+        (result, step, x, y, z) => {
+            assert(x?.t === T_RESULT_NUMBER);
+            assert(y?.t === T_RESULT_NUMBER);
+            assert(z?.t === T_RESULT_NUMBER);
+            const val = scaleMatrix3D(x.val, y.val, z.val);
+            return { t: T_RESULT_MATRIX, val };
+        }
+    );
+    newBuiltinFunction(
+        "perspective3d", [
+        newArg("fov", [T_RESULT_NUMBER]),
+        newArg("near", [T_RESULT_NUMBER]),
+        newArg("far", [T_RESULT_NUMBER]),
+    ],
+        (result, step, fov, near, far) => {
+            assert(fov?.t === T_RESULT_NUMBER);
+            assert(near?.t === T_RESULT_NUMBER);
+            assert(far?.t === T_RESULT_NUMBER);
+            const val = perspectiveMatrix3D(fov.val, near.val, far.val);
+            return { t: T_RESULT_MATRIX, val };
+        }
+    );
+    newBuiltinFunction(
+        "ortho3d", [],
+        (result, step, fov, near, far) => {
+            assert(fov?.t === T_RESULT_NUMBER);
+            assert(near?.t === T_RESULT_NUMBER);
+            assert(far?.t === T_RESULT_NUMBER);
+            const val = orthographicMatrix3D();
+            return { t: T_RESULT_MATRIX, val };
+        }
+    );
+    newBuiltinFunction(
+        "rot2d", [
+        newArg("angle", [T_RESULT_NUMBER]),
+    ],
+        (result, step, angle) => {
+            assert(angle?.t === T_RESULT_NUMBER);
+            const val = rotationMatrix2D(angle.val);
+            return { t: T_RESULT_MATRIX, val };
+        }
+    );
+    newBuiltinFunction(
+        "rot3d_x", [
+        newArg("angle", [T_RESULT_NUMBER]),
+    ],
+        (result, step, angle) => {
+            assert(angle?.t === T_RESULT_NUMBER);
+            const val = rotationMatrix3DX(angle.val);
+            return { t: T_RESULT_MATRIX, val };
+        }
+    );
+    newBuiltinFunction(
+        "rot3d_y", [
+        newArg("angle", [T_RESULT_NUMBER]),
+    ],
+        (result, step, angle) => {
+            assert(angle?.t === T_RESULT_NUMBER);
+            const val = rotationMatrix3DY(angle.val);
+            return { t: T_RESULT_MATRIX, val };
+        }
+    );
+    newBuiltinFunction(
+        "rot3d_z", [
+        newArg("angle", [T_RESULT_NUMBER]),
+    ],
+        (result, step, angle) => {
+            assert(angle?.t === T_RESULT_NUMBER);
+            const val = rotationMatrix3DZ(angle.val);
+            return { t: T_RESULT_MATRIX, val };
         }
     );
 }
@@ -1736,16 +2054,16 @@ function evaluateBuiltinFunctionCall(
             ) {
                 let expectedType;
                 if (typeInfo.type.length === 1) {
-                    expectedType = programResultTypeStringInternal(typeInfo.type[0]);
+                    expectedType = programResultTypeStringFromType(typeInfo.type[0]);
                 } else {
-                    expectedType = "one of " + typeInfo.type.map(programResultTypeStringInternal).join(" or ");
+                    expectedType = "one of " + typeInfo.type.map(programResultTypeStringFromType).join(" or ");
                 }
 
                 if (typeInfo.optional) {
                     expectedType += " or nothing";
                 }
 
-                const gotType = (res ? programResultTypeStringInternal(res.t) : "nothing");
+                const gotType = (res ? programResultTypeStringFromType(res.t) : "nothing");
 
                 addError(program, step, "Expected " + expectedType + " for " + typeInfo.name + ", got " + gotType, argExpr?.pos);
                 return null;
@@ -2036,7 +2354,9 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
         calcResult = evaluateBinaryOperatorNumber(lhs, rhs, program, step);
 
         if (!calcResult) {
-            addError(program, step, `We don't have a way to compute ${programResultTypeString(lhs)} ${binOpToOpString(step.binaryOperator)} ${programResultTypeString(rhs)} yet.`);
+            if (program.errors.length === 0) {
+                addError(program, step, `We don't have a way to compute ${programResultTypeString(lhs)} ${binOpToOpString(step.binaryOperator)} ${programResultTypeString(rhs)} yet.`);
+            }
             return false;
         }
 
@@ -2335,13 +2655,14 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
     call.i = nextCallI;
     if (call.code.steps.length === call.i && program.callStack.length > 1) {
         // this was the thing we last computed
-        const val = program.stack[call.returnAddress];
+        const returnAddress = call.returnAddress;
+        const val = program.stack[returnAddress];
 
         program.callStack.pop();
         const current = getCurrentCallstack(program);
 
-        // this is the previous call frame's return address
-        program.stackIdx = current ? current.returnAddress : 0;
+        // this is the current call frame's return address
+        program.stackIdx = current ? (returnAddress - 1) : 0;
         program.stack[program.stackIdx] = val;
     }
     return program.callStack.length > 0;

@@ -15,6 +15,14 @@ export function newSlice(values: number[]): NumberSlice {
     return { memory: values, start: 0, stride: 1, length: values.length };
 }
 
+export function sliceToArray(slice: NumberSlice): number[] {
+    const arr = Array(slice.length).fill(0);
+    for (let i = 0; i < slice.length; i++) {
+        arr[i] = getSliceValue(slice, i);
+    }
+    return arr;
+}
+
 export function getSlice(s: NumberSlice, start: number, len: number, stride: number): NumberSlice | undefined {
     // any index into the memory is multiplied by the existing stride. This can be inferred intuitively -
     // for example, "I want every third thing of every second thing" -> stride of 6.
@@ -73,11 +81,19 @@ export function getMatrixValue(m: Matrix, i: number, j: number): number {
     return getSliceValue(m.values, j + i * m.shape[1]);
 }
 
+function getSliceValueInternal(m: Matrix, i: number, j: number, colLen: number): number {
+    return getSliceValue(m.values, j + i * colLen);
+}
+
 export function setMatrixValue(m: Matrix, i: number, j: number, val: number) {
     if (!matrixIsRank2(m)) {
         throw new Error("Can't index with i, j into a non-2x2 matrix");
     }
-    setSliceValue(m.values, j + i * m.shape[1], val);
+    setMatrixValueInternal(m, i, j, val, m.shape[1]);
+}
+
+export function setMatrixValueInternal(m: Matrix, i: number, j: number, val: number, colLen: number) {
+    setSliceValue(m.values, j + i * colLen, val);
 }
 
 export function len(m: Matrix) {
@@ -191,7 +207,7 @@ export function subMatrixShapeEqualsRowShape(a: Matrix, subMatrix: Matrix) {
 
 export function matrixAddElements(a: Matrix, b: Matrix): [Matrix | null, string] {
     if (!matrixShapesAreEqual(a, b)) {
-        return [null, "Elementwise add is only defined for matrices of identical shape"];
+        return [null, "Elementwise ops only defined for matrices of identical shape"];
     }
     const result = matrixZeroes(a.shape);
     for (let i = 0; i < a.values.length; i++) {
@@ -205,7 +221,7 @@ export function matrixAddElements(a: Matrix, b: Matrix): [Matrix | null, string]
 // NOTE: this is jus a copypaste of matrixAddElements
 export function matrixSubtractElements(a: Matrix, b: Matrix): [Matrix | null, string] {
     if (!matrixShapesAreEqual(a, b)) {
-        return [null, "Elementwise add is only defined for matrices of identical shape"];
+        return [null, "Elementwise ops only defined for matrices of identical shape"];
     }
     const result = matrixZeroes(a.shape);
     for (let i = 0; i < a.values.length; i++) {
@@ -220,7 +236,7 @@ export function matrixSubtractElements(a: Matrix, b: Matrix): [Matrix | null, st
 // NOTE: this is jus a copypaste of matrixAddElements
 export function matrixMultiplyElements(a: Matrix, b: Matrix): [Matrix | null, string] {
     if (!matrixShapesAreEqual(a, b)) {
-        return [null, "Elementwise add is only defined for matrices of identical shape"];
+        return [null, "Elementwise multiply is only defined for matrices of identical shape. You may want mul(a, b) instead"];
     }
     const result = matrixZeroes(a.shape);
     for (let i = 0; i < a.values.length; i++) {
@@ -307,7 +323,7 @@ export function matrixElementsGreaterThan(a: Matrix, b: Matrix): [boolean, strin
 // NOTE: this is just a copypaste of matrixElementsEqual
 export function matrixElementsGreaterThanOrEqual(a: Matrix, b: Matrix): [boolean, string] {
     if (!matrixShapesAreEqual(a, b)) {
-        return [false, "Elementwise equals is only defined for matrices of identical shape"];
+        return [false, "Elementwise ops only defined for matrices of identical shape"];
     }
     for (let i = 0; i < a.values.length; i++) {
         const aVal = getSliceValue(a.values, i);
@@ -322,7 +338,7 @@ export function matrixElementsGreaterThanOrEqual(a: Matrix, b: Matrix): [boolean
 // NOTE: this is just a copypaste of matrixElementsEqual
 export function matrixElementsLessThan(a: Matrix, b: Matrix): [boolean, string] {
     if (!matrixShapesAreEqual(a, b)) {
-        return [false, "Elementwise equals is only defined for matrices of identical shape"];
+        return [false, "Elementwise ops only defined for matrices of identical shape"];
     }
     for (let i = 0; i < a.values.length; i++) {
         const aVal = getSliceValue(a.values, i);
@@ -338,7 +354,7 @@ export function matrixElementsLessThan(a: Matrix, b: Matrix): [boolean, string] 
 // NOTE: this is just a copypaste of matrixElementsEqual
 export function matrixElementsLessThanOrEqual(a: Matrix, b: Matrix): [boolean, string] {
     if (!matrixShapesAreEqual(a, b)) {
-        return [false, "Elementwise equals is only defined for matrices of identical shape"];
+        return [false, "Elementwise ops only defined for matrices of identical shape"];
     }
     for (let i = 0; i < a.values.length; i++) {
         const aVal = getSliceValue(a.values, i);
@@ -428,12 +444,14 @@ export function matrixMul(a: Matrix, b: Matrix): [Matrix | null, string] {
 
     for (let i = 0; i < aRows; i++) {
         for (let j = 0; j < bCols; j++) {
+            let total = 0;
             for (let k = 0; k < aCols; k++) {
-                const ijA = getMatrixValue(a, i, k);
-                const ijB = getMatrixValue(b, k, j);
+                const ijA = getSliceValueInternal(a, i, k, aCols);
+                const ijB = getSliceValueInternal(b, k, j, bCols);
 
-                setMatrixValue(result, i, j, ijA * ijB);
+                total += ijA * ijB;
             }
+            setMatrixValueInternal(result, i, j, total, bCols);
         }
     }
 
@@ -576,3 +594,166 @@ export function orthoProjection(): Matrix {
     return matrixZeroes([1])
 }
 
+export function rotationMatrix2D(angle: number): Matrix {
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const number: number[] = [
+        cos, -sin, 0,
+        sin, cos, 0,
+        0,  0,  1,
+    ];
+
+    return {
+        values: newSlice(number),
+        shape: [3, 3],
+    }
+}
+
+export function rotationMatrixTranslate2D(x: number, y: number): Matrix {
+    const number: number[] = [
+        1, 0, x,
+        0, 1, y,
+        0, 0, 1,
+    ];
+
+    return {
+        values: newSlice(number),
+        shape: [3, 3],
+    }
+}
+
+export function scaleMatrix2D(x: number, y: number): Matrix {
+    const number: number[] = [
+        x, 0, 0,
+        0, y, 0,
+        0, 0, 1,
+    ];
+
+    return {
+        values: newSlice(number),
+        shape: [3, 3],
+    }
+}
+
+// 3d stuff is a bit complicated, because we need quaternions.
+
+export function rotationMatrix3DZ(angle: number): Matrix {
+    const sin = Math.cos(angle);
+    const cos = Math.sin(angle);
+
+    const number: number[] = [
+        cos, -sin, 0, 0,
+        sin, cos,  0, 0,
+        0,  0,  1, 0,
+        0,  0,  0, 1,
+    ];
+
+    return {
+        values: newSlice(number),
+        shape: [4, 4],
+    }
+}
+
+export function rotationMatrix3DX(angle: number): Matrix {
+    const sin = Math.cos(angle);
+    const cos = Math.sin(angle);
+
+    const number: number[] = [
+        1,  0,  0, 0,
+        0, cos, -sin, 0,
+        0, sin, cos,  0,
+        0,  0,  0, 1,
+    ];
+
+    return {
+        values: newSlice(number),
+        shape: [4, 4],
+    }
+}
+
+export function rotationMatrix3DY(angle: number): Matrix {
+    const sin = Math.cos(angle);
+    const cos = Math.sin(angle);
+
+    const number: number[] = [
+        cos,  0,  -sin, 0,
+        0,    1, 0, 0,
+        sin, 0, cos,  0,
+        0,  0,  0, 1,
+    ];
+
+    return {
+        values: newSlice(number),
+        shape: [4, 4],
+    }
+}
+
+export function rotationMatrixTranslate3D(x: number, y: number, z: number): Matrix {
+    const number: number[] = [
+        1, 0, 0, x,
+        0, 1, 0, y,
+        0, 0, 1, z,
+        0, 0, 0, 1,
+    ];
+
+    return {
+        values: newSlice(number),
+        shape: [4, 4],
+    }
+}
+
+export function scaleMatrix3D(x: number, y: number, z: number): Matrix {
+    const number: number[] = [
+        x, 0, 0, 0,
+        0, y, 0, 0,
+        0, 0, z, 0,
+        0, 0, 0, 1,
+    ];
+
+    return {
+        values: newSlice(number),
+        shape: [4, 4],
+    }
+}
+
+
+// https://www.scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/building-basic-perspective-projection-matrix.html
+export function perspectiveMatrix3D(
+    fov: number,
+    nearPlane: number,
+    farPlane: number,
+): Matrix {
+    const s = 1 / Math.tan(
+        // Our fov is already in radians
+        (fov / 2)
+    );
+
+    const z1 = -farPlane / (farPlane - nearPlane);
+    const z2 = -(farPlane * nearPlane) / (farPlane - nearPlane);
+
+    const number: number[] = [
+        s, 0, 0, 0,
+        0, s, 0, 0,
+        0, 0, z1, -1,
+        0, 0, z2, 0,
+    ];
+
+    return {
+        values: newSlice(number),
+        shape: [4, 4],
+    }
+}
+
+export function orthographicMatrix3D(): Matrix {
+    const number: number[] = [
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 1,
+    ];
+
+    return {
+        values: newSlice(number),
+        shape: [4, 4],
+    }
+}

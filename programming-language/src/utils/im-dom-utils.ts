@@ -2019,7 +2019,19 @@ export function imSb() {
 
 let numResizeObservers = 0;
 
-function newImGetSizeState() {
+export type SizeState = {
+    top: number;
+    left: number;
+    bottom: number;
+    right: number;
+    width: number;
+    height: number;
+}
+
+function newImGetSizeState(): {
+    rect: SizeState;
+    observer: ResizeObserver;
+} {
     const r = getCurrentRoot();
 
     const self = {
