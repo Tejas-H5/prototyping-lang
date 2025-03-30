@@ -868,6 +868,7 @@ function renderAppCodeEditor({
                 beginList();
                 if (nextRoot() && lastIdentifier.length > 0) {
                     beginLayout(PREWRAP | ABSOLUTE | W100 | H100 | CODE | TRANSPARENT); {
+                        imInit() && setClass(cn.pointerEventsNone);
                         renderInvisibleSpanUpToPos(state.text, pos - 1);
 
                         span(); {
@@ -876,9 +877,11 @@ function renderAppCodeEditor({
                             }
 
                             beginLayout(ABSOLUTE); {
+                                setStyle("width", "fit-content");
                                 setStyle("left", "0px");
                                 setStyle("top", "0px");
                                 setStyle("border", "1px solid black");
+                                setStyle("maxWidth", "1000px");
 
                                 beginList();
                                 const funcs = getBuiltinFunctionsMap();
@@ -2262,14 +2265,14 @@ set_heatmap_subdiv(40)
 
 heatmap(1, sdf(a, b) { 
     radius = 0.2
-    thickness = 0.01
+    thickness = 0.03
     sqrt(a*a + b*b) 
     (radius - thickness) < ^ && ^ < (radius + thickness)
 }, [0.5, 0, 0])
 
 heatmap(1, sdf2(a, b) { 
     radius = 0.3
-    thickness = 0.01
+    thickness = 0.03
     sqrt(a*a + b*b) 
     (radius - thickness) < ^ && ^ < (radius + thickness)
 }, "#F00")
@@ -2319,7 +2322,6 @@ image([
     {
         name: "Graphs",
         code: `
-// TODO: complete exmaple
 g = map{}
 
 for i in range(0, 10) {
@@ -2357,6 +2359,48 @@ plot_points(1, [
 ])
 
 `
+    },
+    {
+        name: "3D stuff",
+        code: `
+xAngle = slider("x", 0, 2 * PI)
+yAngle = slider("y", 0, 2 * PI)
+zAngle = slider("z", 0, 2 * PI)
+
+X = rot3d_x(xAngle)
+Y = rot3d_y(yAngle)
+Z =rot3d_z(zAngle)
+
+cube = [
+    [-1, -1, -1, 1],
+    [-1,  1, -1, 1],
+    [ 1,  1, -1, 1],
+    [ 1, -1, -1, 1],
+    [-1, -1, 1, 1],
+    [-1,  1, 1, 1],
+    [ 1,  1, 1, 1], 
+    [ 1, -1, 1, 1],
+]
+
+point_cloud = list[]
+for i in range(0, 100) {
+    vec = -1 + 0.5 * [rand(), rand(), rand(), 1]
+    vec[3]=1
+    push(point_cloud, vec)
+}
+point_cloud = to_vec(point_cloud)
+
+
+mul(point_cloud, X)
+mul(^, Y)
+mul(^, Z)
+plot_points(1, ^)
+mul(cube, X)
+mul(^, Y)
+mul(^, Z)
+plot_points(1, ^)
+
+        `
     }
 ]
 

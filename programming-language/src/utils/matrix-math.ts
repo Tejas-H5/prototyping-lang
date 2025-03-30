@@ -162,7 +162,7 @@ export function matrixZeroes(shape: number[]): Matrix {
 
     return {
         values: { memory: values, start: 0, stride: 1, length: len },
-        shape: shape,
+        shape: [...shape],
     }
 }
 
@@ -423,6 +423,31 @@ export function matrixIsRank2(a: Matrix) {
 export function canMul(a: Matrix, b: Matrix) {
     return (matrixIsRank2(a) && matrixIsVector(b)) ||
         (matrixIsRank2(a) && matrixIsRank2(b));
+}
+
+export function transposeMatrix(a: Matrix): [Matrix | null, string] {
+    if (!matrixIsRank2(a) && !matrixIsVector(a)) {
+        return [null, "Can only transpose mxn matricies or vectors"];
+    }
+
+    const transposed = copyMatrix(a);
+    if (a.shape.length === 1) {
+        transposed.shape = [1, a.shape[0]];
+    } else {
+        const m = a.shape[0];
+        const n = a.shape[1];
+        transposed.shape[0] = n;
+        transposed.shape[1] = m;
+
+        for (let i = 0; i < m; i++) {
+            for (let j = 0; j < n; j++) {
+                const val = getMatrixValue(a, i, j);
+                setMatrixValue(transposed, j, i, val);
+            }
+        }
+    }
+
+    return [transposed, ""];
 }
 
 export function matrixMul(a: Matrix, b: Matrix): [Matrix | null, string] {

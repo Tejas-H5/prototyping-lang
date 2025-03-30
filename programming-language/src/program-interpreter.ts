@@ -1,6 +1,6 @@
 import { CssColor, newColor, newColorFromHexOrUndefined } from "src/utils/colour";
 import { assert } from "src/utils/im-dom-utils";
-import { copyMatrix, getMatrixRow, getMatrixRowLength, getMatrixValue, getSliceValue, isIndexInSliceBounds, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMul, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, orthographicMatrix3D, perspectiveMatrix3D, rotationMatrix2D, rotationMatrix3DX, rotationMatrix3DY, rotationMatrix3DZ, rotationMatrixTranslate2D, rotationMatrixTranslate3D, scaleMatrix2D, scaleMatrix3D, setSliceValue, sliceToArray, subMatrixShapeEqualsRowShape } from "src/utils/matrix-math";
+import { copyMatrix, getMatrixRow, getMatrixRowLength, getMatrixValue, getSliceValue, isIndexInSliceBounds, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMul, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, orthographicMatrix3D, perspectiveMatrix3D, rotationMatrix2D, rotationMatrix3DX, rotationMatrix3DY, rotationMatrix3DZ, rotationMatrixTranslate2D, rotationMatrixTranslate3D, scaleMatrix2D, scaleMatrix3D, setSliceValue, sliceToArray, subMatrixShapeEqualsRowShape, transposeMatrix } from "src/utils/matrix-math";
 import {
     BIN_OP_ADD, BIN_OP_AND_AND, BIN_OP_DIVIDE, BIN_OP_GREATER_THAN, BIN_OP_GREATER_THAN_EQ, BIN_OP_INVALID, BIN_OP_IS_EQUAL_TO, BIN_OP_LESS_THAN, BIN_OP_LESS_THAN_EQ, BIN_OP_MULTIPLY, BIN_OP_OR_OR, BIN_OP_SUBTRACT,
     BinaryOperatorType,
@@ -21,6 +21,7 @@ import {
     unaryOpToString
 } from "./program-parser";
 import { clamp, inverseLerp } from "./utils/math-utils";
+import { getNextRng, newRandomNumberGenerator, RandomNumberGenerator, seedRng } from "./utils/random";
 
 export const T_RESULT_NUMBER = 1;
 export const T_RESULT_STRING = 2;
@@ -539,6 +540,7 @@ type ExecutionState = {
 
 export type ProgramInterpretResult = {
     parseResult: ProgramParseResult;
+    rng: RandomNumberGenerator;
 
     isDebugging: boolean;
 
@@ -940,7 +942,7 @@ function getLengthHpMatrix(val: Matrix): number {
     return val.shape[0];
 }
 
-function getLength(result: ProgramResult): number | undefined {
+function gtLength(result: ProgramResult): number | undefined {
     switch (result.t) {
         case T_RESULT_LIST: return result.values.length;
         case T_RESULT_STRING: return result.val.length;
@@ -1010,7 +1012,11 @@ export function startInterpreting(
         }
     }
 
+    const rng = newRandomNumberGenerator();
+    seedRng(rng, 0);
+
     const result: ProgramInterpretResult = {
+        rng,
         parseResult,
         isDebugging,
         entryPoint: {
@@ -1346,8 +1352,8 @@ export function getBuiltinFunctionsMap() {
 
         return newNumberResult(min(a.val, b.val));
     })
-    newBuiltinFunction("rand", [], () => {
-        return newNumberResult(Math.random());
+    newBuiltinFunction("rand", [], (result) => {
+        return newNumberResult(getNextRng(result.rng));
     })
     newBuiltinFunction("pow", [newArg("x", [T_RESULT_NUMBER]), newArg("n", [T_RESULT_NUMBER])], (_result, _step, x, n) => {
         assert(x?.t === T_RESULT_NUMBER);
@@ -1834,7 +1840,7 @@ export function getBuiltinFunctionsMap() {
                     }
 
                     if (i === 0) {
-                        mat.shape = vec.val.shape;
+                        mat.shape = [...vec.val.shape];
                     } else {
                         if (!matrixShapesAreEqual(vec.val, mat)) {
                             addError(result, step, "Only lists ");
@@ -1990,6 +1996,20 @@ export function getBuiltinFunctionsMap() {
         (result, step, angle) => {
             assert(angle?.t === T_RESULT_NUMBER);
             const val = rotationMatrix3DZ(angle.val);
+            return { t: T_RESULT_MATRIX, val };
+        }
+    );
+    newBuiltinFunction(
+        "transpose", [
+        newArg("matrix", [T_RESULT_MATRIX]),
+    ],
+        (result, step, matrix) => {
+            assert(matrix?.t === T_RESULT_MATRIX);
+            const [val, err] = transposeMatrix(matrix.val);
+            if (err || val === null) {
+                addError(result, step, err);
+                return;
+            }
             return { t: T_RESULT_MATRIX, val };
         }
     );
