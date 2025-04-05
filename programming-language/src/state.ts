@@ -25,19 +25,17 @@ export type GlobalContext = {
 export function startDebugging(ctx: GlobalContext): string {
     ctx.lastParseResult = parse(ctx.state.text);
 
-    if (ctx.lastParseResult.errors.length > 0) {
-        return "Fix parsing errors before you can start debugging";
+    if (ctx.lastParseResult.errors.length === 0) {
+        ctx.lastInterpreterResult = startInterpreting(ctx.lastParseResult, true, undefined);
+
+        if (ctx.lastInterpreterResult.errors.length === 0) {
+            ctx.functionToDebug = null;
+            ctx.isDebugging = true;
+            return "";
+        } 
     } 
 
-    ctx.lastInterpreterResult = startInterpreting(ctx.lastParseResult, true, undefined);
-    if (ctx.lastInterpreterResult.errors.length > 0) {
-        // DEV: Fix instruction gen errors before you can start debugging
-        assert(false);
-    } 
-
-    ctx.functionToDebug = null;
-    ctx.isDebugging = true;
-    return "";
+    return "Fix parsing errors before you can start debugging";
 }
 
 // Even after this method is called, the user still needs to input arguments into the function.

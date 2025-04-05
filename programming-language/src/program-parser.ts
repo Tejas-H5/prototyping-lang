@@ -1,4 +1,5 @@
 import { assert } from "./utils/im-dom-utils";
+import { isWhitespace } from "./utils/text-utils";
 
 ////////////////////////
 // Parser
@@ -352,27 +353,7 @@ export function getSliceText(slice: TextSlice) {
     return slice.fullText.substring(slice.start, slice.end);
 }
 
-// Thankyou Trevor https://stackoverflow.com/questions/1496826/check-if-a-single-character-is-a-whitespace
-function isWhitespace(c: string) {
-    return (
-        c === " " ||
-        c === "\n" ||
-        c === "\t" ||
-        c === "\r" ||
-        c === "\f" ||
-        c === "\v" ||
-        c === "\u00a0" ||
-        c === "\u1680" ||
-        c === "\u2000" ||
-        c === "\u200a" ||
-        c === "\u2028" ||
-        c === "\u2029" ||
-        c === "\u202f" ||
-        c === "\u205f" ||
-        c === "\u3000" ||
-        c === "\ufeff"
-    );
-}
+
 
 function isDigit(c: string) {
     const code = c.charCodeAt(0);
@@ -1439,9 +1420,9 @@ function parseStatements(ctx: ParserContext, statements: ProgramExpression[], cl
         if (expr) {
 
             if (thisLine === lastLine) {
-                ctx.parseResult.warnings.push({
+                ctx.parseResult.errors.push({
                     pos: lineStartPos,
-                    problem: "You've put multiple statements on the same line, which may be hard to read."
+                    problem: "You've put multiple statements on the same line. This is so likely to be a mistake that I've promoted this message to be an error"
                 });
             }
             lastLine = thisLine;

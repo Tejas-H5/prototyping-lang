@@ -1,6 +1,6 @@
 import { cssVars } from "src/styling";
 import { execCommand } from "src/utils/depracated-dom-api-wrappers";
-import { cn, div, el, end, imState, imInit, newCssBuilder, newDomElement, Ref, setAttributes, setClass, setInputValue, span, setInnerText, beginList, nextRoot, isEditingTextSomewhereInDocument, endList, } from "src/utils/im-dom-utils";
+import { cn, imBeginDiv, imBeginEl, imEnd, imState, imInit, newCssBuilder, newDomElement, Ref, setAttributes, setClass, setInputValue, imBeginSpan, setInnerText, imBeginList, nextListRoot, isEditingTextSomewhereInDocument, imEndList, imBeginMemoComputation, endMemo, } from "src/utils/im-dom-utils";
 import { getLineBeforePos } from "src/utils/text-utils";
 
 const CSSVARS_FOCUS = cssVars.bg;
@@ -64,15 +64,14 @@ export function beginTextArea({
     const wasEditing = state.isEditing;
     state.isEditing = isEditing;
 
-    const root = div(); {
+    const root = imBeginDiv(); {
         imInit() && setAttributes({
-            class: [cn.flex1, cn.row, cn.h100, cn.relative],
-            style: "overflow-y: hidden",
+            class: [cn.relative],
         });
 
-        beginList(); 
-        if (nextRoot() && isEditing) {
-            const textArea = el(newTextArea).root; {
+        imBeginList(); 
+        if (nextListRoot() && isEditing) {
+            const textArea = imBeginEl(newTextArea).root; {
                 if (textAreaRef) {
                     textAreaRef.val = textArea;
                 }
@@ -104,12 +103,12 @@ export function beginTextArea({
                         }
                     });
                 }
-            } end();
+            } imEnd();
         } 
-        endList();
+        imEndList();
 
         // This is now always present.
-        div(); {
+        imBeginDiv(); {
             imInit() && setAttributes({
                 class: [cn.handleLongWords]
             });
@@ -121,18 +120,20 @@ export function beginTextArea({
 
             // This is a facade that gives the text area the illusion of auto-sizing!
             // but it only works if the text doesn't end in whitespace....
-            span(); {
-                setInnerText(text);
-            } end();
+            imBeginSpan(); {
+                if (imBeginMemoComputation().val(text).changed()) {
+                    setInnerText(text);
+                } endMemo();
+            } imEnd();
 
             // This full-stop at the end of the text is what prevents the text-area from collapsing in on itself
-            span(); {
+            imBeginSpan(); {
                 if (imInit()) {
                     setAttributes({ style: "color: transparent" });
                     setInnerText(".");
                 }
-            } end();
-        } end();
+            } imEnd();
+        } imEnd();
 
     }
 

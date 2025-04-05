@@ -21,7 +21,7 @@ import {
     unaryOpToString
 } from "./program-parser";
 import { clamp, inverseLerp } from "./utils/math-utils";
-import { getNextRng, newRandomNumberGenerator, RandomNumberGenerator, seedRng } from "./utils/random";
+import { getNextRng, newRandomNumberGenerator, RandomNumberGenerator, setRngSeed } from "./utils/random";
 
 export const T_RESULT_NUMBER = 1;
 export const T_RESULT_STRING = 2;
@@ -254,7 +254,7 @@ function evaluateBinaryOpNumberXMatrix(
             // NOTE: this case is just copy-paste
             for (let i = 0; i < rCopy.values.length; i++) {
                 const x = getSliceValue(rCopy.values, i);
-                setSliceValue(rCopy.values, i, x * num);
+                setSliceValue(rCopy.values, i, x + num);
             }
         } break;
         case BIN_OP_SUBTRACT:
@@ -1013,7 +1013,7 @@ export function startInterpreting(
     }
 
     const rng = newRandomNumberGenerator();
-    seedRng(rng, 0);
+    setRngSeed(rng, 0);
 
     const result: ProgramInterpretResult = {
         rng,
@@ -1098,7 +1098,7 @@ type BuiltinFunctionArgDesc = {
     optional: boolean;
 };
 
-type BuiltinFunction = {
+export type BuiltinFunction = {
     name: string;
     fn: BuiltinFunctionSignature;
     args: BuiltinFunctionArgDesc[];
@@ -1355,6 +1355,16 @@ export function getBuiltinFunctionsMap() {
     newBuiltinFunction("rand", [], (result) => {
         return newNumberResult(getNextRng(result.rng));
     })
+    newBuiltinFunction("rand_seed", [
+        newArg("new_seed", [T_RESULT_NUMBER])
+    ], (result, step, newSeed) => {
+        assert(newSeed?.t === T_RESULT_NUMBER);
+        setRngSeed(result.rng, newSeed.val);
+        return newSeed;
+    })
+    newBuiltinFunction("now", [], () => {
+        return newNumberResult(Date.now());
+    });
     newBuiltinFunction("pow", [newArg("x", [T_RESULT_NUMBER]), newArg("n", [T_RESULT_NUMBER])], (_result, _step, x, n) => {
         assert(x?.t === T_RESULT_NUMBER);
         assert(n?.t === T_RESULT_NUMBER);

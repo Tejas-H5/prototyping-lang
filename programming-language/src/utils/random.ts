@@ -24,7 +24,7 @@ export function newRandomNumberGenerator(): RandomNumberGenerator {
 }
 
 // hint: Date.now(), or something deterministic
-export function seedRng(g: RandomNumberGenerator, num: number) {
+export function setRngSeed(g: RandomNumberGenerator, num: number) {
     let { a, b, c, d } = g;
 
     // totally arbitrary. As long as it's deterministic, should be fine.

@@ -3,7 +3,7 @@
 // Right now, this one seems better, but the other one has a 'proven' track record of actually working.
 // But in a matter of hours/days, I was able to implement features in this framework that I wasn't able to for months/years in the other one...
 
-import { CssColor } from "./colour";
+import { CssColor, newColorFromHexOrUndefined } from "./colour";
 
 //////////
 // Assertion functions
@@ -314,67 +314,31 @@ export function scrollIntoView(
  */
 type ImmediateModeArray<T> = {
     items: T[];
-    expectedIdx: number;
     idx: number;
+    init: number;
 };
 
 function newImArray<T>(): ImmediateModeArray<T> {
     return {
         items: [],
-        expectedIdx: -1,
         idx: -1,
+        init: 0,
     };
 }
 
 function imGetCurrent<T>(arr: ImmediateModeArray<T>): T | undefined {
+    if (arr.idx >= arr.items.length) {
+        return undefined;
+    }
     return arr.items[arr.idx];
 }
 
-function imGetNext<T>(arr: ImmediateModeArray<T>): T | undefined {
-    arr.idx++;
+function imReset(arr: ImmediateModeArray<unknown>) {
+    // Once an immediate mode array has been finalized, every subsequent render must create the same number of things.
+    // In this case, you've rendered too few things.
+    assert(arr.idx === -1 || arr.idx === arr.items.length - 1);
 
-    if (arr.idx < arr.items.length) {
-        return arr.items[arr.idx];
-    }
-
-    if (arr.idx === arr.items.length) {
-        if (arr.expectedIdx === -1) {
-            return undefined;
-        }
-
-        // Once an immediate mode array has been finalized, every subsequent render must create the same number of things.
-        // In this case, you've rendered too many things.
-        assert(false);
-    }
-
-    // DEV: whenever imGetNext returns undefined, we should be pushing stuff to the array.
-    assert(false);
-}
-
-function imPush<T>(arr: ImmediateModeArray<T>, value: T): T {
-    // DEV: Pushing to an immediate mode array after it's been finalized is always a mistake
-    assert(arr.expectedIdx === -1);
-    assert(arr.items.length === arr.idx);
-
-    arr.items.push(value);
-
-    return value;
-}
-
-function imLockSize(arr: ImmediateModeArray<unknown>) {
-    if (arr.expectedIdx === -1 && arr.idx !== -1) {
-        arr.expectedIdx = arr.idx;
-    }
-}
-
-function imReset(arr: ImmediateModeArray<unknown>, idx: number = -1) {
-    if (arr.expectedIdx !== -1 && arr.idx !== -1) {
-        // Once an immediate mode array has been finalized, every subsequent render must create the same number of things.
-        // In this case, you've rendered too few(?) things.
-        assert(arr.expectedIdx === arr.idx);
-    } 
-
-    arr.idx = idx;
+    arr.idx = -1;
 }
 
 ///////// 
@@ -394,9 +358,9 @@ export type StyleObject<U extends ValidElement> = (U extends HTMLElement ? keyof
 const ITEM_UI_ROOT = 1;
 const ITEM_LIST = 2;
 const ITEM_STATE = 3;
-export type UIChildRootItem = {
+export type UIChildRootItem<E extends ValidElement> = {
     t: typeof ITEM_UI_ROOT;
-    v: UIRoot<ValidElement>;
+    v: UIRoot<E>;
 };
 export type ListRendererItem = {
     t: typeof ITEM_LIST;
@@ -408,20 +372,21 @@ export type StateItem  = {
     supplier: () => unknown;
 };
 
-export type UIRootItem = UIChildRootItem | ListRendererItem | StateItem;
+export type UIRootItem = UIChildRootItem<any> | ListRendererItem | StateItem;
 
 export type DomAppender<E extends ValidElement = ValidElement> = {
     root: E;
-    currentIdx: number;
+    domElements: ValidElement[];
+    idx: number;
 };
 
 export function resetDomAppender(domAppender: DomAppender, idx = -1) {
-    domAppender.currentIdx = idx;
+    domAppender.idx = idx;
 }
 
 export function appendToDomRoot(domAppender: DomAppender, child: ValidElement) {
-    domAppender.currentIdx++;
-    setChildAtEl(domAppender.root, domAppender.currentIdx, child);
+    domAppender.idx++;
+    setChildAtEl(domAppender.root, domAppender.idx, child);
 }
 
 export function setChildAtEl(root: Element, i: number, child: Element) {
@@ -502,7 +467,7 @@ export type RerenderPoint =  {
  * }
  * ```
  *
- * See the docs for {@link beginList} for more info.
+ * See the docs for {@link imBeginList} for more info.
  */
 export class UIRoot<E extends ValidElement = ValidElement> {
     readonly root: E;
@@ -541,10 +506,10 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     isInInitPhase = true;
 
     // TODO: think of how we can remove this, from user code at the very least.
-    __begin(rp?: RerenderPoint) {
-        resetDomAppender(this.domAppender, rp?.domAppenderIdx);
+    __begin() {
+        resetDomAppender(this.domAppender);
 
-        imReset(this.items, rp?.itemsIdx);
+        imReset(this.items);
 
         pushRoot(this);
 
@@ -561,7 +526,7 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     }
 
     // Only lock the size if we reach the end without the component throwing errors. 
-    __end() {
+    __end(detatchElementsWhenNothingRendered = true) {
         assert(this.began);
         this.began = false;
 
@@ -569,16 +534,18 @@ export class UIRoot<E extends ValidElement = ValidElement> {
 
         this.isInInitPhase = false;
 
-        imLockSize(this.items);
+        this.items.init = 1;
 
         // DEV: If this is negative, I fkd up (I decremented this thing too many times) 
         // User: If this is positive, u fked up (You forgot to finalize an open list)
         assert(this.openListRenderers === 0);
 
-        if (this.items.idx === -1) {
-            // we rendered nothing to this root, so we should just remove it.
-            // however, we may render to it again on a subsequent render.
-            this.__removeAllDomElements(false);
+        if (detatchElementsWhenNothingRendered) {
+            if (this.items.idx === -1) {
+                // we rendered nothing to this root, so we should just remove it.
+                // however, we may render to it again on a subsequent render.
+                this.__removeAllDomElements(false);
+            }
         }
     }
 
@@ -609,6 +576,7 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     }
     readonly c = this.setClass;
 
+    lastText = "";
     text(value: string) { 
         // don't overwrite the real children!
         assert(!this.hasRealChildren);
@@ -618,8 +586,11 @@ export class UIRoot<E extends ValidElement = ValidElement> {
         if (this.root.childNodes.length === 0) {
             this.root.appendChild(document.createTextNode(value));
         } else {
-            const textNode = this.root.childNodes[0];
-            textNode.nodeValue = value;
+            if (this.lastText !== value) {
+                this.lastText = value;
+                const textNode = this.root.childNodes[0];
+                textNode.nodeValue = value;
+            }
         }
     }
 
@@ -759,9 +730,9 @@ export class ListRenderer {
         }
 
         // Append new list elements to where we're currently appending
-        const currentDomRootIdx = result.domAppender.currentIdx;
-        result.__begin(undefined);
-        result.domAppender.currentIdx = currentDomRootIdx;
+        const currentDomRootIdx = result.domAppender.idx;
+        result.__begin();
+        result.domAppender.idx = currentDomRootIdx;
 
         this.current = result;
 
@@ -811,7 +782,7 @@ export class ListRenderer {
 
 export function newUiRoot<E extends ValidElement>(supplier: () => E): UIRoot<E> {
     const root = supplier();
-    const result = new UIRoot<E>({ root, currentIdx: -1 }, supplier);
+    const result = new UIRoot<E>({ root, idx: -1, domElements: []  }, supplier);
     return result;
 }
 
@@ -822,7 +793,7 @@ export type RenderFnArgs<A extends unknown[], T extends ValidElement = ValidElem
  * Allows you to render a variable number of UI roots at a particular point in your component.
  * UI Roots that aren't rendered in subsequent renders get removed from the dom when you `end()` a list.
  *
- * See {@link nextRoot} for more info.
+ * See {@link nextListRoot} for more info.
  * See the {@link UIRoot} docs for more info on what a 'UIRoot' even is, what it's limitations are, and how to effectively (re)-use them.
  *
  * Normal usage:
@@ -848,29 +819,35 @@ export type RenderFnArgs<A extends unknown[], T extends ValidElement = ValidElem
  * end();
  * ```
  */
-export function beginList(): ListRenderer {
+export function imBeginList(): ListRenderer {
     // Don't access immediate mode state when immediate mode is disabled
     assert(!imDisabled);
 
     const r = getCurrentRoot();
 
-    let result = imGetNext(r.items);
-    if (!result) {
-        result = imPush(r.items, { t: ITEM_LIST, v: new ListRenderer(r) });
-    }
+    let result: ListRenderer | undefined; 
+    const items = r.items;
+    const idx = ++items.idx;
+    if (idx < items.items.length) {
+        const box = items.items[idx];
 
-    if (result.t !== ITEM_LIST) {
         // The same hooks must be called in the same order every time
-        assert(false);
+        assert(box.t === ITEM_LIST);
+
+        result = box.v;
+    } else {
+        result = new ListRenderer(r);
+        const box: ListRendererItem = { t: ITEM_LIST, v: result };
+        items.items.push(box);
     }
 
-    result.v.__begin();
+    result.__begin();
 
-    return result.v as ListRenderer;
+    return result;
 }
 
 /**
- * Read {@link beginList}'s doc first for context and examples.
+ * Read {@link imBeginList}'s doc first for context and examples.
  *
  * You can optionally specify a {@link key}.
  * If no key is present, the same UIRoot that was rendered for the nth call of  nextRoot() will be re-used.
@@ -881,9 +858,9 @@ export function beginList(): ListRenderer {
  *
  * See the {@link UIRoot} docs for more info on what a 'UIRoot' even is, what it's limitations are, and how to effectively (re)-use them.
  */
-export function nextRoot(key?: ValidKey) {
+export function nextListRoot(key?: ValidKey) {
     if (currentRoot) {
-        end();
+        imEnd();
     }
     
     const l = getCurrentListRendererInternal();
@@ -891,69 +868,6 @@ export function nextRoot(key?: ValidKey) {
     return l.root(key);
 }
 
-/**
- * Use lists to return an arbitrary amount of roots. 
- * The items may be keyed, or not keyed. 
- *
- * ```ts
- * // Non-keyed usage:
- *
- * imList(r, l => {
- *     for (let i = 0; i < n; i++) {
- *         const r = l.getNext();
- *         Component(r);
- *     }
- * });
- *
- * // Keyed usage:
- *
- * imList(r, l => {
- *     for (const user of users) {
- *         const r = l.get(user.id);
- *         UserProfileInfo(r, user);
- *     }
- * });
- *
- * ```
- *
- * You are under no obligation to key or not key the list - there is no best practice.
- * You should do what you believe is more fitting/performant/correct for your use-case.
- *
- * NOTE: You can also use imList like a switch statement:
- *
- * ```
- * imList(r, l => {
- *      const r = l.get(unionObject.type);
- *      switch(unionObject.type) {
- *          case "type1":
- *              RenderComponent1(r);
- *              break;
- *          case "type2":
- *              RenderComponent2(r);
- *              break;
- *          ...
- *      }
- * });
- * ```
- *
- * This is because each `root` can accept any arbitrary component on the first render,
- * and because you're keying the list on the type, you can be sure that subsequent renders
- * on the same root will always be with the same component.
- */
-
-export function newRerenderPoint(): RerenderPoint {
-    return { domAppenderIdx: 0, itemsIdx: 0,  };
-}
-
-const FROM_HERE = -1;
-// const FROM_AFTER_HERE = 0;
-// const FROM_ONE_AFTER_HERE = 1;
-function imRerenderPoint(r: UIRoot, offset: number): RerenderPoint {
-    const state = imState(newRerenderPoint);
-    state.domAppenderIdx = r.domAppender.currentIdx;
-    state.itemsIdx = r.items.idx + offset;
-    return state;
-}
 
 ///////// 
 // Common immediate mode UI helpers
@@ -963,32 +877,34 @@ function imStateInternal<T>(supplier: () => T, skipSupplierCheck: boolean): T {
     assert(!imDisabled);
 
     const r = getCurrentRoot();
-    // Don't render new elements to this thing when you have a list renderer that is active!
-    // render to that instead.
-    assert(r.openListRenderers === 0);
 
-    let result = imGetNext(r.items);
-    if (!result) {
-        // NOTE: supplier can call getCurrentRoot() internally, and even add destructors.
-        disableIm();
-        const val = supplier();
-        enableIm();
-        result = imPush(r.items, { t: ITEM_STATE, v: val, supplier });
-    } else {
-        if (result.t !== ITEM_STATE) {
-            // The same hooks must be called in the same order every time
-            assert(false);
-        }
+    let result: T;
+    const items = r.items;
+    const idx = ++items.idx;
+    if (idx < items.items.length) {
+        const box = items.items[idx];
+        assert(box.t === ITEM_STATE);
 
-        if (!skipSupplierCheck && supplier !== result.supplier) {
+        if (!skipSupplierCheck) {
             // The same hooks must be called in the same order every time.
             // If you have two hooks for state generated by the same supplier, but they were called out of order for some reason, 
             // this assertion won't catch that bug. I am assuming you won't write code like that...
-            assert(false);
+            assert(supplier === box.supplier);
         }
+
+        result = box.v as T;
+    } else {
+        // supplier can call getCurrentRoot() internally, and even add destructors.
+        // But it shouldn't be doing immediate mode shenanigans.
+        disableIm();
+        result = supplier();
+        enableIm();
+
+        const box: StateItem = { t: ITEM_STATE, v: result, supplier };
+        items.items.push(box);
     }
 
-    return result.v as T;
+    return result;
 }
 
 /**
@@ -1010,6 +926,17 @@ function imStateInternal<T>(supplier: () => T, skipSupplierCheck: boolean): T {
  */
 export function imState<T>(supplier: () => T): T {
     return imStateInternal(supplier, false);
+}
+
+export function imComponent<T>(supplier: () => T): T {
+    const size = getComponentStackSize();
+
+    const c = imStateInternal(supplier, false);
+
+    // You've forgotten to end something inside your component, for sure.
+    assert(size === getComponentStackSize());
+
+    return c;
 }
 
 /**
@@ -1048,7 +975,7 @@ export function getCurrentRoot(): UIRoot {
 
 // You probably don't want to use this, if you can help it
 export function getCurrentListRendererInternal(): ListRenderer {
-    /** Can't call this method without opening a new list renderer (see {@link beginList}) */
+    /** Can't call this method without opening a new list renderer (see {@link imBeginList}) */
     assert(currentListRenderer)
 
     return currentListRenderer;
@@ -1104,6 +1031,7 @@ export function pushRoot(r: UIRoot) {
     currentListRenderer = undefined;
 }
 
+
 /**
  * see {@link pushRoot} for more info
  */
@@ -1117,81 +1045,71 @@ function popList() {
     pop();
 }
 
-
 function pop() {
-    currentStack.length--;
-    const val = currentStack[currentStack.length - 1];
-    if (val instanceof ListRenderer) {
-        currentListRenderer = val;
+    currentStack.pop();
+    if (currentStack.length === 0) {
         currentRoot = undefined;
-    } else {
         currentListRenderer = undefined;
-        currentRoot = val;
+    } else {
+        const val = currentStack[currentStack.length - 1];
+        if (val instanceof ListRenderer) {
+            currentListRenderer = val;
+            currentRoot = undefined;
+        } else {
+            currentListRenderer = undefined;
+            currentRoot = val;
+        }
     }
 }
 
 
-export function startRendering(r: UIRoot = appRoot, rp?: RerenderPoint) {
+export function startRendering(r: UIRoot = appRoot) {
     currentStack.length = 0;
+    currentMemoizerStack.length = 0;
     enableIm();
-    r.__begin(rp);
+    r.__begin();
 }
 
-export function el<E extends ValidElement = ValidElement>(elementSupplier: () => E): UIRoot<E> {
+export function imBeginEl<E extends ValidElement = ValidElement>(elementSupplier: () => E): UIRoot<E> {
     // Don't access immediate mode state when immediate mode is disabled
     assert(!imDisabled);
 
     const r = getCurrentRoot();
 
-    // Don't render new elements to this thing when you have a list renderer that is active!
-    // render to that instead.
-    assert(r.openListRenderers === 0);
+    let result: UIChildRootItem<E> | undefined;
+    let items = r.items;
+    const idx = ++items.idx;
+    if (idx < items.items.length) {
+        result = items.items[idx] as UIChildRootItem<E>;
 
-    let result = imGetNext(r.items);
-    if (!result) {
+        // The same hooks must be called in the same order every time.
+        assert(result.t === ITEM_UI_ROOT);
+        // string comparisons end up being quite expensive, so we're storing
+        // a reference to the function that created the dom element and comparing those instead.
+        assert(result.v.elementSupplier === elementSupplier);
+    } else {
         const uiRoot = newUiRoot(elementSupplier);
-        result = imPush(r.items, { t: ITEM_UI_ROOT, v: uiRoot });
+        result = { t: ITEM_UI_ROOT, v: uiRoot };
+        items.items.push(result);
     }
-
-    if (result.t !== ITEM_UI_ROOT) {
-        // The same hooks must be called in the same order every time
-        assert(false);
-    }
-
-    // The same hooks must be called in the same order every time.
-    // string comparisons end up being quite expensive in the end, so we're storing
-    // a reference to the function that created the dom element and comparing those instead.
-    assert(result.v.elementSupplier === elementSupplier);
 
     r.hasRealChildren = true;
     appendToDomRoot(r.domAppender, result.v.domAppender.root);
 
     result.v.__begin();
 
-    // The lambda API only exists because we can't shadow a variable with an expresion that uses itself.
-    // i.e if we could do something like this:
-    //
-    // ```
-    // const r = div(r);
-    // r.begin(); {
-    //      r = div(r);
-    // }
-    // r.end();
-    //
-    // Then I would.
-    // ```
-
     return result.v as UIRoot<E>;
 } 
 
-export function end() {
+// This is now called `imEnd`, because it is better to not squat on the variable name "end"
+export function imEnd(detatchElements = true) {
     const val = getCurrentRoot();
-    val.__end();
+    val.__end(detatchElements);
 }
 
-export function endList(isConditional=false) {
+export function imEndList(isConditional=false, detatchElements = true) {
     if (currentRoot) {
-        end();
+        imEnd(detatchElements);
     }
 
     const l = getCurrentListRendererInternal();
@@ -1272,8 +1190,8 @@ export function newSpan() {
     return newDomElement("span");
 }
 
-export function div(): UIRoot<HTMLDivElement> {
-    return el<HTMLDivElement>(newDiv);
+export function imBeginDiv(): UIRoot<HTMLDivElement> {
+    return imBeginEl<HTMLDivElement>(newDiv);
 }
 
 export function setInnerText(str: string) {
@@ -1281,150 +1199,10 @@ export function setInnerText(str: string) {
     r.text(str);
 }
 
-export function span(): UIRoot<HTMLSpanElement> {
-    return el<HTMLSpanElement>(newSpan);
+export function imBeginSpan(): UIRoot<HTMLSpanElement> {
+    return imBeginEl<HTMLSpanElement>(newSpan);
 }
 
-
-function canAnimate(r: UIRoot) {
-    return !r.removed && !r.manuallyHidden;
-}
-
-/**
- * Wrap any component tree you want to the ability to 'rerender' with this method.
- *
- * Rerendering a component involves resetting immediate mode indices to just before this 
- * thing was first rendered, and then calling the function you passed in.
- */
-export function imRerenderable(fn: (rerender: () => void) => void) {
-    const r = getCurrentRoot();
-    const rerenderPoint = imRerenderPoint(r, FROM_HERE);
-    const ref = newRef<() => void>();
-    if (ref.val === null) {
-        ref.val = () => {
-            startRendering(r, rerenderPoint);
-
-            const stackSize = getComponentStackSize();
-
-            imRerenderable(fn)
-
-            // You (or I) forgot a call to end() somewhere.
-            assert(stackSize === getComponentStackSize());
-        }
-    }
-
-    fn(ref.val);
-}
-
-// function newRealtimeState(): {
-//     dt: number;
-//     animation: RealtimeAnimation | null;
-// } { 
-//     return { 
-//         dt: 0, 
-//         animation: null,
-//     };
-// }
-
-// export function realtime(fn: (dt: number) => void) {
-//     imRerenderable((rerender) => {
-//         const r = getCurrentRootInternal();
-//
-//         const state = imState(newRealtimeState);
-//         if (!state.animation) {
-//             state.animation = newAnimation((dt) => {
-//                 if (!canAnimate(r)) {
-//                     return false;
-//                 } 
-//
-//                 state.dt = dt;
-//                 rerender();
-//                 return true;
-//             });
-//         }
-//
-//         fn(state.dt);
-//
-//         startAnimation(state.animation);
-//     });
-// }
-
-// function newIntermittentState() : {
-//     t: number; ms: number; animation: RealtimeAnimation | null;
-// } { 
-//     return { t: 0, ms: 0 , animation: null };
-// }
-
-// export function intermittent(fn: RenderFn, ms: number) {
-//     imRerenderable((rerender) => {
-//         const r = getCurrentRootInternal();
-//         const state = imState(newIntermittentState);
-//         state.ms = ms;
-//         if (!state.animation) {
-//             state.animation = newAnimation((dt) => {
-//                 if (!canAnimate(r)) {
-//                     return false;
-//                 } 
-//
-//                 state.t += dt;
-//                 if (state.t > state.ms) {
-//                     rerender();
-//                     state.t = 0;
-//                 }
-//
-//                 return true;
-//             });
-//         }
-//
-//         fn(r);
-//
-//         startAnimation(state.animation);
-//     });
-// }
-
-
-// NOTE: currently, if a component rerenders itself deep underneath the error boundary, it
-// can't throw back up to the error boundary. We will have to start remembering the callstack above it
-// to allow for this, so the callbacks abstraction actually makes sense, for now.
-
-/**
- * ```ts
- * // Button component is not included
- * imTryCatch({
- *      tryFn: () => { div(); { div(); { throw new Error("bruh") } end(); } end(); }
- *      catchFn: (err, recover) => { Button("there was an error viewing the content. click here to try again", recover); }
- * })
- * ```
- * @deprecated
- */
-export function imTryCatch({ 
-    tryFn, catchFn 
-} : {
-    tryFn: () => void,
-    catchFn: (error: any, recover: () => void) => void,
-}) {
-    imRerenderable((rerender) => {
-        const l = beginList();
-
-        try {
-            nextRoot(); {
-                tryFn();
-            }
-        } catch (error) {
-
-            const recover = () => {
-                l.__removeAllDomElementsFromList(false);
-                rerender();
-            }
-
-            nextRoot(); {
-                catchFn(error, recover);
-            };
-        } finally {
-            endList();
-        }
-    });
-}
 
 export function abortListAndRewindUiStack(l: ListRenderer) {
     // need to wind the stack back to the current list component
@@ -1501,22 +1279,30 @@ export function imSetVal<T>(t: T): T {
 
 
 let imDisabled = false; 
-function disableIm() {
+export function disableIm() {
     imDisabled = true;
 }
 
-function enableIm() {
+export function enableIm() {
     imDisabled = false;
 }
 
-class Memoizer{
-    items = newImArray<[unknown]>();
+class Memoizer {
+    im: boolean;
+    items = newImArray<unknown>();
     __changed = false;
     __invoked = true;
 
+    resumePoint: RerenderPoint = { 
+        domAppenderIdx: -1,
+        itemsIdx: -1,
+    };
+
+    constructor(im: boolean) {
+        this.im = im;
+    }
+
     begin() {
-        imLockSize(this.items);
-        
         /**
          * You should be querying changed() on this memoizer. Otherwise, there is a high change that you're
          * using it wrong:
@@ -1543,29 +1329,58 @@ class Memoizer{
     }
 
     val(val: unknown) {
-        let existing = imGetNext(this.items);
-        if (!existing) {
-            existing = imPush(this.items, [val]);
-            this.__changed = true;
-        } else if (val !== existing[0]) {
+        const items = this.items;
+        const idx = ++items.idx;
+        if (idx < items.items.length) {
+            const existing = items.items[idx]
+            if (existing !== val) {
+                this.__changed = true;
+                items.items[idx] = val;
+            }
+        } else {
+            items.items.push(val);
             this.__changed = true;
         }
-        existing[0] = val;
+
         return this;
     }
 
     changed(): boolean {
         this.__invoked = true;
+
+        // immediate mode state must be rendered unconditionally
+        if (this.im) {
+            imBeginList();
+            nextListRoot();
+        } else {
+            disableIm();
+        }
+
         return this.__changed;
     }
 }
 
-function newMemoizer() {
-    return new Memoizer();
+
+let currentMemo: Memoizer | undefined;
+let currentMemoizerStack: Memoizer[] = [];
+
+export function getCurrentMemoizer(): Memoizer {
+    // You probably didn't call beginMemo().changed() yet, or you forgot to close out one of the other things
+    assert(currentMemo);
+
+    return currentMemo;
 }
+
 
 /**
  * Use memoizers to gate expensive computations.
+ * This memoizer will also disable immedate mode, unlike
+ * {@link imBeginMemo}, so that you don't accidentally 
+ * include immediate mode components in there (but sometimes 
+ *  you do want those !)
+ *
+ * // TODO: consider just removing this, now that 
+ * // beginMemo and endMemo actually work with immediate mode components.
  *
  * ```ts
  * if (beginMemo()
@@ -1578,19 +1393,92 @@ function newMemoizer() {
  *
  * ```
  *
- * The memoizer will also disable immedate mode, and force you to re-enable it with endMemo() at the end.
+ * , and force you to re-enable it with endMemo() at the end.
  * This is because memoized logic tends to grow quite long, and becomes prone to conditional 
  * and out-of-order imState bugs. 
  */
-export function beginMemo() {
-    const val = imState(newMemoizer);
+export function imBeginMemoComputation() {
+    return beginMemoInternal(newMemoizerNormal);
+}
+
+function beginMemoInternal(supplier: () => Memoizer) {
+    const val = imState(supplier);
     val.begin();
-    disableIm();
+
+    currentMemoizerStack.push(val);
+    currentMemo = val;
+
     return val;
 }
 
+function newMemoizerNormal() {
+    return new Memoizer(false);
+}
+
+/**
+ * Similar to {@link imBeginMemoComputation}, but allows immediate mode state.
+ * Useful to avoid rendering a large number of components over and over again. 
+ *
+ * Do note that things inside are no longer updating at 60 fps, so only use if absolutely 
+ * necessary.
+ *
+ * ```ts
+ * if (beginMemoIm().val(bigData).changed()) {   
+ *      // render the data.
+ *  } endMemo();
+ * ```
+ */
+export function imBeginMemo() {
+    return beginMemoInternal(newMemoizerImmediateMode);
+}
+
+function newMemoizerImmediateMode() {
+    return new Memoizer(true);
+}
+
+function saveRenderPoint(dst: RerenderPoint, src: UIRoot) {
+    const domIdx = src.domAppender.idx;
+    const idx = src.items.idx;
+    dst.itemsIdx = idx;
+    dst.domAppenderIdx = domIdx;
+}
+
+function loadRenderPoint(src: RerenderPoint, dst: UIRoot) {
+    const domIdx = src.domAppenderIdx;
+    const idx = src.itemsIdx;
+    dst.items.idx = idx;
+    dst.domAppender.idx = domIdx;
+}
+
 export function endMemo() {
-    enableIm();
+    const val = getCurrentMemoizer();
+
+    if (val.im) {
+        const root = getCurrentRoot();
+
+        if (val.__changed) {
+            // we would have actually rendered something this time.
+            // because of list renderers, the dom index may be different every time, so we have to save it every time
+            saveRenderPoint(val.resumePoint, root);
+        } else if (root.items.idx === -1) {
+            // we rendered nothing. we'll need to fix the indices in the dom appender, and the immediate mode state array
+            loadRenderPoint(val.resumePoint, root);
+        }
+
+        imEnd(false);
+        imEndList(false, false);
+    } else {
+        enableIm();
+    }
+
+    currentMemoizerStack.pop();
+
+    // Supposedly, it is faster in JavaScript to never index past the bounds of an array, funnily enough.
+    if (currentMemoizerStack.length === 0) {
+        currentMemo = undefined;
+    } else {
+        currentMemo = currentMemoizerStack[currentMemoizerStack.length - 1];
+    }
 }
 
 
@@ -1598,45 +1486,33 @@ export function endMemo() {
  * Seems like simply doing r.root.onwhatever = () => { blah } destroys performance,
  * so this  method exists now...
  *
+ * NOTE: the arguments must never change. Rather than writing code to handle dynamic arguments
+ * I will just force you to make it constant. This will simplify both of our code.
+ * There is no assert to catch this mistake though, because string comparison asserts tend to be very slow, I've found
  */
-export function imOn<K extends keyof HTMLElementEventMap>(
-    type: K,
-): HTMLElementEventMap[K] | null {
+export function imOn<K extends keyof HTMLElementEventMap>(type: K): HTMLElementEventMap[K] | null {
     const eventRef = imRef<HTMLElementEventMap[K]>();
-    const typeRef = imRef<string>();
-    const handlerRef = imRef<(this: HTMLElement, ev: HTMLElementEventMap[K]) => any>();
 
     if (imInit()) {
         const r = getCurrentRoot();
-        r.addDestructor(() => {
-            if (typeRef.val && handlerRef.val) {
-                r.root.removeEventListener(
-                    typeRef.val,
-                    // @ts-expect-error this thing is fine, actually.
-                    handlerRef.val
-                );
-            }
-        });
-    }
 
-    if (type !== typeRef.val) {
-        const r = getCurrentRoot();
-        if (typeRef.val && handlerRef.val) {
-            r.root.removeEventListener(
-                typeRef.val, 
-                // @ts-expect-error this thing is fine, actually.
-                handlerRef.val
-            );
+        const handler = (e: HTMLElementEventMap[K]) => {
+            eventRef.val = e;
+            doRender();
         }
-
-        typeRef.val = type;
-        handlerRef.val = (e) => eventRef.val = e;
-
         r.root.addEventListener(
             type, 
             // @ts-expect-error this thing is fine, actually.
-            handlerRef.val
+            handler
         );
+
+        r.addDestructor(() => {
+            r.root.removeEventListener(
+                type,
+                // @ts-expect-error this thing is fine, actually.
+                handler
+            );
+        });
     }
 
     const ev = eventRef.val;
@@ -1750,13 +1626,10 @@ export function deltaTimeSeconds(): number {
     return dtSeconds;
 }
 
-let renderTwice = false;
-export function queueSecondRerender() {
-    renderTwice = true;
-}
+let doRender = () => {};
 
 export function initializeDomRootAnimiationLoop(renderFn: () => void, renderRoot?: UIRoot) {
-    const doRender = () => {
+    doRender = () => {
         startRendering(renderRoot);
         renderFn();
 
@@ -1764,18 +1637,12 @@ export function initializeDomRootAnimiationLoop(renderFn: () => void, renderRoot
         // inspect currentStack in the debugger for more info
         assert(currentStack.length === 1);
     }
+
     const animation = (t: number) => {
         dtSeconds = (t - lastTime) / 1000;
         lastTime = t;
 
         if (dtSeconds < MAX_VALID_DELTATIME_SECONDS) {
-            doRender();
-        }
-
-        if (renderTwice) {
-            // Used to allow for some off-by-one-frame events to actually not be off by one frame.
-            // Sometimes it works, sometimes it doesn't....
-            renderTwice = false;
             doRender();
         }
 
@@ -1785,17 +1652,38 @@ export function initializeDomRootAnimiationLoop(renderFn: () => void, renderRoot
     requestAnimationFrame(animation);
 }
 
-let clickedElement: object | null = null;
-let lastClickedElement: object | null = null;
-let hoverElement: object | null = null;
-
+// NOTE: might be obsolete. or better on the user side.
 const keys = {
     shiftsDown: 0,
     ctrlsDown: 0,
     escPressed: false,
 }
 
-const mouse = {
+export type MouseState = {
+    lastX: number;
+    lastY: number;
+
+    leftMouseButton: boolean;
+    middleMouseButton: boolean;
+    rightMouseButton: boolean;
+
+    dX: number;
+    dY: number;
+    X: number;
+    Y: number;
+
+    /**
+     * NOTE: if you want to use this, you'll have to prevent scroll event propagation.
+     * See {@link imPreventScrollEventPropagation}
+     */
+    scrollY: number;
+
+    clickedElement: object | null;
+    lastClickedElement: object | null;
+    hoverElement: object | null;
+};
+
+const mouse: MouseState = {
     lastX: 0,
     lastY: 0,
 
@@ -1813,7 +1701,13 @@ const mouse = {
      * See {@link imPreventScrollEventPropagation}
      */
     scrollY: 0,
+
+    clickedElement: null,
+    lastClickedElement: null,
+    hoverElement: null,
 };
+
+
 
 export function getMouse() {
     return mouse;
@@ -1825,10 +1719,10 @@ export function getKeys() {
 
 
 // I cant fking believe this shit works, lol
-export function elementHasMouseClick() {
+export function elementWasClicked() {
     const mouse = getMouse();
     const r = getCurrentRoot();
-    if (r.root === clickedElement) {
+    if (r.root === mouse.clickedElement) {
         return mouse.leftMouseButton;
     }
     return  false;
@@ -1836,12 +1730,16 @@ export function elementHasMouseClick() {
 
 export function elementWasLastClicked() {
     const r = getCurrentRoot();
-    return r.root === lastClickedElement;
+    return r.root === mouse.lastClickedElement;
 }
 
-export function elementHasMouseOver() {
+export function elementWasHovered() {
     const r = getCurrentRoot();
-    return r.root === hoverElement;
+    return r.root === mouse.hoverElement;
+}
+
+export function getHoveredElement() {
+    return mouse.hoverElement;
 }
 
 export function deferClickEventToParent() {
@@ -1849,20 +1747,20 @@ export function deferClickEventToParent() {
     const el = r.root;
     const parent = el.parentNode;
 
-    if (clickedElement === el) {
-        clickedElement = parent;
+    if (mouse.clickedElement === el) {
+        mouse.clickedElement = parent;
     }
-    if (lastClickedElement === el) {
-        lastClickedElement = parent;
+    if (mouse.lastClickedElement === el) {
+        mouse.lastClickedElement = parent;
     }
-    if (hoverElement === el) {
-        hoverElement = parent;
+    if (mouse.hoverElement === el) {
+        mouse.hoverElement = parent;
     }
 }
 
 function setClickedElement(el: object | null) {
-    clickedElement = el;
-    lastClickedElement = el;
+    mouse.clickedElement = el;
+    mouse.lastClickedElement = el;
 }
 
 export function initializeImEvents() {
@@ -1884,11 +1782,11 @@ export function initializeImEvents() {
         mouse.Y = e.pageY;
         mouse.dX = mouse.X - mouse.lastX;
         mouse.dY = mouse.Y - mouse.lastY;
-        hoverElement = e.target;
+        mouse.hoverElement = e.target;
 
     });
     document.addEventListener("mouseenter", (e) => {
-        hoverElement = e.target;
+        mouse.hoverElement = e.target;
     });
     document.addEventListener("mouseup", (e) => {
         if (e.button === 0) {
@@ -1901,7 +1799,7 @@ export function initializeImEvents() {
     });
     document.addEventListener("wheel", (e) => {
         mouse.scrollY += e.deltaY;
-        hoverElement = e.target;
+        mouse.hoverElement = e.target;
         e.preventDefault();
     });
     document.addEventListener("keydown", (e) => {
@@ -1932,8 +1830,8 @@ export function initializeImEvents() {
         mouse.leftMouseButton = false;
         mouse.middleMouseButton = false;
         mouse.rightMouseButton = false;
-        lastClickedElement = null;
-        clickedElement = null;
+        mouse.lastClickedElement = null;
+        mouse.clickedElement = null;
         mouse.scrollY = 0;
         keys.shiftsDown = 0;
         keys.ctrlsDown = 0;
@@ -1972,11 +1870,8 @@ export function beginFrame() {
     // No-op, more for consistency and code aesthetics.
 }
 
-function clearEvents() {
-}
-
 export function endFrame() {
-    clickedElement = null;
+    mouse.clickedElement = null;
     mouse.lastX = mouse.X;
     mouse.lastY = mouse.Y;
     mouse.dX = 0;
@@ -2020,10 +1915,6 @@ export function imSb() {
 let numResizeObservers = 0;
 
 export type SizeState = {
-    top: number;
-    left: number;
-    bottom: number;
-    right: number;
     width: number;
     height: number;
 }
@@ -2031,31 +1922,23 @@ export type SizeState = {
 function newImGetSizeState(): {
     rect: SizeState;
     observer: ResizeObserver;
+    resized: boolean;
 } {
     const r = getCurrentRoot();
 
     const self = {
-        rect: {
-            top: 0,
-            left: 0,
-            bottom: 0,
-            right: 0,
-            width: 0,
-            height: 0, 
-        },
+        rect: { width: 0, height: 0, },
+        resized: false,
         observer: new ResizeObserver((entries) => {
             for (const entry of entries) {
-                const rect = entry.target.getBoundingClientRect();
-
-                queueSecondRerender();
-                self.rect.width = rect.width;
-                self.rect.height = rect.height;
-                self.rect.top = rect.top;
-                self.rect.left = rect.left;
-                self.rect.bottom = rect.bottom;
-                self.rect.right = rect.right;
+                // NOTE: resize-observer cannot track the top, right, left, bottom of a rect. Sad.
+                
+                self.rect.width = entry.contentRect.width;
+                self.rect.height = entry.contentRect.height;
                 break;
             }
+
+            doRender();
         })
     };
 
@@ -2071,6 +1954,6 @@ function newImGetSizeState(): {
     return self;
 }
 
-export function imTrackRectSize() {
+export function imTrackSize() {
     return imState(newImGetSizeState);
 }

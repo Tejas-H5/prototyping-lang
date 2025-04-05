@@ -1,0 +1,822 @@
+import { CODE, COL, FLEX, GAP, imBeginLayout, PRE, RELATIVE, ROW, textSpan } from "./layout.ts";
+import "./styling.ts";
+import { cnApp, cssVars } from "./styling.ts";
+import { copyToClipboard, readFromClipboard } from "./utils/clipboard.ts";
+import { deferClickEventToParent, elementWasClicked, elementWasHovered, endMemo, getHoveredElement, getMouse, imBeginEl, imBeginList, imBeginMemo, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imInit, imOn, imSb, imState, nextListRoot, setClass, setInnerText, setStyle } from './utils/im-dom-utils.ts';
+import { clamp, max, min } from "./utils/math-utils.ts";
+import { isWhitespace } from "./utils/text-utils.ts";
+
+
+function hasSelection(s: TextEditorState) {
+    return s.selectionStart !== -1 || s.selectionEnd !== -1;
+}
+function deleteSelectedAndMoveCursorToStart(s: TextEditorState) {
+    if (!hasSelection(s)) {
+        return;
+    }
+
+    remove(s, s.selectionStart, s.selectionEnd - s.selectionStart + 1);
+    s.cursor = s.selectionStart;
+    clearSelection(s);
+}
+
+function insertAtCursor(s: TextEditorState, char: string) {
+    if (hasSelection(s)) {
+        deleteSelectedAndMoveCursorToStart(s);
+    }
+    insert(s, s.cursor, [char]);
+}
+
+function currentChar(s: TextEditorState, offset = 0): string {
+    const idx = s.cursor + offset;
+    if (idx>= 0 && idx < s.buffer.length) {
+        return s.buffer[s.cursor + offset];
+    }
+
+    return " ";
+}
+
+function eof(s: TextEditorState) {
+    return s.buffer.length === s.cursor;
+}
+
+function moveToLastNewline(s: TextEditorState): number {
+    let num = 0;
+    while (s.cursor > 0 && currentChar(s) !== "\n") {
+        s.cursor--;
+        num++;
+    }
+
+    return num;
+}
+
+function moveDown(s: TextEditorState) {
+    const cursor = s.cursor;
+    // get current offset
+    const currentLineOffset = moveToLastNewline(s);
+    if (s.cursor === cursor) {
+        s.cursor++;
+        moveToNextNewline(s);
+        return;
+    }
+
+    let i = 1;
+    if (s.cursor === 0) {
+        // move one more when moving down.
+        i--;
+    }
+
+    s.cursor = cursor;
+
+    moveToNextNewline(s);
+    s.cursor++;
+    for (; i < currentLineOffset && currentChar(s) !== "\n"; i++) {
+        s.cursor++;
+    }
+}
+
+function clearSelection(s: TextEditorState) {
+    s.selectionAnchor = -1;
+    s.selectionAnchorEnd = -1;
+    s.selectionStart = -1;
+    s.selectionEnd = -1;
+}
+
+function moveUp(s: TextEditorState) {
+    // get current offset
+    const currentLineOffset = moveToLastNewline(s);
+    s.cursor--;
+    moveToLastNewline(s);
+
+    if (s.cursor !== 0 && currentLineOffset > 0) {
+        s.cursor++;
+    } 
+    for (let i = 1; i < currentLineOffset && currentChar(s) !== "\n"; i++) {
+        s.cursor++;
+    }
+}
+
+function moveToNextWord(s: TextEditorState) {
+    // get off the current word, and onto some whitespace
+    while (s.cursor < s.buffer.length && !isWhitespace(currentChar(s))) {
+        s.cursor++;
+    }
+
+    // then get to the next word
+    while (s.cursor < s.buffer.length && isWhitespace(currentChar(s))) {
+        s.cursor++;
+    }
+}
+
+function moveToEndOfThisWord(s: TextEditorState) {
+    // get off whitespace
+    while (s.cursor < s.buffer.length && isWhitespace(currentChar(s))) {
+        s.cursor++;
+    }
+
+    // get to the end of the word
+    while (s.cursor < s.buffer.length && !isWhitespace(currentChar(s))) {
+        s.cursor++;
+    }
+}
+
+
+function moveToEndOfLastWord(s: TextEditorState) {
+    // get off the current word, and onto some whitespace
+    while (s.cursor > 0 && !isWhitespace(currentChar(s))) {
+        s.cursor--;
+    }
+
+    // then get to the next word
+    while (s.cursor > 0 && isWhitespace(currentChar(s))) {
+        s.cursor--;
+    }
+}
+
+function moveToStartOfLastWord(s: TextEditorState) {
+    s.cursor--;
+
+    // get off whitespace
+    while (s.cursor > 0 && isWhitespace(currentChar(s))) {
+        s.cursor--;
+    }
+
+    // get to the end of the word
+    while (s.cursor > 0 && !isWhitespace(currentChar(s))) {
+        s.cursor--;
+    }
+
+    if (isWhitespace(currentChar(s))) {
+        s.cursor++;
+    }
+}
+
+
+function moveToNextNewline(s: TextEditorState) {
+    while (s.cursor < s.buffer.length && currentChar(s) !== "\n") {
+        s.cursor++;
+    }
+}
+
+type TextEdit = {
+    time: number;
+    pos: number;
+    insert: boolean;
+    chars: string[];
+};
+
+function applyStep(s: TextEditorState, step: TextEdit, apply: boolean = true) {
+    s.isUndoing = true; {
+        if (step.insert === apply) {
+            insert(s, step.pos, step.chars);
+            s.cursor = step.pos + step.chars.length;
+        } else {
+            remove(s, step.pos, step.chars.length);
+            s.cursor = step.pos;
+        }
+        clearSelection(s);
+    } s.isUndoing = false;
+}
+
+function revertStep(s: TextEditorState, step: TextEdit) {
+    applyStep(s, step, false);
+}
+
+interface Focusable {
+    focus(): void;
+}
+
+export type TextEditorState = {
+    textAreaElement: HTMLTextAreaElement | null;
+    // Automatically shifts focus to this element if this one were focused for some reason.
+    beingControlledBy: Focusable | null;
+
+    undoBuffer: TextEdit[];
+    undoBufferIdx: number;
+    isUndoing: boolean;
+
+    buffer: string[];
+    modifiedAt: number;
+    cursor: number;
+
+    currentKeyDown: string;
+    canStartSelecting: boolean;
+    isSelecting: boolean;
+    isShifting: boolean;
+
+    selectionAnchor: number;
+    selectionAnchorEnd: number;
+
+    selectionStart: number;
+    selectionEnd: number;
+
+    inCommandMode: boolean;
+    wasFinding: boolean;
+    isFinding: boolean;
+    finderTextEditorState: TextEditorState | null;
+    allFindResults: Range[];
+    currentFindResultIdx: number;
+    cursorBeforeFind: number;
+}
+
+type Range = {
+    start: number;
+    end: number;
+};
+
+function pushToUndoBuffer(s: TextEditorState, edit: TextEdit) {
+    if (s.isUndoing) {
+        return;
+    }
+
+    s.undoBufferIdx++;
+    // truncate undo buffer if it's too big.
+    if (s.undoBufferIdx !== s.undoBuffer.length - 1) {
+        s.undoBuffer.length = s.undoBufferIdx;
+    }
+    s.undoBuffer.push(edit);
+}
+
+function insert(s: TextEditorState, pos: number, chars: string[]) {
+    s.buffer.splice(pos, 0, ...chars);
+    s.modifiedAt = Date.now();
+
+    pushToUndoBuffer(s, { time: s.modifiedAt, pos: pos, insert: true, chars: chars });
+}
+
+function remove(s: TextEditorState, pos: number, count: number) {
+    const removedChars = s.buffer.splice(pos, count);
+    s.modifiedAt = Date.now();
+
+    pushToUndoBuffer(s, { time: s.modifiedAt, pos: pos, insert: false, chars: removedChars });
+}
+
+function handleTextEditorEvents(
+    s: TextEditorState,
+    keyDownEvent: HTMLElementEventMap["keydown"] | null,
+    keyUpEvent: HTMLElementEventMap["keyup"] | null,
+) {
+    s.wasFinding = s.isFinding;
+
+    if (keyUpEvent) {
+        const key = keyUpEvent.key;
+        if (key === "Shift") {
+            s.canStartSelecting = false;
+            s.isSelecting = false;
+            s.isShifting = false;
+        } else if (key === "Control") {
+            s.inCommandMode = false;
+        }
+    }
+
+    if (keyDownEvent) {
+        const key = keyDownEvent.key;
+
+        if (key === "Control") {
+            s.inCommandMode = true;
+        }
+
+        if (key === "Shift") {
+            s.isShifting = true;
+        }
+    }
+
+    // We need to handle infinitely recursive find ops.
+    // ok, we don't 'need' to, but I did want to see if I could do it. Apparently, I can. 
+    if (s.finderTextEditorState && s.wasFinding && s.isFinding) {
+        let handled = false;
+
+        if (!s.finderTextEditorState.isFinding) {
+            if (keyDownEvent) {
+                const key = keyDownEvent.key;
+                if (key === "Enter") {
+                    handled = true;
+
+                    if (s.isShifting) {
+                        s.canStartSelecting = false;
+                        if (s.currentFindResultIdx > 0) {
+                            s.currentFindResultIdx--;
+                        }
+                    } else {
+                        if (s.currentFindResultIdx < s.allFindResults.length - 1) {
+                            s.currentFindResultIdx++;
+                        }
+                    }
+
+                    if (s.currentFindResultIdx < s.allFindResults.length) {
+                        s.cursor = s.allFindResults[s.currentFindResultIdx].start;
+                    }
+                } else if (key === "Escape") {
+                    handled = true;
+
+                    if (s.finderTextEditorState) {
+                        s.isFinding = false;
+                        resetTextEditorState(s.finderTextEditorState);
+                    }
+                }
+            }
+        }
+
+        if (!handled) {
+            handleTextEditorEvents(s.finderTextEditorState, keyDownEvent, keyUpEvent);
+        }
+        return;
+    }
+
+    if (keyDownEvent) {
+
+        // do our text editor command instead of the browser shortcut
+        keyDownEvent.preventDefault();
+
+        const key = keyDownEvent.key;
+        const keyLower = key.toLowerCase();
+        const isRepeat = keyDownEvent.repeat;
+        const c = getChar(keyDownEvent);
+
+        const lastModified = s.modifiedAt;
+        const lastCursor = s.cursor;
+
+        if (c) {
+
+            if (!s.inCommandMode) {
+                insertAtCursor(s, c);
+                s.cursor++;
+            } else {
+
+                if (keyLower === "f") {
+                    s.isFinding = true;
+                } else if (keyLower === "z") {
+                    if (s.undoBufferIdx >= 0) {
+                        const step = s.undoBuffer[s.undoBufferIdx];
+                        s.undoBufferIdx--;
+                        revertStep(s, step);
+                    }
+                } else if (keyLower === "y") {
+                    if (s.undoBufferIdx < s.undoBuffer.length - 1) {
+                        // increment and get in the opposite order as above
+                        s.undoBufferIdx++;
+                        const step = s.undoBuffer[s.undoBufferIdx];
+
+                        applyStep(s, step);
+                    }
+                } else if (key === ")") {
+                    // TODO: expand our selection
+                } else if (key === "(") {
+                    // TODO: contract our selection
+                } else if (keyLower === "x") {
+                    if (hasSelection(s)) {
+                        const text = s.buffer.slice(s.selectionStart, s.selectionEnd + 1).join("");
+                        copyToClipboard(text).then(() => {
+                            deleteSelectedAndMoveCursorToStart(s);
+                        });
+                    }
+
+                    // TODO: cut
+                } else if (keyLower === "c") {
+                    if (hasSelection(s)) {
+                        const text = s.buffer.slice(s.selectionStart, s.selectionEnd + 1).join("");
+                        copyToClipboard(text).then(() => {
+                            clearSelection(s);
+                        });
+                    }
+                } else if (keyLower === "v") {
+                    readFromClipboard().then(clipboardText => {
+                        if (hasSelection(s)) {
+                            deleteSelectedAndMoveCursorToStart(s);
+                            insert(s, s.cursor, clipboardText.split(""));
+                        } else {
+                            insert(s, s.cursor, clipboardText.split(""));
+                        }
+                    });
+                }
+            }
+        } else if (key === "Backspace") {
+            if (s.cursor > 0) {
+                s.cursor--;
+                deleteSelectedAndMoveCursorToStart(s);
+                remove(s, s.cursor, 1);
+            }
+        } else if (key === "ArrowLeft") {
+            if (s.inCommandMode) {
+                moveToStartOfLastWord(s);
+            } else {
+                s.cursor--;
+            }
+        } else if (key === "ArrowRight") {
+            if (s.inCommandMode) {
+                moveToEndOfThisWord(s);
+            } else {
+                s.cursor++;
+            }
+        } else if (key === "ArrowUp") {
+            moveUp(s);
+        } else if (key === "ArrowDown") {
+            moveDown(s);
+        } else if (key === "End") {
+            moveToNextNewline(s);
+        } else if (key === "Home") {
+            s.cursor--;
+            moveToLastNewline(s);
+            if (s.cursor !== 0) {
+                s.cursor++;
+            }
+        } else if (key === "Enter") {
+            insertAtCursor(s, "\n");
+            s.cursor++;
+        } else if (key === "Tab") {
+            insertAtCursor(s, "\t");
+            s.cursor++;
+        } else if (key === "Shift") {
+            if (!isRepeat) {
+                s.canStartSelecting = true;
+            }
+        } else if (key === "Escape") {
+            if (hasSelection(s)) {
+                clearSelection(s);
+            } 
+        }
+
+        const modified = lastModified !== s.modifiedAt;
+        if (modified) { 
+            // Typing a capital letter with Shift + key shouldn't start selecting words...
+            s.canStartSelecting = false;
+        }
+
+        if (s.canStartSelecting && s.cursor !== lastCursor) {
+            s.selectionAnchor = lastCursor;
+            s.canStartSelecting = false;
+            s.isSelecting = true;
+        }
+
+        if (s.isSelecting) {
+            s.selectionEnd = s.cursor;
+            s.selectionAnchorEnd = s.cursor;
+
+            const start = min(s.selectionAnchor, s.selectionAnchorEnd);
+            const end = max(s.selectionAnchor, s.selectionAnchorEnd);
+            s.selectionStart = start;
+            s.selectionEnd = end;
+        }
+
+        s.cursor = clamp(s.cursor, 0, s.buffer.length);
+    }
+}
+
+export function newTextEditorState(): TextEditorState {
+    return {
+        textAreaElement: null,
+        beingControlledBy: null,
+
+        currentKeyDown: "",
+        modifiedAt: 0,
+        cursor: 0,
+
+        selectionStart: -1,
+        selectionEnd: -1,
+        selectionAnchorEnd: -1,
+        selectionAnchor: -1,
+        canStartSelecting: false,
+        isSelecting: false,
+
+        isShifting: false,
+        inCommandMode: false,
+
+        isFinding: false,
+        wasFinding: false,
+        finderTextEditorState: null,
+        allFindResults: [],
+        currentFindResultIdx: 0,
+        cursorBeforeFind: -1,
+
+        undoBuffer: [],
+        // quite important for this to start at -1 actually.
+        undoBufferIdx: -1,
+        isUndoing: false,
+
+        buffer: []
+    }
+}
+
+function newTextArea() {
+    return document.createElement("textarea");
+}
+
+function getChar(e: KeyboardEvent) {
+    let char = "";
+    for (const c of e.key) {
+        if (char !== "") {
+            return "";
+        }
+        char = c;
+    }
+    return char;
+}
+
+function lPad(str: string, num: number): string {
+    if (str.length > num) {
+        return str;
+    }
+
+    return " ".repeat(num - str.length) + str;
+}
+
+function isEqual(buffer: string[], query: string[], pos: number): boolean {
+    if (query.length === 0) {
+        // this is a hot take.
+        return false;
+    }
+
+    if (buffer.length < pos + query.length) {
+        return false;
+    }
+
+    for (let i = 0; i < query.length; i++) {
+        if (buffer[i + pos] !== query[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function resetTextEditorState(s: TextEditorState) {
+    s.buffer.length = 0;
+    s.undoBuffer.length = 0;
+    s.undoBufferIdx = -1;
+    s.cursor = 0;
+    s.modifiedAt = 0;
+}
+
+export function imTextEditor(s: TextEditorState, isSingleLine = false) {
+    let textArea: HTMLTextAreaElement | undefined;
+    let shouldFocusTextArea = false;
+    let findResultIdx = 0;
+
+    if (imBeginMemoComputation()
+        .val(s.finderTextEditorState?.modifiedAt)
+        .changed()
+    ) {
+        let numResults = 0;
+        const queryBuffer = s.finderTextEditorState?.buffer;
+        if (queryBuffer && queryBuffer.length > 0) {
+            for (let i = 0; i < s.buffer.length; i++) {
+                if (isEqual(s.buffer, queryBuffer, i)) {
+                    if (numResults === s.allFindResults.length) {
+                        s.allFindResults.push({ start: 0, end: 0 });
+                    }
+
+                    s.allFindResults[numResults].start = i;
+                    s.allFindResults[numResults].end = i + queryBuffer.length - 1;   // inclusive range
+                    numResults++;
+                }
+            }
+        }
+        // we do a little object pooling
+        s.allFindResults.length = numResults;
+        if (numResults > 0) {
+            // move cursor to the result that is closest to it
+
+            let minIdx = 0;
+            let minDistance = Math.abs(s.allFindResults[0].start - s.cursorBeforeFind);
+            for (let i = 1; i < s.allFindResults.length; i++) {
+                const res = s.allFindResults[i];
+                const dist = Math.abs(res.start - s.cursorBeforeFind);
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    minIdx = i;
+                }
+            }
+
+            s.currentFindResultIdx = minIdx;
+            s.cursor = s.allFindResults[minIdx].start;
+        }
+    } endMemo();
+
+    let keyDownEvent: HTMLElementEventMap["keydown"] | null = null;
+    let keyUpEvent: HTMLElementEventMap["keyup"] | null = null;
+    let wasFinding = s.isFinding;
+
+    imBeginLayout(COL | FLEX); {
+        imBeginLayout(CODE | RELATIVE | FLEX); {
+            let rerenderedTextEditor = false;
+            let renderedCursor = false;
+            let currentSpan: HTMLSpanElement | undefined;
+
+            let i = 0;
+            let line = 0;
+
+            let maxLine = line + 30;
+            const numDigits = Math.ceil(Math.log10(maxLine));
+
+            const mouse = getMouse();
+            if (
+                imBeginMemo()
+                    .objectVals(s)
+                    .val(getHoveredElement())
+                    .val(s.finderTextEditorState?.modifiedAt)
+                    .objectVals(mouse)
+                    .changed()
+            ) {
+                rerenderedTextEditor = true;
+
+                imBeginList();
+                while (i <= s.buffer.length) {
+                    nextListRoot();
+
+                    imBeginLayout(CODE | PRE); {
+                        const lineSb = imSb();
+                        if (imBeginMemoComputation().val(line).val(numDigits).changed()) {
+                            lineSb.clear();
+                            if (!isSingleLine) {
+                                lineSb.s(lPad("" + line, numDigits));
+                                lineSb.s(" | ")
+                            }
+                        } endMemo();
+
+                        const lineStr = lineSb.toString();
+                        imBeginSpan(); {
+                            setInnerText(lineStr);
+                        } imEnd();
+
+                        let moveToEndOfLine = false;
+                        if (elementWasClicked()) {
+                            moveToEndOfLine = true;
+                        }
+
+                        imBeginList();
+                        while (i <= s.buffer.length) {
+                            const actualC = (i < s.buffer.length) ? s.buffer[i] : " ";
+                            const ws = isWhitespace(actualC);
+                            const isTab = actualC === "\t";
+                            const c = ws ? (isTab ? "...." : ".") : actualC;
+
+                            nextListRoot();
+
+                            const root = imBeginSpan(); {
+                                if (imInit()) {
+                                    setStyle("display", "inline-block");
+                                }
+
+                                let isEscapeSequence = false;
+                                if (actualC == "\n" && isSingleLine) {
+                                    root.text("\\n");
+                                    isEscapeSequence = true;
+                                } else {
+                                    root.text(c);
+                                }
+
+                                if (elementWasClicked()) {
+                                    // move cursor to current line
+                                    s.cursor = i;
+                                    shouldFocusTextArea = true;
+                                }
+                                deferClickEventToParent();
+
+
+                                const isSelected = s.selectionStart <= i && i <= s.selectionEnd;
+                                const isCursor = i === s.cursor;
+                                if (imBeginMemoComputation().val(isSelected || isCursor).changed()) {
+                                    setClass(cnApp.inverted, isSelected || isCursor);
+                                } endMemo();
+
+                                // Make sure we're always looking at the latest find result
+                                let isAFindResultToken = false;
+                                if (findResultIdx < s.allFindResults.length) {
+                                    let result = s.allFindResults[findResultIdx];
+                                    while (result.end < i) {
+                                        findResultIdx++;
+                                        if (findResultIdx < s.allFindResults.length) {
+                                            result = s.allFindResults[findResultIdx];
+                                        } else {
+                                            break;
+                                        }
+                                    }
+
+                                    if (result.start <= i && i <= result.end) {
+                                        isAFindResultToken = true;
+                                    }
+                                }
+
+                                if (imBeginMemoComputation()
+                                    .val(ws)
+                                    .val(isEscapeSequence)
+                                    .changed()
+                                ) {
+                                    const color = isEscapeSequence ? "#FFA" :
+                                        ws ? "#0000" :
+                                            "";
+                                    setStyle("color", color);
+                                } endMemo();
+
+                                if (imBeginMemoComputation()
+                                    .val(isAFindResultToken)
+                                    .changed()
+                                ) {
+                                    setStyle("backgroundColor", isAFindResultToken ? "#00F" : "");
+                                } endMemo();
+                            } imEnd();
+
+                            if (!renderedCursor && s.cursor === i) {
+                                renderedCursor = true;
+                                currentSpan = root.root;
+                            }
+
+                            i++;
+
+                            if (actualC === "\n" && !isSingleLine) {
+                                line++;
+                                break;
+                            }
+                        }
+                        imEndList();
+
+                        if (moveToEndOfLine) {
+                            // Don't defer event for the line.
+
+                            // move cursor to current line
+                            s.cursor = i - 1;
+                            shouldFocusTextArea = true;
+                        }
+
+                        const wasHovered = elementWasHovered();
+                        if (imBeginMemoComputation()
+                            .val(wasHovered)
+                            .changed()
+                        ) {
+                            setStyle("backgroundColor", wasHovered ? cssVars.fg2 : "")
+                            setStyle("color", wasHovered ? cssVars.bg : "")
+                        } endMemo();
+                    } imEnd();
+                }
+                imEndList();
+            } endMemo();
+
+            // using an input to allow hooking into the browser's existing focusing mechanisms.
+            const input = imBeginEl(newTextArea); {
+                textArea = input.root;
+                s.textAreaElement = textArea;
+
+                if (s.beingControlledBy && document.activeElement === textArea) {
+                    s.beingControlledBy.focus();
+                }
+
+                if (imInit()) {
+                    setStyle("all", "unset");
+                    setStyle("width", "10px");
+                    setStyle("height", "1em");
+                    setStyle("position", "absolute");
+                }
+
+                setStyle("border", document.activeElement === textArea ? "1px solid red" : "");
+
+                if (
+                    imBeginMemoComputation().val(currentSpan).changed()
+                    && rerenderedTextEditor
+                    && currentSpan
+                ) {
+                    setStyle("top", currentSpan.offsetTop + "px")
+                    setStyle("left", currentSpan.offsetLeft + "px")
+                } endMemo();
+
+                // Handle events
+                keyDownEvent = imOn("keydown");
+                keyUpEvent = imOn("keyup");
+
+                if (s.beingControlledBy === null) {
+                    handleTextEditorEvents(s, keyDownEvent, keyUpEvent);
+                }
+            } imEnd();
+
+            if (elementWasClicked() || shouldFocusTextArea) {
+                textArea.focus();
+            }
+        } imEnd();
+
+
+        imBeginList(); 
+        if (nextListRoot() && s.isFinding) {
+            imBeginLayout(ROW | GAP); {
+                textSpan("Find: ");
+
+                // This recursive call is going to cause bugs, I can alread tell...
+                // Not a good reason to avoid it tho.
+                const findState = imState(newTextEditorState);
+                s.finderTextEditorState = findState;
+                findState.beingControlledBy = textArea;
+
+                if (imBeginMemoComputation().val(s.isFinding).changed()) {
+                    if (s.isFinding) {
+                        s.cursorBeforeFind = s.cursor;
+                        resetTextEditorState(findState);
+                    }
+                } endMemo();
+
+                imTextEditor(findState, false);
+            } imEnd();
+        } imEndList();
+
+        imBeginLayout(); {
+            textSpan(s.buffer.length + " chars | " + s.undoBuffer.length + " in undo buffer ");
+        } imEnd();
+    } imEnd();
+}
