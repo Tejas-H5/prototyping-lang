@@ -1,7 +1,8 @@
 import { renderApp, } from './app.ts';
+import { textSpan } from './layout.ts';
 import "./styling.ts";
 import { cssVars } from './styling.ts';
-import { beginFrame, deltaTimeSeconds, endFrame, imBeginDiv, imEnd, imInit, initializeDomRootAnimiationLoop, initializeDomUtils, initializeImEvents, setStyle } from './utils/im-dom-utils.ts';
+import { beginFrame, deltaTimeSeconds, elementHasMouseClick, endFrame, imBeginDiv, imBeginMemoComputation, imBeginSpan, imEnd, imEndMemo, imInit, initializeDomRootAnimiationLoop, initializeDomUtils, initializeImEvents, setInnerText, setStyle } from './utils/im-dom-utils.ts';
 
 initializeDomUtils();
 initializeImEvents();
@@ -15,6 +16,12 @@ let timeSpentRendering = 0;
 let timeSpentRenderingPerFrame = 0;
 let renders = 0;
 let renderHz = 0;
+
+// Try to infer the 'baseline' frequency, so we know when we're lagging.
+let baselineFrameMs = 100;
+let baselineFrameMsFreq = 0;
+let nextBaseline = 100;
+let nextFreq = 0;
 
 function renderRoot() {
     const t0 = performance.now();
@@ -42,14 +49,57 @@ function renderRoot() {
             setStyle("zIndex", "1000000");
             setStyle("backgroundColor", cssVars.bg);
             setStyle("borderRadius", "1000px");
+            setStyle("opacity", "0.5");
             // setStyle("backgroundColor", cssVars.fg);
             // setStyle("width", "20px");
             // setStyle("height", "20px");
             // setStyle("transformOrigin", "center");
         }
 
-        r.text(screenHz + "hz screen, " + renderHz + "hz code");
+        // r.text(screenHz + "hz screen, " + renderHz + "hz code");
+        const frameMs = Math.round(1000 * frameTime);
+        const renderMs = Math.round(1000 * timeSpentRenderingPerFrame);
+
+        // Compute our baseline framerate based on the frames we see.
+        // Lock it down once we've seen the same framerate for long enough.
+        const baselineLocked = baselineFrameMsFreq > 240
+        if (!baselineLocked) {
+            if (frameMs === nextBaseline) {
+                if (nextFreq < Number.MAX_SAFE_INTEGER) {
+                    nextFreq++;
+                }
+            } else if (frameMs === baselineFrameMs) {
+                if (baselineFrameMsFreq < Number.MAX_SAFE_INTEGER) {
+                    baselineFrameMsFreq++;
+                }
+            } else {
+                nextBaseline = frameMs;
+                nextFreq = 1;
+            }
+
+            if (nextFreq > baselineFrameMsFreq) {
+                baselineFrameMs = nextBaseline;
+                baselineFrameMsFreq = nextFreq;
+                nextBaseline = 100;
+                nextFreq = 0;
+            }
+        }
+
+        textSpan(baselineLocked ? (baselineFrameMs + "ms baseline, ") : "computing baseline...");
+
+        textSpan(frameMs + "ms frame, ");
+
+        imBeginSpan(); {
+            if (imBeginMemoComputation().val(renderMs).changed()) {
+                setStyle("color", renderMs / baselineFrameMs > 0.5 ? "red" : "");
+            } imEndMemo();
+            setInnerText(renderMs + "ms render");
+        } imEnd();
         // setStyle("transform", "rotate(" + angle + "deg)");
+
+        if (elementHasMouseClick()) {
+            baselineFrameMsFreq = 0;
+        }
 
     } imEnd();
 

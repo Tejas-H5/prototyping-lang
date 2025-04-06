@@ -1738,7 +1738,9 @@ export type MouseState = {
 
     clickedElement: object | null;
     lastClickedElement: object | null;
+    lastClickedElementOriginal: object | null;
     hoverElement: object | null;
+    hoverElementOriginal: object | null;
 };
 
 const mouse: MouseState = {
@@ -1762,7 +1764,9 @@ const mouse: MouseState = {
 
     clickedElement: null,
     lastClickedElement: null,
+    lastClickedElementOriginal: null,
     hoverElement: null,
+    hoverElementOriginal: null,
 };
 
 
@@ -1777,7 +1781,7 @@ export function getKeys() {
 
 
 // I cant fking believe this shit works, lol
-export function elementWasClicked() {
+export function elementHasMouseClick() {
     const mouse = getMouse();
     const r = getCurrentRoot();
     if (r.root === mouse.clickedElement) {
@@ -1786,12 +1790,21 @@ export function elementWasClicked() {
     return  false;
 }
 
-export function elementWasLastClicked() {
+export function elementHasMouseDown(
+    // Do we care that this element was initially clicked?
+    // Set to false if you want to detect when an element drags their mouse over this element.
+    hadClick = true
+) {
     const r = getCurrentRoot();
-    return r.root === mouse.lastClickedElement;
+
+    if (hadClick) {
+        return r.root === mouse.lastClickedElement;
+    }
+
+    return mouse.leftMouseButton && elementHasMouseHover();
 }
 
-export function elementWasHovered() {
+export function elementHasMouseHover() {
     const r = getCurrentRoot();
     return r.root === mouse.hoverElement;
 }
@@ -1819,6 +1832,7 @@ export function deferClickEventToParent() {
 function setClickedElement(el: object | null) {
     mouse.clickedElement = el;
     mouse.lastClickedElement = el;
+    mouse.lastClickedElementOriginal = el;
 }
 
 export function initializeImEvents() {
@@ -1841,10 +1855,12 @@ export function initializeImEvents() {
         mouse.dX = mouse.X - mouse.lastX;
         mouse.dY = mouse.Y - mouse.lastY;
         mouse.hoverElement = e.target;
+        mouse.hoverElementOriginal = e.target;
 
     });
     document.addEventListener("mouseenter", (e) => {
         mouse.hoverElement = e.target;
+        mouse.hoverElementOriginal = e.target;
     });
     document.addEventListener("mouseup", (e) => {
         if (e.button === 0) {
@@ -1858,6 +1874,7 @@ export function initializeImEvents() {
     document.addEventListener("wheel", (e) => {
         mouse.scrollY += e.deltaY;
         mouse.hoverElement = e.target;
+        mouse.hoverElementOriginal = e.target;
         e.preventDefault();
     });
     document.addEventListener("keydown", (e) => {
@@ -1889,6 +1906,7 @@ export function initializeImEvents() {
         mouse.middleMouseButton = false;
         mouse.rightMouseButton = false;
         mouse.lastClickedElement = null;
+        mouse.lastClickedElementOriginal = null;
         mouse.clickedElement = null;
         mouse.scrollY = 0;
         keys.shiftsDown = 0;
@@ -1925,7 +1943,9 @@ export function imPreventScrollEventPropagation() {
 }
 
 export function beginFrame() {
-    // No-op, more for consistency and code aesthetics.
+    // persistent things need to be reset every frame, for bubling order to remain consistent per render
+    mouse.lastClickedElement = mouse.lastClickedElementOriginal;
+    mouse.hoverElement = mouse.hoverElementOriginal;
 }
 
 export function endFrame() {

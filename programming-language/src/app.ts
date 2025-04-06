@@ -58,7 +58,7 @@ import { GlobalContext, GlobalState, newGlobalContext, saveState, startDebugging
 import "./styling.ts";
 import { cnApp, cssVars, getCurrentTheme } from './styling.ts';
 import { imTextEditor, loadText, newTextEditorState } from './text-editor.ts';
-import { abortListAndRewindUiStack, assert, cn, deferClickEventToParent, deltaTimeSeconds, elementWasClicked, elementWasHovered, elementWasLastClicked, endFrame, getCurrentRoot, getKeys, getMouse, HORIZONTAL, imBeginDiv, imBeginEl, imBeginList, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, newCssBuilder, nextListRoot, Ref, scrollIntoViewVH, scrollIntoViewRect, setAttributes, setClass, setInnerText, setStyle, SizeState, UIRoot, VERTICAL } from './utils/im-dom-utils.ts';
+import { abortListAndRewindUiStack, assert, cn, deferClickEventToParent, deltaTimeSeconds, elementHasMouseClick, elementHasMouseHover, elementHasMouseDown, endFrame, getCurrentRoot, getKeys, getMouse, HORIZONTAL, imBeginDiv, imBeginEl, imBeginList, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, newCssBuilder, nextListRoot, Ref, scrollIntoViewVH, scrollIntoViewRect, setAttributes, setClass, setInnerText, setStyle, SizeState, UIRoot, VERTICAL } from './utils/im-dom-utils.ts';
 import { clamp, inverseLerp, lerp, max, min } from './utils/math-utils.ts';
 import { getSliceValue } from './utils/matrix-math.ts';
 import { getLineBeforePos, getLineEndPos, getLineStartPos } from './utils/text-utils.ts';
@@ -501,7 +501,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
         const parseResult = ctx.lastParseResult;
 
         beginExpandableSectionHeading("Parser output", ctx.state.collapseParserOutput); {
-            if (elementWasClicked()) {
+            if (elementHasMouseClick()) {
                 ctx.state.collapseParserOutput = !ctx.state.collapseParserOutput;
             }
         } imEnd();
@@ -515,7 +515,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
         const message = imRef<string>();
 
         beginExpandableSectionHeading("Instruction generation - output", ctx.state.collapseInterpreterPass1Output); {
-            if (elementWasClicked()) {
+            if (elementHasMouseClick()) {
                 ctx.state.collapseInterpreterPass1Output = !ctx.state.collapseInterpreterPass1Output;
             }
         } imEnd();
@@ -546,7 +546,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
 
                             beginButton(); {
                                 textSpan("Start debugging");
-                                if (elementWasClicked()) {
+                                if (elementHasMouseClick()) {
                                     startDebugging(ctx);
                                 }
                             } imEnd();
@@ -584,7 +584,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
                 beginButton(ctx.state.autorun); {
                     textSpan("Autorun");
 
-                    if (elementWasClicked()) {
+                    if (elementHasMouseClick()) {
                         ctx.state.autorun = !ctx.state.autorun
                     }
                 } imEnd();
@@ -593,7 +593,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
             imBeginLayout(FLEX); {
                 beginButton(); {
                     textSpan("Start debugging");
-                    if (elementWasClicked()) {
+                    if (elementHasMouseClick()) {
                         startDebugging(ctx);
                     }
                 } imEnd();
@@ -630,7 +630,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
                     beginButton(); {
                         textSpan(eg.name);
 
-                        if (elementWasClicked()) {
+                        if (elementHasMouseClick()) {
                             ctx.state.text = eg.code.trim();
                             loaded = false;
                         }
@@ -894,7 +894,7 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
             imBeginLayout(FLEX); {
                 beginButton(); {
                     textSpan("Stop debugging");
-                    if (elementWasClicked()) {
+                    if (elementHasMouseClick()) {
                         ctx.isDebugging = false;
                     }
                 } imEnd();
@@ -904,7 +904,7 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
                 beginButton(); {
                     textSpan("Step");
 
-                    if (elementWasClicked()) {
+                    if (elementHasMouseClick()) {
                         const result = stepProgram(interpretResult);
                         if (!result) {
                             message.val = "Program complete! you can stop debugging now.";
@@ -916,7 +916,7 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
             imBeginLayout(FLEX); {
                 beginButton(); {
                     textSpan("Reset");
-                    if (elementWasClicked()) {
+                    if (elementHasMouseClick()) {
                         assert(ctx.lastParseResult);
                         ctx.reinterpretSignal = true;
                         message.val = "";
@@ -1166,7 +1166,7 @@ function renderSliderBody(
         } imEnd();
 
         const mouse = getMouse();
-        if (mouse.leftMouseButton && elementWasLastClicked()) {
+        if (mouse.leftMouseButton && elementHasMouseDown()) {
             const rect = getCurrentRoot().root.getBoundingClientRect();
             const x0 = rect.left + sliderHandleSize / 2;
             const x1 = rect.right - sliderHandleSize / 2;
@@ -1291,7 +1291,7 @@ function imPlotZoomingAndPanning(
 
     const mouse = getMouse();
 
-    if (mouse.leftMouseButton && elementWasLastClicked()) {
+    if (mouse.leftMouseButton && elementHasMouseDown()) {
         const dxPlot = getPlotLength(plotState, mouse.dX);
         const dyPlot = getPlotLength(plotState, mouse.dY);
 
@@ -1524,12 +1524,6 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
                     beginCodeBlock(0); {
                         textSpan(
                             expressionToString(graph.expr)
-                        )
-                    } imEnd();
-
-                    beginCodeBlock(0); {
-                        textSpan(
-                            JSON.stringify(Object.fromEntries(graph.graph)),
                         )
                     } imEnd();
 
@@ -1870,12 +1864,12 @@ function maximizeItemButton(item: object) {
         if (isMaximized) {
             if (
                 keys.escPressed ||
-                (elementWasClicked())
+                (elementHasMouseClick())
             ) {
                 currentMaximizedItem = null;
             }
         } else {
-            if (elementWasClicked()) {
+            if (elementHasMouseClick()) {
                 currentMaximizedItem = item;
             }
         }
@@ -1903,9 +1897,9 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                 const [canvasRoot, ctx] = beginCanvasRenderingContext2D();
                 const canvas = canvasRoot.root; {
                     const mouse = getMouse();
-                    const canZoom = elementWasHovered() && (isShiftPressed() || isMaximized);
+                    const canZoom = elementHasMouseHover() && (isShiftPressed() || isMaximized);
 
-                    if (elementWasHovered() && (mouse.scrollY !== 0 && !canZoom)) {
+                    if (elementHasMouseHover() && (mouse.scrollY !== 0 && !canZoom)) {
                         shiftScrollToZoomVal.val = 1;
                     }
 

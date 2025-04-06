@@ -3,7 +3,7 @@ import "./styling.ts";
 import { cnApp, cssVars } from "./styling.ts";
 import { copyToClipboard, readFromClipboard } from "./utils/clipboard.ts";
 
-import { deferClickEventToParent, elementWasClicked, elementWasHovered, getHoveredElement, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imOn, imSb, imState, nextListRoot, setClass, setInnerText, setStyle } from './utils/im-dom-utils.ts';
+import { deferClickEventToParent, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, getHoveredElement, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imOn, imSb, imState, nextListRoot, setClass, setInnerText, setStyle } from './utils/im-dom-utils.ts';
 import { clamp, max, min } from "./utils/math-utils.ts";
 import { isIndexInSliceBounds } from "./utils/matrix-math.ts";
 import { isWhitespace } from "./utils/text-utils.ts";
@@ -83,6 +83,9 @@ function clearSelection(s: TextEditorState) {
 
     s.selectionStart = -1;
     s.selectionEnd = -1;
+
+    s.isSelecting = false;
+    s.canStartSelecting = false;
 }
 
 function moveUp(s: TextEditorState) {
@@ -202,6 +205,7 @@ export type TextEditorState = {
     numLines: number;
     modifiedAt: number;
     cursor: number;
+    lastSelectCursor: number;
     hasFocus: boolean;
 
     currentKeyDown: string;
@@ -258,6 +262,7 @@ function remove(s: TextEditorState, pos: number, count: number) {
 
 function handleTextEditorEvents(
     s: TextEditorState,
+    canFind: boolean,
     keyDownEvent: HTMLElementEventMap["keydown"] | null,
     keyUpEvent: HTMLElementEventMap["keyup"] | null,
 ) {
@@ -323,7 +328,7 @@ function handleTextEditorEvents(
         }
 
         if (!handled) {
-            handleTextEditorEvents(s.finderTextEditorState, keyDownEvent, keyUpEvent);
+            handleTextEditorEvents(s.finderTextEditorState, canFind, keyDownEvent, keyUpEvent);
         }
         return;
     }
@@ -339,7 +344,6 @@ function handleTextEditorEvents(
         const c = getChar(keyDownEvent);
 
         const lastModified = s.modifiedAt;
-        const lastCursor = s.cursor;
 
         if (c) {
 
@@ -348,7 +352,9 @@ function handleTextEditorEvents(
                 s.cursor++;
             } else {
                 if (keyLower === "f") {
-                    s.isFinding = true;
+                    if (canFind) {
+                        s.isFinding = true;
+                    }
                 } else if (keyLower === "z" || keyLower === "y") {
                     let shouldUndo = false;
                     let shouldRedo = false;
@@ -416,12 +422,21 @@ function handleTextEditorEvents(
                 }
             }
         } else if (key === "Backspace") {
-            if (s.cursor > 0) {
-                s.cursor--;
-            }
+            if (hasSelection(s)) {
+                deleteSelectedAndMoveCursorToStart(s);
+            } else if (s.inCommandMode) {
+                const cursor = s.cursor;
+                moveToStartOfLastWord(s);
+                s.selectionStart = s.cursor;
+                s.selectionEnd = cursor;
+                deleteSelectedAndMoveCursorToStart(s);
+            } else {
+                if (s.cursor > 0) {
+                    s.cursor--;
+                }
 
-            deleteSelectedAndMoveCursorToStart(s);
-            remove(s, s.cursor, 1);
+                remove(s, s.cursor, 1);
+            }
         } else if (key === "ArrowLeft") {
             if (s.inCommandMode) {
                 moveToStartOfLastWord(s);
@@ -436,15 +451,31 @@ function handleTextEditorEvents(
             }
         } else if (key === "ArrowUp") {
             moveUp(s);
+        } else if (key === "PageUp") {
+            for (let i = 0; i < 20; i++) {
+                moveUp(s);
+            }
         } else if (key === "ArrowDown") {
             moveDown(s);
+        } else if (key === "PageDown") {
+            for (let i = 0; i < 20; i++) {
+                moveDown(s);
+            }
         } else if (key === "End") {
-            moveToNextNewline(s);
+            if (s.inCommandMode) {
+                s.cursor = s.buffer.length - 1;
+            } else {
+                moveToNextNewline(s);
+            }
         } else if (key === "Home") {
-            s.cursor--;
-            moveToLastNewline(s);
-            if (s.cursor !== 0) {
-                s.cursor++;
+            if (s.inCommandMode) {
+                s.cursor = 0;
+            } else {
+                s.cursor--;
+                moveToLastNewline(s);
+                if (s.cursor !== 0) {
+                    s.cursor++;
+                }
             }
         } else if (key === "Enter") {
             insertAtCursor(s, "\n");
@@ -468,24 +499,27 @@ function handleTextEditorEvents(
             s.canStartSelecting = false;
         }
 
-        if (s.canStartSelecting && s.cursor !== lastCursor) {
-            s.selectionAnchor = lastCursor;
-
-            s.canStartSelecting = false;
-            s.isSelecting = true;
-        }
-
-        if (s.isSelecting) {
-            s.selectionEnd = s.cursor;
-            s.selectionAnchorEnd = s.cursor;
-
-            const start = min(s.selectionAnchor, s.selectionAnchorEnd);
-            const end = max(s.selectionAnchor, s.selectionAnchorEnd);
-            s.selectionStart = start;
-            s.selectionEnd = end;
-        }
-
         s.cursor = clamp(s.cursor, 0, s.buffer.length);
+    }
+
+    // Mouse events can move the cursor too!
+    if (!s.isSelecting && s.canStartSelecting && s.cursor !== s.lastSelectCursor) {
+        s.selectionAnchor = s.cursor;
+        s.lastSelectCursor = s.cursor;
+        s.canStartSelecting = false;
+        s.isSelecting = true;
+    }
+
+    if (s.isSelecting) {
+        s.selectionEnd = s.cursor;
+        s.selectionAnchorEnd = s.cursor;
+
+        const start = min(s.selectionAnchor, s.selectionAnchorEnd);
+        const end = max(s.selectionAnchor, s.selectionAnchorEnd);
+        s.selectionStart = start;
+        s.selectionEnd = end;
+
+        s.lastSelectCursor = s.cursor;
     }
 }
 
@@ -501,6 +535,7 @@ export function newTextEditorState(): TextEditorState {
         currentKeyDown: "",
         modifiedAt: 0,
         cursor: 0,
+        lastSelectCursor: 0,
 
         selectionStart: -1,
         selectionEnd: -1,
@@ -590,12 +625,19 @@ export type TextEditorInlineHint = {
     component: (line: number) => void;
 }
 
+// This ting is no neovim, and it chokes on any reasonably large files.
+// Still, it lets us add custom inline hints and annotations on a per-line basis.
+// Also, we actually know where the cursor is, and can query the cursor's on-screen position, 
+// making stuff like autocomplete easier to implement.
+// TODO: mouse selection support.
 export function imTextEditor(s: TextEditorState, {
     isSingleLine = false,
+    canFind = true,
     annotations,
     inlineHints
 }: {
     isSingleLine?: boolean;
+    canFind?: boolean;
     // Currently can't think of a way to do this without callbacks.
     inlineHints?: (line: number) => void;
     annotations?: (line: number) => void;
@@ -730,12 +772,6 @@ export function imTextEditor(s: TextEditorState, {
 
                         imBeginLayout(FLEX); {
                             imBeginLayout(); {
-
-                                let moveCursorToEndOfLine = false;
-                                if (elementWasClicked()) {
-                                    moveCursorToEndOfLine = true;
-                                }
-
                                 let tokenIdx = 0;
 
                                 // Render individual tokens
@@ -762,12 +798,17 @@ export function imTextEditor(s: TextEditorState, {
                                             root.text(c);
                                         }
 
-                                        if (elementWasClicked()) {
-                                            // move cursor to current line
+                                        if (elementHasMouseDown(false) || elementHasMouseClick()) {
+                                            // move cursor to current token
                                             s.cursor = i;
+                                            s.canStartSelecting = true;
                                             shouldFocusTextArea = true;
+
+                                            if (elementHasMouseClick()) {
+                                                // single click, clear selection
+                                                clearSelection(s);
+                                            }
                                         }
-                                        deferClickEventToParent();
 
                                         const isSelected = s.selectionStart <= i && i <= s.selectionEnd;
                                         const isCursor = s.hasFocus && i === s.cursor;
@@ -839,31 +880,59 @@ export function imTextEditor(s: TextEditorState, {
                                 }
                                 imEndList();
 
-                                if (moveCursorToEndOfLine) {
-                                    // Don't defer event for the line.
-
-                                    // move cursor to current line
-                                    s.cursor = i - 1;
-                                    shouldFocusTextArea = true;
-                                }
-
-                                const wasHovered = elementWasHovered();
+                                const wasHovered = elementHasMouseHover();
                                 if (imBeginMemoComputation()
                                     .val(wasHovered)
                                     .changed()
                                 ) {
-                                    setStyle("backgroundColor", wasHovered ? cssVars.fg2 : "")
+                                    setStyle("backgroundColor", wasHovered ? cssVars.mg : "")
                                     setStyle("color", wasHovered ? cssVars.bg : "")
                                 } imEndMemo();
+
+                                if (elementHasMouseDown(false)) {
+                                    // Don't defer event for the line.
+
+                                    // move cursor to current line
+                                    s.cursor = i - 1;
+                                    s.canStartSelecting = true;
+                                    shouldFocusTextArea = true;
+
+                                    if (elementHasMouseClick()) {
+                                        // single click, clear selection
+                                        clearSelection(s);
+                                    }
+                                }
                             } imEnd();
 
                             // Just put the find modal directly under the cursor, so that it's always in view.
                             imBeginList();
                             if (nextListRoot() && lineHasCursor && s.isFinding && s.finderTextEditorState) {
-                                imBeginLayout(ROW | GAP); {
-                                    textSpan("Find: ");
-                                    imTextEditor(s.finderTextEditorState, { isSingleLine: true });
+                                imBeginLayout(COL); {
+                                    imBeginDiv(); {
+                                        if (imInit()) {
+                                            setStyle("height", "2px");
+                                            setStyle("backgroundColor", cssVars.fg)
+                                        }
+                                    } imEnd();
+
+                                    imBeginLayout(ROW | GAP); {
+                                        // NOTE: I am now thinking that this is better implemented at the user level...
+
+                                        textSpan("Find: ");
+                                        imTextEditor(s.finderTextEditorState, { 
+                                            isSingleLine: true,
+                                            canFind: false,
+                                        });
+                                    } imEnd();
+
+                                    imBeginDiv(); {
+                                        if (imInit()) {
+                                            setStyle("height", "2px");
+                                            setStyle("backgroundColor", cssVars.fg)
+                                        }
+                                    } imEnd();
                                 } imEnd();
+
                             } imEndList();
 
                             annotations?.(lineIdx - 1);
@@ -908,11 +977,11 @@ export function imTextEditor(s: TextEditorState, {
                 keyUpEvent = imOn("keyup");
 
                 if (s._beingControlledBy === null) {
-                    handleTextEditorEvents(s, keyDownEvent, keyUpEvent);
+                    handleTextEditorEvents(s, canFind, keyDownEvent, keyUpEvent);
                 }
             } imEnd();
 
-            if (elementWasClicked() || shouldFocusTextArea) {
+            if (elementHasMouseClick() || shouldFocusTextArea) {
                 textArea.focus();
             }
         } imEnd();
