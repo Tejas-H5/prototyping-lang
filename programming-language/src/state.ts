@@ -66,6 +66,7 @@ export function newGlobalContext(): GlobalContext {
 
         isDebugging: false,
         functionToDebug: null,
+        isSidebarCollapsed: false,
 
         lastParseResult: undefined, 
         lastInterpreterResult: undefined,
