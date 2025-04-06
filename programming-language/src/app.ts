@@ -1,10 +1,8 @@
-import { beginTextArea } from './components/text-area.ts';
 import {
     ABSOLUTE,
     ALIGN_CENTER,
     beginAbsoluteLayout,
     beginAspectRatio,
-    imBeginLayout,
     beginScrollContainer,
     BOLD,
     CODE,
@@ -14,6 +12,7 @@ import {
     GAP,
     H100,
     H3,
+    imBeginLayout,
     JUSTIFY_CENTER,
     NONE,
     OPAQUE,
@@ -21,13 +20,13 @@ import {
     PREWRAP,
     RELATIVE,
     ROW,
-    setStyleFlags,
     textSpan,
     TRANSLUCENT,
     TRANSPARENT,
+    verticalBar,
     W100
 } from './layout.ts';
-import { BuiltinFunction, evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getBuiltinFunctionsMap, getCurrentCallstack, interpret, newNumberResult, ProgramExecutionStep, ProgramGraphOutput, ProgramImageOutput, ProgramInterpretResult, ProgramPlotOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, programResultTypeStringFromType, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MAP, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING, UI_INPUT_SLIDER } from './program-interpreter.ts';
+import { evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getCurrentCallstack, interpret, newNumberResult, ProgramExecutionStep, ProgramGraphOutput, ProgramImageOutput, ProgramInterpretResult, ProgramPlotOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MAP, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING, UI_INPUT_SLIDER } from './program-interpreter.ts';
 import {
     binOpToString,
     binOpToOpString as binOpToSymbolString,
@@ -35,7 +34,6 @@ import {
     expressionToString,
     expressionTypeToString,
     parse,
-    parseIdentifierBackwardsFromPoint,
     ProgramExpression,
     ProgramParseResult,
     T_ASSIGNMENT,
@@ -59,7 +57,8 @@ import {
 import { GlobalContext, GlobalState, newGlobalContext, saveState, startDebugging } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars, getCurrentTheme } from './styling.ts';
-import { abortListAndRewindUiStack, assert, beginFrame, imBeginList, imBeginMemoComputation, cn, deferClickEventToParent, deltaTimeSeconds, imBeginDiv, imBeginEl, elementWasClicked, elementWasHovered, elementWasLastClicked, imEnd, endFrame, imEndList, endMemo, getCurrentRoot, getKeys, getMouse, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, newCssBuilder, nextListRoot, Ref, scrollIntoView, setAttributes, setClass, setInnerText, setStyle, SizeState, imBeginSpan, UIRoot } from './utils/im-dom-utils.ts';
+import { imTextEditor, loadText, newTextEditorState } from './text-editor.ts';
+import { abortListAndRewindUiStack, assert, cn, deferClickEventToParent, deltaTimeSeconds, elementWasClicked, elementWasHovered, elementWasLastClicked, endFrame, getCurrentRoot, getKeys, getMouse, HORIZONTAL, imBeginDiv, imBeginEl, imBeginList, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, newCssBuilder, nextListRoot, Ref, scrollIntoViewVH, scrollIntoViewRect, setAttributes, setClass, setInnerText, setStyle, SizeState, UIRoot, VERTICAL } from './utils/im-dom-utils.ts';
 import { clamp, inverseLerp, lerp, max, min } from './utils/math-utils.ts';
 import { getSliceValue } from './utils/matrix-math.ts';
 import { getLineBeforePos, getLineEndPos, getLineStartPos } from './utils/text-utils.ts';
@@ -440,7 +439,7 @@ function renderFunctionInstructions(interpretResult: ProgramInterpretResult, { n
             } imEnd();
 
             if (rCurrent) {
-                scrollIntoView(scrollContainer.root, rCurrent.root, 0.5, 0.5);
+                scrollIntoViewVH(scrollContainer.root, rCurrent.root, 0.5);
             }
         } imEnd();
     } imEnd();
@@ -485,7 +484,7 @@ function imFunctionName(fn: ProgramResultFunction | null) {
             }
             sb.s(")");
         }
-    } endMemo();
+    } imEndMemo();
 
     return sb.toString();
 }
@@ -633,6 +632,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
 
                         if (elementWasClicked()) {
                             ctx.state.text = eg.code.trim();
+                            loaded = false;
                         }
                     } imEnd();
                 }
@@ -699,158 +699,179 @@ function renderDiagnosticInfoOverlay(
     } imEndList();
 }
 
+
+let loaded = false;
 function renderAppCodeEditor({
     state,
     lastInterpreterResult,
     lastParseResult,
 }: GlobalContext) {
-    function onInput(newText: string) {
-        state.text = newText;
-    }
-
-    function onInputKeyDown(_e: KeyboardEvent, _textArea: HTMLTextAreaElement) {
-    }
-
-    const textAreaRef = imRef<HTMLTextAreaElement>();
-
-    beginScrollContainer(H100 | CODE | COL); {
+    const container = beginScrollContainer(H100 | CODE | COL).root; {
         if (imInit()) {
             setInset("10px");
             setClass(cnApp.bgFocus);
         }
 
+        const editorState = imState(newTextEditorState);
+        if (!loaded) {
+            loaded = true;
+            loadText(editorState, state.text);
+        }
+
+        if (imBeginMemoComputation()
+            .val(editorState.modifiedAt)
+            .changed()
+        ) {
+            state.text = editorState.buffer.join("");
+        } imEndMemo();
+
+        imTextEditor(editorState, {
+            annotations: () => {
+            }
+        });
+
+        if (imBeginMemoComputation()
+            .val(editorState._cursorSpan)
+            .changed()
+        ) {
+            if (editorState._cursorSpan) {
+                scrollIntoViewRect(container, editorState._cursorSpan, 
+                    0.25, 0.25, 0.75, 0.75);
+            }
+        } imEndMemo();
+
         // NOTE: WE are no longer going to bother wrestling with this hting, we will just make our own using divs and spans, as god intended.
-        beginTextArea({
-            text: state.text,
-            isEditing: true,
-            onInput,
-            onInputKeyDown,
-            textAreaRef,
-            config: {
-                useSpacesInsteadOfTabs: true,
-                tabStopSize: 4
-            },
-        }); {
-
-            let hasErrors = false;
-
-            // error overlays
-            imBeginList();
-            const errors = lastInterpreterResult?.errors;
-            if (nextListRoot() && errors && errors.length > 0) {
-                hasErrors = true;
-                renderDiagnosticInfoOverlay(state, textAreaRef, errors, "red");
-            }
-            // warning overlays
-            const warnings = lastParseResult?.warnings;
-            if (nextListRoot() && warnings && warnings.length > 0) {
-                hasErrors = true;
-                renderDiagnosticInfoOverlay(state, textAreaRef, warnings, "orange");
-            };
-            imEndList();
-
-            // autocomplete
-            // right now you can't interact with it - it is more so that I actually remember all the crap I've put into here
-            {
-                assert(textAreaRef.val);
-                const pos = textAreaRef.val.selectionStart;
-                const lastIdentifier = parseIdentifierBackwardsFromPoint(
-                    state.text,
-                    pos - 1
-                );
-
-                const results = imStateInline<BuiltinFunction[]>(() => []);
-                if (imBeginMemoComputation().val(lastIdentifier).changed()) {
-                    results.length = 0;
-                    if (lastIdentifier.length > 0) {
-                        const funcs = getBuiltinFunctionsMap();
-                        for (const [k, v] of funcs) {
-                            if (!filterString(k, lastIdentifier)) {
-                                continue;
-                            }
-                            results.push(v);
-                        }
-                    }
-                } endMemo();
-
-                imBeginList();
-                if (nextListRoot() && results.length > 0) {
-                    // TODO: when we do the AST editor, this will completely change, or be ripped out.
-
-                    imBeginLayout(PREWRAP | ABSOLUTE | CODE | TRANSPARENT); {
-                        if (imInit()) {
-                            setClass(cn.pointerEventsNone);
-                        }
-
-                        if (imInit()) {
-                            setStyleFlags(RELATIVE);
-                        }
-
-                        // this thing is going to have 0x0 dimensions, so it could have also been rect.bottom here.
-                        // also, top -> bottom coordinate system.
-                        const r = getCurrentRoot();
-                        const rect = r.root.getBoundingClientRect();
-                        const isAboveCenter = rect.top < window.innerHeight / 2;
-
-                        setStyle("width", "fit-content");
-                        setStyle("left", "0px");
-                        setStyle("right", "0px");
-                        setStyle("top", isAboveCenter ? "0px" : "");
-                        setStyle("bottom", !isAboveCenter ? "0em" : "");
-                        setStyle("border", "1px solid black");
-
-                        imBeginList();
-                        let i = 0;
-                        for (const v of results) {
-                            i++;
-                            if (i > 5) {
-                                break;
-                            }
-                            nextListRoot();
-
-                            imBeginLayout(CODE); {
-                                setStyle("border", "1px solid black");
-                                textSpan(v.name);
-                                textSpan("(");
-                                imBeginList();
-                                for (let i = 0; i < v.args.length; i++) {
-                                    const arg = v.args[i];
-                                    nextListRoot();
-                                    textSpan(arg.name);
-
-                                    imBeginList();
-                                    if (nextListRoot() && arg.optional) {
-                                        textSpan("?");
-                                    }
-                                    imEndList();
-
-                                    textSpan(":");
-
-                                    let type;
-                                    if (arg.type.length === 0) {
-                                        type = "any"
-                                    } else {
-                                        type = arg.type.map(programResultTypeStringFromType)
-                                            .join("|");
-                                    }
-                                    textSpan(type);
-
-                                    imBeginList();
-                                    if (nextListRoot() && i < v.args.length - 1) {
-                                        textSpan(", ");
-                                    }
-                                    imEndList();
-                                }
-                                imEndList();
-                                textSpan(")");
-                            } imEnd();
-                        }
-                        imEndList();
-                    } imEnd();
-                }
-            }
-            imEndList();
-        } imEnd();
+        // beginTextArea({
+        //     text: state.text,
+        //     isEditing: true,
+        //     onInput,
+        //     onInputKeyDown,
+        //     textAreaRef,
+        //     config: {
+        //         useSpacesInsteadOfTabs: true,
+        //         tabStopSize: 4
+        //     },
+        // }); {
+        //
+        //     let hasErrors = false;
+        //
+        //     // error overlays
+        //     imBeginList();
+        //     const errors = lastInterpreterResult?.errors;
+        //     if (nextListRoot() && errors && errors.length > 0) {
+        //         hasErrors = true;
+        //         renderDiagnosticInfoOverlay(state, textAreaRef, errors, "red");
+        //     }
+        //     // warning overlays
+        //     const warnings = lastParseResult?.warnings;
+        //     if (nextListRoot() && warnings && warnings.length > 0) {
+        //         hasErrors = true;
+        //         renderDiagnosticInfoOverlay(state, textAreaRef, warnings, "orange");
+        //     };
+        //     imEndList();
+        //
+        //     // autocomplete
+        //     // right now you can't interact with it - it is more so that I actually remember all the crap I've put into here
+        //     {
+        //         assert(textAreaRef.val);
+        //         const pos = textAreaRef.val.selectionStart;
+        //         const lastIdentifier = parseIdentifierBackwardsFromPoint(
+        //             state.text,
+        //             pos - 1
+        //         );
+        //
+        //         const results = imStateInline<BuiltinFunction[]>(() => []);
+        //         if (imBeginMemoComputation().val(lastIdentifier).changed()) {
+        //             results.length = 0;
+        //             if (lastIdentifier.length > 0) {
+        //                 const funcs = getBuiltinFunctionsMap();
+        //                 for (const [k, v] of funcs) {
+        //                     if (!filterString(k, lastIdentifier)) {
+        //                         continue;
+        //                     }
+        //                     results.push(v);
+        //                 }
+        //             }
+        //         } endMemo();
+        //
+        //         imBeginList();
+        //         if (nextListRoot() && results.length > 0) {
+        //             // TODO: when we do the AST editor, this will completely change, or be ripped out.
+        //
+        //             imBeginLayout(PREWRAP | ABSOLUTE | CODE | TRANSPARENT); {
+        //                 if (imInit()) {
+        //                     setClass(cn.pointerEventsNone);
+        //                 }
+        //
+        //                 if (imInit()) {
+        //                     setStyleFlags(RELATIVE);
+        //                 }
+        //
+        //                 // this thing is going to have 0x0 dimensions, so it could have also been rect.bottom here.
+        //                 // also, top -> bottom coordinate system.
+        //                 const r = getCurrentRoot();
+        //                 const rect = r.root.getBoundingClientRect();
+        //                 const isAboveCenter = rect.top < window.innerHeight / 2;
+        //
+        //                 setStyle("width", "fit-content");
+        //                 setStyle("left", "0px");
+        //                 setStyle("right", "0px");
+        //                 setStyle("top", isAboveCenter ? "0px" : "");
+        //                 setStyle("bottom", !isAboveCenter ? "0em" : "");
+        //                 setStyle("border", "1px solid black");
+        //
+        //                 imBeginList();
+        //                 let i = 0;
+        //                 for (const v of results) {
+        //                     i++;
+        //                     if (i > 5) {
+        //                         break;
+        //                     }
+        //                     nextListRoot();
+        //
+        //                     imBeginLayout(CODE); {
+        //                         setStyle("border", "1px solid black");
+        //                         textSpan(v.name);
+        //                         textSpan("(");
+        //                         imBeginList();
+        //                         for (let i = 0; i < v.args.length; i++) {
+        //                             const arg = v.args[i];
+        //                             nextListRoot();
+        //                             textSpan(arg.name);
+        //
+        //                             imBeginList();
+        //                             if (nextListRoot() && arg.optional) {
+        //                                 textSpan("?");
+        //                             }
+        //                             imEndList();
+        //
+        //                             textSpan(":");
+        //
+        //                             let type;
+        //                             if (arg.type.length === 0) {
+        //                                 type = "any"
+        //                             } else {
+        //                                 type = arg.type.map(programResultTypeStringFromType)
+        //                                     .join("|");
+        //                             }
+        //                             textSpan(type);
+        //
+        //                             imBeginList();
+        //                             if (nextListRoot() && i < v.args.length - 1) {
+        //                                 textSpan(", ");
+        //                             }
+        //                             imEndList();
+        //                         }
+        //                         imEndList();
+        //                         textSpan(")");
+        //                     } imEnd();
+        //                 }
+        //                 imEndList();
+        //             } imEnd();
+        //         }
+        //     }
+        //     imEndList();
+        // } imEnd();
     } imEnd();
 }
 
@@ -1050,14 +1071,6 @@ function newCanvasElement() {
     return document.createElement("canvas");
 }
 
-function verticalBar() {
-    imBeginDiv(); {
-        imInit() && setAttributes({
-            style: `width: 5px; background-color: ${cssVars.fg};`
-        });
-    } imEnd();
-}
-
 function newSliderState() {
     return {
         value: 0,
@@ -1096,7 +1109,7 @@ function renderSliderBody(
 
         if (imBeginMemoComputation().val(value).changed()) {
             s.value = value;
-        } endMemo();
+        } imEndMemo();
 
         s.value = clamp(s.value, s.start, s.end);
 
@@ -1147,7 +1160,7 @@ function renderSliderBody(
                 const t = inverseLerp(s.start, s.end, s.value);
                 const sliderPos = lerp(0, rect.width - sliderHandleSize, t);
                 setStyle("left", sliderPos + "px");
-            } endMemo();
+            } imEndMemo();
 
             deferClickEventToParent();
         } imEnd();
@@ -1202,7 +1215,7 @@ function renderImageOutput(image: ProgramImageOutput) {
                                 maxY = image.height * pixelSize;
 
                             recomputePlotExtent(plotState, minX, maxX, minY, maxY);
-                        } endMemo();
+                        } imEndMemo();
 
                         if (imBeginMemoComputation().val(image).objectVals(plotState).changed()) {
                             canvas.width = width;
@@ -1249,7 +1262,7 @@ function renderImageOutput(image: ProgramImageOutput) {
                             }
 
                             drawBoundary(ctx, width, height);
-                        } endMemo();
+                        } imEndMemo();
                     } imEnd();
                 } else {
                     nextListRoot();
@@ -1348,7 +1361,7 @@ function renderGraph(graph: ProgramGraphOutput) {
         }
 
         recomputePlotExtent(plotState, minX, maxX, minY, maxY);
-    } endMemo();
+    } imEndMemo();
 
     imBeginLayout(FLEX | RELATIVE | H100).root; {
         const { rect } = imTrackSize();
@@ -1424,7 +1437,7 @@ function renderGraph(graph: ProgramGraphOutput) {
                 }
 
                 drawBoundary(ctx, width, height);
-            } endMemo();
+            } imEndMemo();
         } imEnd();
     } imEnd();
 }
@@ -1460,7 +1473,7 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
                             if (imBeginMemoComputation().val(s.value).changed()) {
                                 ui.value = s.value;
                                 ctx.reinterpretSignal = true;
-                            } endMemo();
+                            } imEndMemo();
                         } imEnd();
                     } imEnd();
                 } break;
@@ -1572,7 +1585,7 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
                         const count = exprFrequencies.get(line.expr) ?? 0;
                         exprFrequencies.set(line.expr, count + 1);
                     }
-                } endMemo();
+                } imEndMemo();
 
                 imBeginList();
                 for (const [expr, count] of exprFrequencies) {
@@ -1841,7 +1854,7 @@ function beginMaximizeableContainer(item: object) {
             } else {
                 setInset("");
             }
-        } endMemo();
+        } imEndMemo();
     }
 
 }
@@ -1927,7 +1940,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                         }
 
                         recomputePlotExtent(plotState, minX, maxX, minY, maxY);
-                    } endMemo();
+                    } imEndMemo();
 
 
 
@@ -2095,7 +2108,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                         }
 
                         drawBoundary(ctx, width, height);
-                    } endMemo();
+                    } imEndMemo();
                 } imEnd();
 
                 if (shiftScrollToZoomVal.val !== null) {
@@ -2354,7 +2367,7 @@ export function renderApp() {
                     }
 
                     saveStateDebounced(ctx);
-                } endMemo();
+                } imEndMemo();
 
                 imBeginLayout(ROW | H100); {
                     imBeginLayout(FLEX); {

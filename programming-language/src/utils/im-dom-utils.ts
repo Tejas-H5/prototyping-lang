@@ -3,6 +3,7 @@
 // Right now, this one seems better, but the other one has a 'proven' track record of actually working.
 // But in a matter of hours/days, I was able to implement features in this framework that I wasn't able to for months/years in the other one...
 
+import { verticalBar } from "src/layout";
 import { CssColor, newColorFromHexOrUndefined } from "./colour";
 
 //////////
@@ -256,38 +257,95 @@ export function isEditingTextSomewhereInDocument(): boolean {
     return type === "textarea" || type === "input";
 }
 
+
+// Flags are kinda based. vastly reduces the need for boolean flags, and API is also nicer looking.
+export const HORIZONTAL = 1 << 1;
+export const VERTICAL = 1 << 2;
+export const START = 1 << 3;
+export const END = 1 << 4;
+
 /**
  * Scrolls {@link scrollParent} to bring scrollTo into view.
  * {@link scrollToRelativeOffset} specifies where to to scroll to. 0 = bring it to the top of the scroll container, 1 = bring it to the bottom
  */
-export function scrollIntoView(
+export function scrollIntoViewVH(
     scrollParent: HTMLElement,
     scrollTo: HTMLElement,
-    scrollToRelativeOffset: number,
-    scrollToItemOffset: number,
-    horizontal = false,
+    verticalOffset: number | null = null,
+    horizontalOffset: number | null = null,
 ) {
-    if (horizontal) {
-        // NOTE: this is a copy-paste from below
-
-        const scrollOffset = scrollToRelativeOffset * scrollParent.offsetWidth;
-        const elementWidthOffset = scrollToItemOffset * scrollTo.getBoundingClientRect().width;
+    if (horizontalOffset !== null) {
+        const scrollOffset = horizontalOffset * scrollParent.offsetWidth;
+        const elementWidthOffset = horizontalOffset * scrollTo.getBoundingClientRect().width;
 
         // offsetLeft is relative to the document, not the scroll parent. lmao
         const scrollToElOffsetLeft = scrollTo.offsetLeft - scrollParent.offsetLeft;
 
         scrollParent.scrollLeft = scrollToElOffsetLeft - scrollOffset + elementWidthOffset;
-
-        return;
     }
 
-    const scrollOffset = scrollToRelativeOffset * scrollParent.offsetHeight;
-    const elementHeightOffset = scrollToItemOffset * scrollTo.getBoundingClientRect().height;
+    if (verticalOffset !== null) {
+        // NOTE: just a copy pate from above
+        
+        const scrollOffset = verticalOffset * scrollParent.offsetHeight;
+        const elementHeightOffset = verticalOffset * scrollTo.getBoundingClientRect().height;
 
-    // offsetTop is relative to the document, not the scroll parent. lmao
-    const scrollToElOffsetTop = scrollTo.offsetTop - scrollParent.offsetTop;
+        // offsetTop is relative to the document, not the scroll parent. lmao
+        const scrollToElOffsetTop = scrollTo.offsetTop - scrollParent.offsetTop;
 
-    scrollParent.scrollTop = scrollToElOffsetTop - scrollOffset + elementHeightOffset;
+        scrollParent.scrollTop = scrollToElOffsetTop - scrollOffset + elementHeightOffset;
+    }
+}
+
+export function scrollIntoViewRect(
+    scrollParent: HTMLElement,
+    scrollTo: HTMLElement,
+    x0: number, y0: number, 
+    x1: number, y1: number
+) {
+    let scrollH: number | null = null;
+    let scrollV: number | null = null;
+
+    if (getElementExtentNormalized(scrollParent, scrollTo, VERTICAL | START) < y0) {
+        scrollV = y0;
+    } else if (getElementExtentNormalized(scrollParent, scrollTo, VERTICAL | END) > y1) {
+        scrollV = y1
+    }
+
+    if (getElementExtentNormalized(scrollParent, scrollTo, HORIZONTAL | START) < x0) {
+        scrollH = x0;
+    } else if (getElementExtentNormalized(scrollParent, scrollTo, HORIZONTAL | END) > x1) {
+        scrollH = x1;
+    }
+
+    scrollIntoViewVH(scrollParent, scrollTo, scrollV, scrollH);
+}
+
+export function getElementExtentNormalized(
+    scrollParent: HTMLElement,
+    scrollTo: HTMLElement,
+    flags = VERTICAL | START
+) {
+    if (flags & VERTICAL) {
+        const scrollOffset = scrollTo.offsetTop - scrollParent.scrollTop - scrollParent.offsetTop;
+
+        if (flags & END) {
+            return (scrollOffset + scrollTo.getBoundingClientRect().height) / scrollParent.offsetHeight;
+        } else {
+            return scrollOffset / scrollParent.offsetHeight;
+        }
+    } else {
+        // NOTE: This is just a copy-paste from above. 
+        // I would paste a vim-macro here, but it causes all sorts of linting errors.
+
+        const scrollOffset = scrollTo.offsetLeft - scrollParent.scrollLeft - scrollParent.offsetLeft;
+
+        if (flags & END) {
+            return (scrollOffset + scrollTo.getBoundingClientRect().width) / scrollParent.offsetWidth;
+        } else {
+            return scrollOffset / scrollParent.offsetWidth;
+        }
+    }
 }
 
 
@@ -1450,7 +1508,7 @@ function loadRenderPoint(src: RerenderPoint, dst: UIRoot) {
     dst.domAppender.idx = domIdx;
 }
 
-export function endMemo() {
+export function imEndMemo() {
     const val = getCurrentMemoizer();
 
     if (val.im) {
@@ -1888,6 +1946,7 @@ class ImmediateModeStringBuilder {
     
     s(str: string) {
         this.sb.push(str);
+        return this;
     }
 
     toString() {

@@ -1,9 +1,11 @@
-import { CODE, COL, FLEX, GAP, imBeginLayout, PRE, RELATIVE, ROW, textSpan } from "./layout.ts";
+import { ALIGN_CENTER, ALIGN_STRETCH, CODE, COL, FLEX, GAP, imBeginLayout, JUSTIFY_CENTER, PRE, RELATIVE, ROW, textSpan } from "./layout.ts";
 import "./styling.ts";
 import { cnApp, cssVars } from "./styling.ts";
 import { copyToClipboard, readFromClipboard } from "./utils/clipboard.ts";
-import { deferClickEventToParent, elementWasClicked, elementWasHovered, endMemo, getHoveredElement, getMouse, imBeginEl, imBeginList, imBeginMemo, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imInit, imOn, imSb, imState, nextListRoot, setClass, setInnerText, setStyle } from './utils/im-dom-utils.ts';
+
+import { deferClickEventToParent, elementWasClicked, elementWasHovered, getHoveredElement, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imOn, imSb, imState, nextListRoot, setClass, setInnerText, setStyle } from './utils/im-dom-utils.ts';
 import { clamp, max, min } from "./utils/math-utils.ts";
+import { isIndexInSliceBounds } from "./utils/matrix-math.ts";
 import { isWhitespace } from "./utils/text-utils.ts";
 
 
@@ -78,6 +80,7 @@ function moveDown(s: TextEditorState) {
 function clearSelection(s: TextEditorState) {
     s.selectionAnchor = -1;
     s.selectionAnchorEnd = -1;
+
     s.selectionStart = -1;
     s.selectionEnd = -1;
 }
@@ -187,17 +190,19 @@ interface Focusable {
 }
 
 export type TextEditorState = {
-    textAreaElement: HTMLTextAreaElement | null;
+    _textAreaElement: HTMLTextAreaElement | null;
+    _cursorSpan: HTMLSpanElement | null;
     // Automatically shifts focus to this element if this one were focused for some reason.
-    beingControlledBy: Focusable | null;
-
+    _beingControlledBy: Focusable | null;
     undoBuffer: TextEdit[];
     undoBufferIdx: number;
     isUndoing: boolean;
 
     buffer: string[];
+    numLines: number;
     modifiedAt: number;
     cursor: number;
+    hasFocus: boolean;
 
     currentKeyDown: string;
     canStartSelecting: boolean;
@@ -342,22 +347,37 @@ function handleTextEditorEvents(
                 insertAtCursor(s, c);
                 s.cursor++;
             } else {
-
                 if (keyLower === "f") {
                     s.isFinding = true;
-                } else if (keyLower === "z") {
-                    if (s.undoBufferIdx >= 0) {
-                        const step = s.undoBuffer[s.undoBufferIdx];
-                        s.undoBufferIdx--;
-                        revertStep(s, step);
-                    }
-                } else if (keyLower === "y") {
-                    if (s.undoBufferIdx < s.undoBuffer.length - 1) {
-                        // increment and get in the opposite order as above
-                        s.undoBufferIdx++;
-                        const step = s.undoBuffer[s.undoBufferIdx];
+                } else if (keyLower === "z" || keyLower === "y") {
+                    let shouldUndo = false;
+                    let shouldRedo = false;
 
-                        applyStep(s, step);
+                    if (keyLower === "z") {
+                        if (s.isShifting) {
+                            shouldRedo = true;
+                        } else {
+                            shouldUndo = true;
+                        }
+                    } else {
+                        shouldRedo = true;
+                    }
+
+                    if (shouldUndo) {
+                        if (s.undoBufferIdx >= 0) {
+                            const step = s.undoBuffer[s.undoBufferIdx];
+                            s.undoBufferIdx--;
+                            revertStep(s, step);
+                        }
+                    } else if (shouldRedo) {
+                        shouldRedo = true;
+                        if (s.undoBufferIdx < s.undoBuffer.length - 1) {
+                            // increment and get in the opposite order as above
+                            s.undoBufferIdx++;
+                            const step = s.undoBuffer[s.undoBufferIdx];
+
+                            applyStep(s, step);
+                        }
                     }
                 } else if (key === ")") {
                     // TODO: expand our selection
@@ -388,14 +408,20 @@ function handleTextEditorEvents(
                             insert(s, s.cursor, clipboardText.split(""));
                         }
                     });
+                } else if (keyLower === "a") {
+                    s.selectionAnchor = 0;
+                    s.selectionAnchorEnd = s.buffer.length - 1;
+                    s.selectionStart = 0;
+                    s.selectionEnd = s.selectionAnchorEnd;
                 }
             }
         } else if (key === "Backspace") {
             if (s.cursor > 0) {
                 s.cursor--;
-                deleteSelectedAndMoveCursorToStart(s);
-                remove(s, s.cursor, 1);
             }
+
+            deleteSelectedAndMoveCursorToStart(s);
+            remove(s, s.cursor, 1);
         } else if (key === "ArrowLeft") {
             if (s.inCommandMode) {
                 moveToStartOfLastWord(s);
@@ -444,6 +470,7 @@ function handleTextEditorEvents(
 
         if (s.canStartSelecting && s.cursor !== lastCursor) {
             s.selectionAnchor = lastCursor;
+
             s.canStartSelecting = false;
             s.isSelecting = true;
         }
@@ -462,10 +489,14 @@ function handleTextEditorEvents(
     }
 }
 
+
 export function newTextEditorState(): TextEditorState {
+    // fields with _ cannot be JSON-serialized
     return {
-        textAreaElement: null,
-        beingControlledBy: null,
+        _textAreaElement: null,
+        _cursorSpan: null,
+        _beingControlledBy: null,
+        hasFocus: false,
 
         currentKeyDown: "",
         modifiedAt: 0,
@@ -493,7 +524,8 @@ export function newTextEditorState(): TextEditorState {
         undoBufferIdx: -1,
         isUndoing: false,
 
-        buffer: []
+        buffer: [],
+        numLines: 0,
     }
 }
 
@@ -547,7 +579,43 @@ function resetTextEditorState(s: TextEditorState) {
     s.modifiedAt = 0;
 }
 
-export function imTextEditor(s: TextEditorState, isSingleLine = false) {
+export function loadText(s: TextEditorState, text: string) {
+    resetTextEditorState(s);
+    for (const c of text) {
+        s.buffer.push(c);
+    }
+}
+
+export type TextEditorInlineHint = {
+    component: (line: number) => void;
+}
+
+export function imTextEditor(s: TextEditorState, {
+    isSingleLine = false,
+    annotations,
+    inlineHints
+}: {
+    isSingleLine?: boolean;
+    // Currently can't think of a way to do this without callbacks.
+    inlineHints?: (line: number) => void;
+    annotations?: (line: number) => void;
+}) {
+
+    // Only want to initialize this state if we've actually started
+    // finding.
+    imBeginList();
+    if (nextListRoot() && s.isFinding && s.finderTextEditorState === null) {
+        s.finderTextEditorState = imState(newTextEditorState);
+    } imEndList();
+
+    if (imBeginMemoComputation().val(s.isFinding).changed()) {
+        if (s.isFinding && s.finderTextEditorState) {
+            s.cursorBeforeFind = s.cursor;
+            resetTextEditorState(s.finderTextEditorState);
+            s.finderTextEditorState._beingControlledBy = s._textAreaElement;
+        }
+    } imEndMemo();
+
     let textArea: HTMLTextAreaElement | undefined;
     let shouldFocusTextArea = false;
     let findResultIdx = 0;
@@ -590,7 +658,7 @@ export function imTextEditor(s: TextEditorState, isSingleLine = false) {
             s.currentFindResultIdx = minIdx;
             s.cursor = s.allFindResults[minIdx].start;
         }
-    } endMemo();
+    } imEndMemo();
 
     let keyDownEvent: HTMLElementEventMap["keydown"] | null = null;
     let keyUpEvent: HTMLElementEventMap["keyup"] | null = null;
@@ -603,10 +671,9 @@ export function imTextEditor(s: TextEditorState, isSingleLine = false) {
             let currentSpan: HTMLSpanElement | undefined;
 
             let i = 0;
-            let line = 0;
+            let lineIdx = 0;
 
-            let maxLine = line + 30;
-            const numDigits = Math.ceil(Math.log10(maxLine));
+            const numDigits = Math.ceil(Math.log10(s.numLines));
 
             const mouse = getMouse();
             if (
@@ -619,155 +686,213 @@ export function imTextEditor(s: TextEditorState, isSingleLine = false) {
             ) {
                 rerenderedTextEditor = true;
 
+                // Render lines
                 imBeginList();
                 while (i <= s.buffer.length) {
                     nextListRoot();
 
-                    imBeginLayout(CODE | PRE); {
-                        const lineSb = imSb();
-                        if (imBeginMemoComputation().val(line).val(numDigits).changed()) {
-                            lineSb.clear();
-                            if (!isSingleLine) {
-                                lineSb.s(lPad("" + line, numDigits));
-                                lineSb.s(" | ")
-                            }
-                        } endMemo();
+                    let lineHasCursor = false;
 
-                        const lineStr = lineSb.toString();
-                        imBeginSpan(); {
-                            setInnerText(lineStr);
-                        } imEnd();
-
-                        let moveToEndOfLine = false;
-                        if (elementWasClicked()) {
-                            moveToEndOfLine = true;
-                        }
-
+                    imBeginLayout(CODE | PRE | ROW | ALIGN_STRETCH); {
                         imBeginList();
-                        while (i <= s.buffer.length) {
-                            const actualC = (i < s.buffer.length) ? s.buffer[i] : " ";
-                            const ws = isWhitespace(actualC);
-                            const isTab = actualC === "\t";
-                            const c = ws ? (isTab ? "...." : ".") : actualC;
-
-                            nextListRoot();
-
-                            const root = imBeginSpan(); {
-                                if (imInit()) {
-                                    setStyle("display", "inline-block");
+                        if (nextListRoot() && !isSingleLine) {
+                            const lineSb = imSb();
+                            if (imBeginMemoComputation().val(lineIdx).val(numDigits).changed()) {
+                                lineSb.clear();
+                                if (!isSingleLine) {
+                                    lineSb
+                                        .s(lPad("" + lineIdx, numDigits))
+                                        .s(" ");
                                 }
+                            } imEndMemo();
 
-                                let isEscapeSequence = false;
-                                if (actualC == "\n" && isSingleLine) {
-                                    root.text("\\n");
-                                    isEscapeSequence = true;
-                                } else {
-                                    root.text(c);
-                                }
-
-                                if (elementWasClicked()) {
-                                    // move cursor to current line
-                                    s.cursor = i;
-                                    shouldFocusTextArea = true;
-                                }
-                                deferClickEventToParent();
-
-
-                                const isSelected = s.selectionStart <= i && i <= s.selectionEnd;
-                                const isCursor = i === s.cursor;
-                                if (imBeginMemoComputation().val(isSelected || isCursor).changed()) {
-                                    setClass(cnApp.inverted, isSelected || isCursor);
-                                } endMemo();
-
-                                // Make sure we're always looking at the latest find result
-                                let isAFindResultToken = false;
-                                if (findResultIdx < s.allFindResults.length) {
-                                    let result = s.allFindResults[findResultIdx];
-                                    while (result.end < i) {
-                                        findResultIdx++;
-                                        if (findResultIdx < s.allFindResults.length) {
-                                            result = s.allFindResults[findResultIdx];
-                                        } else {
-                                            break;
-                                        }
-                                    }
-
-                                    if (result.start <= i && i <= result.end) {
-                                        isAFindResultToken = true;
-                                    }
-                                }
-
-                                if (imBeginMemoComputation()
-                                    .val(ws)
-                                    .val(isEscapeSequence)
-                                    .changed()
-                                ) {
-                                    const color = isEscapeSequence ? "#FFA" :
-                                        ws ? "#0000" :
-                                            "";
-                                    setStyle("color", color);
-                                } endMemo();
-
-                                if (imBeginMemoComputation()
-                                    .val(isAFindResultToken)
-                                    .changed()
-                                ) {
-                                    setStyle("backgroundColor", isAFindResultToken ? "#00F" : "");
-                                } endMemo();
+                            const lineStr = lineSb.toString();
+                            imBeginLayout(ROW | ALIGN_CENTER | JUSTIFY_CENTER); {
+                                setInnerText(lineStr);
                             } imEnd();
 
-                            if (!renderedCursor && s.cursor === i) {
-                                renderedCursor = true;
-                                currentSpan = root.root;
-                            }
+                            imBeginDiv(); {
+                                if (imInit()) {
+                                    setStyle("paddingLeft", "5px");
+                                    setStyle("paddingRight", "5px");
+                                }
 
-                            i++;
-
-                            if (actualC === "\n" && !isSingleLine) {
-                                line++;
-                                break;
-                            }
+                                imBeginDiv(); {
+                                    if (imInit()) {
+                                        setStyle("width", "2px");
+                                        setStyle("height", "100%");
+                                        setStyle("backgroundColor", cssVars.fg);
+                                    }
+                                } imEnd();
+                            } imEnd();
                         }
                         imEndList();
 
-                        if (moveToEndOfLine) {
-                            // Don't defer event for the line.
+                        imBeginLayout(FLEX); {
+                            imBeginLayout(); {
 
-                            // move cursor to current line
-                            s.cursor = i - 1;
-                            shouldFocusTextArea = true;
-                        }
+                                let moveCursorToEndOfLine = false;
+                                if (elementWasClicked()) {
+                                    moveCursorToEndOfLine = true;
+                                }
 
-                        const wasHovered = elementWasHovered();
-                        if (imBeginMemoComputation()
-                            .val(wasHovered)
-                            .changed()
-                        ) {
-                            setStyle("backgroundColor", wasHovered ? cssVars.fg2 : "")
-                            setStyle("color", wasHovered ? cssVars.bg : "")
-                        } endMemo();
+                                let tokenIdx = 0;
+
+                                // Render individual tokens
+                                imBeginList();
+                                const ROOT_INLINE_HINT = 1;
+                                while (i <= s.buffer.length) {
+                                    const actualC = (i < s.buffer.length) ? s.buffer[i] : " ";
+                                    const ws = isWhitespace(actualC);
+                                    const isTab = actualC === "\t";
+                                    const c = ws ? (isTab ? "...." : ".") : actualC;
+
+                                    nextListRoot();
+
+                                    const root = imBeginSpan(); {
+                                        if (imInit()) {
+                                            setStyle("display", "inline-block");
+                                        }
+
+                                        let isEscapeSequence = false;
+                                        if (actualC == "\n" && isSingleLine) {
+                                            root.text("\\n");
+                                            isEscapeSequence = true;
+                                        } else {
+                                            root.text(c);
+                                        }
+
+                                        if (elementWasClicked()) {
+                                            // move cursor to current line
+                                            s.cursor = i;
+                                            shouldFocusTextArea = true;
+                                        }
+                                        deferClickEventToParent();
+
+                                        const isSelected = s.selectionStart <= i && i <= s.selectionEnd;
+                                        const isCursor = s.hasFocus && i === s.cursor;
+                                        if (isCursor) {
+                                            s._cursorSpan = root.root;
+                                            lineHasCursor = true;
+                                        } 
+                                        if (imBeginMemoComputation().val(isSelected).val(isCursor).changed()) {
+                                            setClass(cnApp.inverted, isSelected || isCursor);
+                                        } imEndMemo();
+
+                                        // Make sure we're always looking at the latest find result
+                                        let isAFindResultToken = false;
+                                        if (findResultIdx < s.allFindResults.length) {
+                                            let result = s.allFindResults[findResultIdx];
+                                            while (result.end < i) {
+                                                findResultIdx++;
+                                                if (findResultIdx < s.allFindResults.length) {
+                                                    result = s.allFindResults[findResultIdx];
+                                                } else {
+                                                    break;
+                                                }
+                                            }
+
+                                            if (result.start <= i && i <= result.end) {
+                                                isAFindResultToken = true;
+                                            }
+                                        }
+
+                                        if (imBeginMemoComputation()
+                                            .val(ws)
+                                            .val(isEscapeSequence)
+                                            .changed()
+                                        ) {
+                                            const color = isEscapeSequence ? "#FFA" :
+                                                ws ? "#0000" :
+                                                    "";
+                                            setStyle("color", color);
+                                        } imEndMemo();
+
+                                        if (imBeginMemoComputation()
+                                            .val(isAFindResultToken)
+                                            .val(isCursor)
+                                            .changed()
+                                        ) {
+                                            setStyle("backgroundColor", (!isCursor && isAFindResultToken) ? "#00F" : "");
+                                        } imEndMemo();
+                                    } imEnd();
+
+                                    if (!renderedCursor && s.cursor === i) {
+                                        renderedCursor = true;
+                                        currentSpan = root.root;
+                                    }
+
+                                    i++;
+
+                                    let isEol = false;
+                                    if (actualC === "\n" && !isSingleLine) {
+                                        lineIdx++;
+                                        tokenIdx = 0;
+                                        isEol = true;
+                                    }
+
+                                    if (isEol) {
+                                        nextListRoot(ROOT_INLINE_HINT);
+                                        inlineHints?.(lineIdx - 1);
+                                        break;
+                                    }
+                                }
+                                imEndList();
+
+                                if (moveCursorToEndOfLine) {
+                                    // Don't defer event for the line.
+
+                                    // move cursor to current line
+                                    s.cursor = i - 1;
+                                    shouldFocusTextArea = true;
+                                }
+
+                                const wasHovered = elementWasHovered();
+                                if (imBeginMemoComputation()
+                                    .val(wasHovered)
+                                    .changed()
+                                ) {
+                                    setStyle("backgroundColor", wasHovered ? cssVars.fg2 : "")
+                                    setStyle("color", wasHovered ? cssVars.bg : "")
+                                } imEndMemo();
+                            } imEnd();
+
+                            // Just put the find modal directly under the cursor, so that it's always in view.
+                            imBeginList();
+                            if (nextListRoot() && lineHasCursor && s.isFinding && s.finderTextEditorState) {
+                                imBeginLayout(ROW | GAP); {
+                                    textSpan("Find: ");
+                                    imTextEditor(s.finderTextEditorState, { isSingleLine: true });
+                                } imEnd();
+                            } imEndList();
+
+                            annotations?.(lineIdx - 1);
+                        } imEnd();
                     } imEnd();
                 }
                 imEndList();
-            } endMemo();
+
+                s.numLines = lineIdx;
+            } imEndMemo();
 
             // using an input to allow hooking into the browser's existing focusing mechanisms.
-            const input = imBeginEl(newTextArea); {
-                textArea = input.root;
-                s.textAreaElement = textArea;
+            const textAreaRoot = imBeginEl(newTextArea); {
+                textArea = textAreaRoot.root;
+                s._textAreaElement = textArea;
 
-                if (s.beingControlledBy && document.activeElement === textArea) {
-                    s.beingControlledBy.focus();
+                s.hasFocus = document.activeElement === textArea;
+                if (s._beingControlledBy && s.hasFocus) {
+                    s._beingControlledBy.focus();
                 }
 
                 if (imInit()) {
                     setStyle("all", "unset");
                     setStyle("width", "10px");
-                    setStyle("height", "1em");
+                    setStyle("height", "1px");
                     setStyle("position", "absolute");
+                    setStyle("color", "transparent");
+                    setStyle("textShadow", "0px 0px 0px tomato"); // hahaha tomato. lmao. https://stackoverflow.com/questions/44845792/hide-caret-in-textarea
                 }
-
-                setStyle("border", document.activeElement === textArea ? "1px solid red" : "");
 
                 if (
                     imBeginMemoComputation().val(currentSpan).changed()
@@ -776,13 +901,13 @@ export function imTextEditor(s: TextEditorState, isSingleLine = false) {
                 ) {
                     setStyle("top", currentSpan.offsetTop + "px")
                     setStyle("left", currentSpan.offsetLeft + "px")
-                } endMemo();
+                } imEndMemo();
 
                 // Handle events
                 keyDownEvent = imOn("keydown");
                 keyUpEvent = imOn("keyup");
 
-                if (s.beingControlledBy === null) {
+                if (s._beingControlledBy === null) {
                     handleTextEditorEvents(s, keyDownEvent, keyUpEvent);
                 }
             } imEnd();
@@ -791,29 +916,6 @@ export function imTextEditor(s: TextEditorState, isSingleLine = false) {
                 textArea.focus();
             }
         } imEnd();
-
-
-        imBeginList(); 
-        if (nextListRoot() && s.isFinding) {
-            imBeginLayout(ROW | GAP); {
-                textSpan("Find: ");
-
-                // This recursive call is going to cause bugs, I can alread tell...
-                // Not a good reason to avoid it tho.
-                const findState = imState(newTextEditorState);
-                s.finderTextEditorState = findState;
-                findState.beingControlledBy = textArea;
-
-                if (imBeginMemoComputation().val(s.isFinding).changed()) {
-                    if (s.isFinding) {
-                        s.cursorBeforeFind = s.cursor;
-                        resetTextEditorState(findState);
-                    }
-                } endMemo();
-
-                imTextEditor(findState, false);
-            } imEnd();
-        } imEndList();
 
         imBeginLayout(); {
             textSpan(s.buffer.length + " chars | " + s.undoBuffer.length + " in undo buffer ");

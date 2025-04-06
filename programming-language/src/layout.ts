@@ -1,6 +1,6 @@
 import "./styling.ts";
-import { cnApp } from './styling.ts';
-import { imBeginMemoComputation, cn, deferClickEventToParent, imBeginDiv, imEnd, endMemo, imInit, imRef, setClass, setStyle, imBeginSpan } from './utils/im-dom-utils.ts';
+import { cnApp, cssVars } from './styling.ts';
+import { imBeginMemoComputation, cn, deferClickEventToParent, imBeginDiv, imEnd, imEndMemo, imInit, imRef, setClass, setStyle, imBeginSpan, setAttributes } from './utils/im-dom-utils.ts';
 
 
 // NOTE: you only get 32 of these. use them wisely.
@@ -30,6 +30,7 @@ export const TRANSLUCENT = 1 << 20;
 export const PREWRAP = 1 << 21;
 
 export const TRANSPARENT = 1 << 22;
+export const ALIGN_STRETCH = 1 << 23;
 
 
 export function imBeginLayout(flags: number = 0) {
@@ -60,6 +61,7 @@ export function setStyleFlags(flags: number) {
     setClass(cn.pre, (flags & PRE));
     setClass(cn.preWrap, (flags & PREWRAP));
     setClass(cn.alignItemsCenter, (flags & ALIGN_CENTER));
+    setClass(cn.alignItemsStretch, (flags & ALIGN_STRETCH));
     setClass(cn.justifyContentCenter, (flags & JUSTIFY_CENTER));
     setClass(cn.h100, (flags & H100));
     setClass(cn.w100, (flags & W100));
@@ -115,7 +117,7 @@ export function beginAbsoluteLayout(flags: number = 0, top: number, left: number
         setStyle("left", left === NONE ? "" : left + "px");
         setStyle("bottom", bottom === NONE ? "" : bottom + "px");
         setStyle("right", right === NONE ? "" : right + "px");
-    } endMemo();
+    } imEndMemo();
 
     return root;
 }
@@ -144,4 +146,12 @@ export function beginAspectRatio(w: number, h: number, flags: number = 0) {
     };
 
     return root;
+}
+
+export function verticalBar() {
+    imBeginDiv(); {
+        imInit() && setAttributes({
+            style: `width: 5px; background-color: ${cssVars.fg};`
+        });
+    } imEnd();
 }

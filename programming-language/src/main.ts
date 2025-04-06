@@ -1,14 +1,10 @@
 import { renderApp, } from './app.ts';
 import "./styling.ts";
 import { cssVars } from './styling.ts';
-import { newTextEditorState, imTextEditor } from './text-editor.ts';
-import { beginFrame, deltaTimeSeconds, imBeginDiv, imEnd, endFrame, imComponent, imInit, imState, initializeDomRootAnimiationLoop, initializeDomUtils, initializeImEvents, setStyle } from './utils/im-dom-utils.ts';
+import { beginFrame, deltaTimeSeconds, endFrame, imBeginDiv, imEnd, imInit, initializeDomRootAnimiationLoop, initializeDomUtils, initializeImEvents, setStyle } from './utils/im-dom-utils.ts';
 
 initializeDomUtils();
 initializeImEvents();
-
-const textEditorState = newTextEditorState();
-
 
 let t = 0;
 let frames = 0;
@@ -58,8 +54,7 @@ function renderRoot() {
     } imEnd();
 
     
-    // renderApp();
-    imTextEditor(textEditorState);
+    renderApp();
 
     // render-start     -> Timer start
     //      rendering code()
