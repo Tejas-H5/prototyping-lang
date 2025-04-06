@@ -1,5 +1,5 @@
 import { renderApp, } from './app.ts';
-import { textSpan } from './layout.ts';
+import { imTextSpan } from './layout.ts';
 import "./styling.ts";
 import { cssVars } from './styling.ts';
 import { beginFrame, deltaTimeSeconds, elementHasMouseClick, endFrame, imBeginDiv, imBeginMemoComputation, imBeginSpan, imEnd, imEndMemo, imInit, initializeDomRootAnimiationLoop, initializeDomUtils, initializeImEvents, setInnerText, setStyle } from './utils/im-dom-utils.ts';
@@ -85,9 +85,9 @@ function renderRoot() {
             }
         }
 
-        textSpan(baselineLocked ? (baselineFrameMs + "ms baseline, ") : "computing baseline...");
+        imTextSpan(baselineLocked ? (baselineFrameMs + "ms baseline, ") : "computing baseline...");
 
-        textSpan(frameMs + "ms frame, ");
+        imTextSpan(frameMs + "ms frame, ");
 
         imBeginSpan(); {
             if (imBeginMemoComputation().val(renderMs).changed()) {

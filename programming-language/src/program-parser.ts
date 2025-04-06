@@ -17,10 +17,11 @@ export type TextPosition = {
     i: number;
     line: number;
     col: number;
+    tabs: number;     // we need this to correctly get a screen position, since tabs might have a different size.
 };
 
-function newTextPosition(i: number, line: number, col: number): TextPosition {
-    return { i, line, col };
+function newTextPosition(i: number, line: number, col: number, tabs: number): TextPosition {
+    return { i, line, col, tabs: tabs};
 }
 
 export const T_IDENTIFIER = 1;
@@ -390,9 +391,13 @@ function reachedEnd(ctx: ParserContext) {
 
 function advance(ctx: ParserContext) {
     ctx.pos.i++;
-    if (currentChar(ctx) === "\n") {
+    const c = currentChar(ctx);
+    if (c === "\n") {
         ctx.pos.line++;
         ctx.pos.col = 0;
+        ctx.pos.tabs = 0;
+    } if (c === "\t") {
+        ctx.pos.tabs++;
     } else {
         ctx.pos.col++;
     }
@@ -1445,7 +1450,7 @@ export function parse(text: string): ProgramParseResult {
         isInForLoopRangeExpr: false,
         text,
         parseResult: program,
-        pos: newTextPosition(0, 0, 0),
+        pos: newTextPosition(0, 0, 0, 0),
     };
 
     parseStatements(ctx, program.statements);

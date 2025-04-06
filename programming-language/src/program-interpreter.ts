@@ -559,6 +559,8 @@ export type ProgramInterpretResult = {
     callStack: ExecutionState[];
 
     outputs: ProgramOutputs;
+    // line_number -> ProgramOutputs.
+    flushedOutputs: Map<number, ProgramOutputs>;
 }
 
 export type ProgramPrintOutput = {
@@ -605,6 +607,7 @@ export type ProgramPlotOutputHeatmapFunction = {
 
 type ProgramUiInputBase = {
     name: string;
+    expr: ProgramExpression;
     fromThisRun: boolean;
 };
 
@@ -993,12 +996,9 @@ function push(result: ProgramInterpretResult, val: ProgramResult, step: ProgramE
     result.stack[result.stackIdx] = { ...val };
 }
 
-export function startInterpreting(
-    parseResult: ProgramParseResult, 
-    isDebugging: boolean,
-    previousProgramResult: ProgramInterpretResult | undefined
-): ProgramInterpretResult {
-    const outputs: ProgramOutputs = {
+
+function newEmptyProgramOutputs(): ProgramOutputs {
+    return {
         prints: [],
         images: [],
         graphs: new Map(),
@@ -1006,6 +1006,14 @@ export function startInterpreting(
         uiInputs: new Map(),
         heatmapSubdivisions: 20,
     };
+}
+
+export function startInterpreting(
+    parseResult: ProgramParseResult, 
+    isDebugging: boolean,
+    previousProgramResult: ProgramInterpretResult | undefined
+): ProgramInterpretResult {
+    const outputs = newEmptyProgramOutputs();
     if (previousProgramResult) {
         for (const input of previousProgramResult.outputs.uiInputs.values()) {
             outputs.uiInputs.set(input.name, { ...input, fromThisRun: false });
@@ -1031,6 +1039,7 @@ export function startInterpreting(
         callStack: [],
 
         outputs,
+        flushedOutputs: new Map(),
     };
 
     if (parseResult.errors.length > 0) {
@@ -1357,7 +1366,7 @@ export function getBuiltinFunctionsMap() {
     })
     newBuiltinFunction("rand_seed", [
         newArg("new_seed", [T_RESULT_NUMBER])
-    ], (result, step, newSeed) => {
+    ], (result, _step, newSeed) => {
         assert(newSeed?.t === T_RESULT_NUMBER);
         setRngSeed(result.rng, newSeed.val);
         return newSeed;
@@ -1577,7 +1586,7 @@ export function getBuiltinFunctionsMap() {
         }
     );
     // TODO: cool operator that does this?
-    newBuiltinFunction("push", [newArg("list", [T_RESULT_LIST]), newArg("item", [])], (result, step, list, item) => {
+    newBuiltinFunction("push", [newArg("list", [T_RESULT_LIST]), newArg("item", [])], (_result, _step, list, item) => {
         if (!list) return;
 
         assert(list.t === T_RESULT_LIST);
@@ -1611,7 +1620,8 @@ export function getBuiltinFunctionsMap() {
                     start: start.val, 
                     end: end.val, 
                     value: start.val, 
-                    step: null 
+                    step: null, 
+                    expr: step.expr,
                 }
                 result.outputs.uiInputs.set(input.name, input);
             }
@@ -1621,6 +1631,7 @@ export function getBuiltinFunctionsMap() {
             input.value = clamp(input.value, start.val, end.val);
             input.step = sliderStep ? sliderStep.val : null;
             input.fromThisRun = true;
+            input.expr = step.expr;
 
             return newNumberResult(input.value);
         }
@@ -1823,7 +1834,7 @@ export function getBuiltinFunctionsMap() {
         "zeroes", [
         newArg("shape", [T_RESULT_MATRIX]),
     ],
-        (result, step, shape) => {
+        (_result, _step, shape) => {
             assert(shape?.t === T_RESULT_MATRIX);
             const mat = matrixZeroes(sliceToArray(shape.val.values));
             return { t: T_RESULT_MATRIX, val: mat };
@@ -1898,7 +1909,7 @@ export function getBuiltinFunctionsMap() {
         newArg("x", [T_RESULT_NUMBER]),
         newArg("y", [T_RESULT_NUMBER]),
     ],
-        (result, step, x, y) => {
+        (_result, _step, x, y) => {
             assert(x?.t === T_RESULT_NUMBER);
             assert(y?.t === T_RESULT_NUMBER);
             const val = rotationMatrixTranslate2D(x.val, y.val);
@@ -1911,7 +1922,7 @@ export function getBuiltinFunctionsMap() {
         newArg("y", [T_RESULT_NUMBER]),
         newArg("z", [T_RESULT_NUMBER]),
     ],
-        (result, step, x, y, z) => {
+        (_result, _step, x, y, z) => {
             assert(x?.t === T_RESULT_NUMBER);
             assert(y?.t === T_RESULT_NUMBER);
             assert(z?.t === T_RESULT_NUMBER);
@@ -1924,7 +1935,7 @@ export function getBuiltinFunctionsMap() {
         newArg("x", [T_RESULT_NUMBER]),
         newArg("y", [T_RESULT_NUMBER]),
     ],
-        (result, step, x, y) => {
+        (_result, _step, x, y) => {
             assert(x?.t === T_RESULT_NUMBER);
             assert(y?.t === T_RESULT_NUMBER);
             const val = scaleMatrix2D(x.val, y.val);
@@ -1937,7 +1948,7 @@ export function getBuiltinFunctionsMap() {
         newArg("y", [T_RESULT_NUMBER]),
         newArg("z", [T_RESULT_NUMBER]),
     ],
-        (result, step, x, y, z) => {
+        (_result, _step, x, y, z) => {
             assert(x?.t === T_RESULT_NUMBER);
             assert(y?.t === T_RESULT_NUMBER);
             assert(z?.t === T_RESULT_NUMBER);
@@ -1951,7 +1962,7 @@ export function getBuiltinFunctionsMap() {
         newArg("near", [T_RESULT_NUMBER]),
         newArg("far", [T_RESULT_NUMBER]),
     ],
-        (result, step, fov, near, far) => {
+        (_result, _step, fov, near, far) => {
             assert(fov?.t === T_RESULT_NUMBER);
             assert(near?.t === T_RESULT_NUMBER);
             assert(far?.t === T_RESULT_NUMBER);
@@ -1961,7 +1972,7 @@ export function getBuiltinFunctionsMap() {
     );
     newBuiltinFunction(
         "ortho3d", [],
-        (result, step, fov, near, far) => {
+        (_result, _step, fov, near, far) => {
             assert(fov?.t === T_RESULT_NUMBER);
             assert(near?.t === T_RESULT_NUMBER);
             assert(far?.t === T_RESULT_NUMBER);
@@ -1973,7 +1984,7 @@ export function getBuiltinFunctionsMap() {
         "rot2d", [
         newArg("angle", [T_RESULT_NUMBER]),
     ],
-        (result, step, angle) => {
+        (_result, _step, angle) => {
             assert(angle?.t === T_RESULT_NUMBER);
             const val = rotationMatrix2D(angle.val);
             return { t: T_RESULT_MATRIX, val };
@@ -1983,7 +1994,7 @@ export function getBuiltinFunctionsMap() {
         "rot3d_x", [
         newArg("angle", [T_RESULT_NUMBER]),
     ],
-        (result, step, angle) => {
+        (_result, _step, angle) => {
             assert(angle?.t === T_RESULT_NUMBER);
             const val = rotationMatrix3DX(angle.val);
             return { t: T_RESULT_MATRIX, val };
@@ -1993,7 +2004,7 @@ export function getBuiltinFunctionsMap() {
         "rot3d_y", [
         newArg("angle", [T_RESULT_NUMBER]),
     ],
-        (result, step, angle) => {
+        (_result, _step, angle) => {
             assert(angle?.t === T_RESULT_NUMBER);
             const val = rotationMatrix3DY(angle.val);
             return { t: T_RESULT_MATRIX, val };
@@ -2003,7 +2014,7 @@ export function getBuiltinFunctionsMap() {
         "rot3d_z", [
         newArg("angle", [T_RESULT_NUMBER]),
     ],
-        (result, step, angle) => {
+        (_result, _step, angle) => {
             assert(angle?.t === T_RESULT_NUMBER);
             const val = rotationMatrix3DZ(angle.val);
             return { t: T_RESULT_MATRIX, val };
@@ -2023,6 +2034,33 @@ export function getBuiltinFunctionsMap() {
             return { t: T_RESULT_MATRIX, val };
         }
     );
+    // TODO: cool operator === that does this? 
+    newBuiltinFunction("output_here", [], (result, step) => {
+        // clear out our outputs, make the UI attribute them all to this function call instead of their actual position
+        const outputs = result.outputs;
+        result.outputs = newEmptyProgramOutputs();
+        result.outputs.uiInputs = outputs.uiInputs;  // can't flush these, they are important.
+        result.outputs.heatmapSubdivisions = outputs.heatmapSubdivisions;
+        outputs.uiInputs = new Map();
+        result.flushedOutputs.set(step.expr.pos.line, outputs);
+
+        for (const o of outputs.prints) {
+            o.expr = step.expr;
+        }
+        for (const o of outputs.images) {
+            o.expr = step.expr;
+        }
+        for (const o of outputs.graphs.values()) {
+            o.expr = step.expr;
+        }
+        for (const o of outputs.plots.values()) {
+            for (const l of o.lines) {
+                l.expr = step.expr;
+            }
+        }
+
+        return newNumberResult(0);
+    });
 }
 
 function getOrAddNewPlot(result: ProgramInterpretResult, idx: number): ProgramPlotOutput {

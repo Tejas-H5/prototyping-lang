@@ -31,6 +31,8 @@ export const PREWRAP = 1 << 21;
 
 export const TRANSPARENT = 1 << 22;
 export const ALIGN_STRETCH = 1 << 23;
+export const NORMAL = 1 << 24;
+export const PADDED = 1 << 25;
 
 
 export function imBeginLayout(flags: number = 0) {
@@ -58,6 +60,7 @@ export function setStyleFlags(flags: number) {
     setClass(cnApp.gap5, (flags & GAP));
     setClass(cnApp.code, (flags & CODE));
     setClass(cnApp.bg2, !transparent && (flags & CODE));
+    setClass(cnApp.normal, (flags & NORMAL));
     setClass(cn.pre, (flags & PRE));
     setClass(cn.preWrap, (flags & PREWRAP));
     setClass(cn.alignItemsCenter, (flags & ALIGN_CENTER));
@@ -80,9 +83,10 @@ export function setStyleFlags(flags: number) {
     setStyle("right", fixed ? "0" : "");
     setClass(cnApp.bg, (flags & OPAQUE));
     setClass(cnApp.translucent, (flags & TRANSLUCENT));
+    setClass(cnApp.padded, (flags & PADDED));
 }
 
-export function textSpan(text: string, flags: number = 0) {
+export function imTextSpan(text: string, flags: number = 0) {
     const lastFlags = imRef();
     // Don't set the text every render. that way, we may modify it in the inspector.
     // may also be faster, idc
@@ -106,7 +110,7 @@ export function textSpan(text: string, flags: number = 0) {
 
 
 export const NONE = 9999999;
-export function beginAbsoluteLayout(flags: number = 0, top: number, left: number, bottom: number, right: number) {
+export function imBeginAbsoluteLayout(flags: number = 0, top: number, left: number, bottom: number, right: number) {
     const root = imBeginLayout(flags | ABSOLUTE);
 
     if (imBeginMemoComputation()
@@ -122,7 +126,7 @@ export function beginAbsoluteLayout(flags: number = 0, top: number, left: number
     return root;
 }
 
-export function beginScrollContainer(flags: number = 0) {
+export function imBeginScrollContainer(flags: number = 0) {
     const root = imBeginLayout(flags);
     if (imInit()) {
         setClass(cn.overflowYAuto);
@@ -130,7 +134,7 @@ export function beginScrollContainer(flags: number = 0) {
     return root;
 }
 
-export function beginAspectRatio(w: number, h: number, flags: number = 0) {
+export function imBeginAspectRatio(w: number, h: number, flags: number = 0) {
     const lastAr = imRef();
     const root = imBeginLayout(flags); {
         if (imInit()) {
@@ -148,7 +152,7 @@ export function beginAspectRatio(w: number, h: number, flags: number = 0) {
     return root;
 }
 
-export function verticalBar() {
+export function imVerticalBar() {
     imBeginDiv(); {
         imInit() && setAttributes({
             style: `width: 5px; background-color: ${cssVars.fg};`

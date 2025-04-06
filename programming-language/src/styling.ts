@@ -35,13 +35,17 @@ export const cssVars: Record<keyof Theme, string> = {
 
 const cssb = newCssBuilder();
 
-cssb.s(`
-body {
+const normalStyle = `
     font-family: Arial;
     font-size: ${cssVars.normalText};
     color: ${cssVars.fg};
     background: ${cssVars.bg};
     font-size: 1em;
+`;
+
+cssb.s(`
+body {
+${normalStyle}
 }
 
 h4, h3, h2, h1 {
@@ -53,9 +57,15 @@ h4, h3, h2, h1 {
 export const cnApp = {
     b: cssb.cn("b", [` { font-weight: bold; } `]),
 
+    normal: cssb.cn("normal", [` {
+${normalStyle}
+}`]),
+
     mediumFont: cssb.cn("mediumFont", [` { font-size: ${cssVars.mediumText}; }`]),
     normalFont: cssb.cn("normalFont", [` { font-size: ${cssVars.normalText}; }`]),
     smallFont: cssb.cn("smallFont", [` { font-size: ${cssVars.smallText}; }`]),
+
+    padded: cssb.cn("padded", [` { padding: 5px }`]),
 
     defocusedText: cssb.cn("defocusedText", [` { color: ${cssVars.mg}; }`]),
     bgFocus: cssb.cn("bgFocus", [` { background-color: ${cssVars.bg2}; }`]),

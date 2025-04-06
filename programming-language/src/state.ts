@@ -11,6 +11,7 @@ export type GlobalState = {
 
 export type GlobalContext = {
     isDebugging: boolean;
+    isSidebarCollapsed: boolean;
     functionToDebug: ProgramResultFunction | null;
 
     lastParseResult: ProgramParseResult | undefined;

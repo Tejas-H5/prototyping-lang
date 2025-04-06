@@ -3,7 +3,7 @@
 // Right now, this one seems better, but the other one has a 'proven' track record of actually working.
 // But in a matter of hours/days, I was able to implement features in this framework that I wasn't able to for months/years in the other one...
 
-import { verticalBar } from "src/layout";
+import { imVerticalBar } from "src/layout";
 import { CssColor, newColorFromHexOrUndefined } from "./colour";
 
 //////////

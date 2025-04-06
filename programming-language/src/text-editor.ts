@@ -1,12 +1,13 @@
-import { ALIGN_CENTER, ALIGN_STRETCH, CODE, COL, FLEX, GAP, imBeginLayout, JUSTIFY_CENTER, PRE, RELATIVE, ROW, textSpan } from "./layout.ts";
+import { ALIGN_CENTER, ALIGN_STRETCH, CODE, COL, FLEX, GAP, imBeginLayout, JUSTIFY_CENTER, PRE, RELATIVE, ROW, imTextSpan } from "./layout.ts";
 import "./styling.ts";
 import { cnApp, cssVars } from "./styling.ts";
 import { copyToClipboard, readFromClipboard } from "./utils/clipboard.ts";
 
-import { deferClickEventToParent, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, getHoveredElement, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imOn, imSb, imState, nextListRoot, setClass, setInnerText, setStyle } from './utils/im-dom-utils.ts';
+import { elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, getCurrentRoot, getHoveredElement, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imOn, imSb, imState, nextListRoot, setClass, setInnerText, setStyle } from './utils/im-dom-utils.ts';
 import { clamp, max, min } from "./utils/math-utils.ts";
-import { isIndexInSliceBounds } from "./utils/matrix-math.ts";
 import { isWhitespace } from "./utils/text-utils.ts";
+
+export const UNANIMOUSLY_DECIDED_TAB_SIZE = 4;
 
 
 function hasSelection(s: TextEditorState) {
@@ -172,16 +173,16 @@ type TextEdit = {
 };
 
 function applyStep(s: TextEditorState, step: TextEdit, apply: boolean = true) {
-    s.isUndoing = true; {
-        if (step.insert === apply) {
-            insert(s, step.pos, step.chars);
-            s.cursor = step.pos + step.chars.length;
-        } else {
-            remove(s, step.pos, step.chars.length);
-            s.cursor = step.pos;
-        }
-        clearSelection(s);
-    } s.isUndoing = false;
+    s.isUndoing = true; 
+    if (step.insert === apply) {
+        insert(s, step.pos, step.chars);
+        s.cursor = step.pos + step.chars.length;
+    } else {
+        remove(s, step.pos, step.chars.length);
+        s.cursor = step.pos;
+    }
+    clearSelection(s);
+    s.isUndoing = false;
 }
 
 function revertStep(s: TextEditorState, step: TextEdit) {
@@ -239,10 +240,11 @@ function pushToUndoBuffer(s: TextEditorState, edit: TextEdit) {
     }
 
     s.undoBufferIdx++;
-    // truncate undo buffer if it's too big.
-    if (s.undoBufferIdx !== s.undoBuffer.length - 1) {
+    if (s.undoBuffer.length !== s.undoBufferIdx) {
+        // truncate the undo buffer. we don't need excess entries anymore.
         s.undoBuffer.length = s.undoBufferIdx;
     }
+
     s.undoBuffer.push(edit);
 }
 
@@ -485,7 +487,7 @@ function handleTextEditorEvents(
             s.cursor++;
         } else if (key === "Shift") {
             if (!isRepeat) {
-                s.canStartSelecting = true;
+                setCanSelect(s);
             }
         } else if (key === "Escape") {
             if (hasSelection(s)) {
@@ -504,7 +506,12 @@ function handleTextEditorEvents(
 
     // Mouse events can move the cursor too!
     if (!s.isSelecting && s.canStartSelecting && s.cursor !== s.lastSelectCursor) {
-        s.selectionAnchor = s.cursor;
+        if (s.buffer[s.lastSelectCursor] === "\n" && s.cursor < s.lastSelectCursor) {
+            // dont want to start on newlines when selecting backwards. This is always an accident
+            s.selectionAnchor = s.lastSelectCursor - 1;
+        } else {
+            s.selectionAnchor = s.lastSelectCursor;
+        }
         s.lastSelectCursor = s.cursor;
         s.canStartSelecting = false;
         s.isSelecting = true;
@@ -625,6 +632,13 @@ export type TextEditorInlineHint = {
     component: (line: number) => void;
 }
 
+function setCanSelect(s: TextEditorState) {
+    if (!s.canStartSelecting) {
+        s.canStartSelecting = true;
+        s.lastSelectCursor = s.cursor;
+    }
+}
+
 // This ting is no neovim, and it chokes on any reasonably large files.
 // Still, it lets us add custom inline hints and annotations on a per-line basis.
 // Also, we actually know where the cursor is, and can query the cursor's on-screen position, 
@@ -634,13 +648,20 @@ export function imTextEditor(s: TextEditorState, {
     isSingleLine = false,
     canFind = true,
     annotations,
-    inlineHints
+    inlineHints,
+    figures,
 }: {
     isSingleLine?: boolean;
     canFind?: boolean;
-    // Currently can't think of a way to do this without callbacks.
-    inlineHints?: (line: number) => void;
+
+    // Currently can't think of a way to do this without callbacks. sad.
+        
+    // rendered at the end of a particular line
+    inlineHints?: (line: number) => void;   
+    // rendered just below a line, still next to the line number
     annotations?: (line: number) => void;
+    // rendered below the line and the line number
+    figures?: (line: number) => void;   
 }) {
 
     // Only want to initialize this state if we've actually started
@@ -735,7 +756,7 @@ export function imTextEditor(s: TextEditorState, {
 
                     let lineHasCursor = false;
 
-                    imBeginLayout(CODE | PRE | ROW | ALIGN_STRETCH); {
+                    imBeginLayout(CODE | PRE | ROW); {
                         imBeginList();
                         if (nextListRoot() && !isSingleLine) {
                             const lineSb = imSb();
@@ -781,7 +802,7 @@ export function imTextEditor(s: TextEditorState, {
                                     const actualC = (i < s.buffer.length) ? s.buffer[i] : " ";
                                     const ws = isWhitespace(actualC);
                                     const isTab = actualC === "\t";
-                                    const c = ws ? (isTab ? "...." : ".") : actualC;
+                                    const c = ws ? (isTab ? "0".repeat(UNANIMOUSLY_DECIDED_TAB_SIZE) : ".") : actualC;
 
                                     nextListRoot();
 
@@ -801,7 +822,7 @@ export function imTextEditor(s: TextEditorState, {
                                         if (elementHasMouseDown(false) || elementHasMouseClick()) {
                                             // move cursor to current token
                                             s.cursor = i;
-                                            s.canStartSelecting = true;
+                                            setCanSelect(s);
                                             shouldFocusTextArea = true;
 
                                             if (elementHasMouseClick()) {
@@ -866,7 +887,7 @@ export function imTextEditor(s: TextEditorState, {
                                     i++;
 
                                     let isEol = false;
-                                    if (actualC === "\n" && !isSingleLine) {
+                                    if ((actualC === "\n" || i === s.buffer.length + 1) && !isSingleLine) {
                                         lineIdx++;
                                         tokenIdx = 0;
                                         isEol = true;
@@ -880,22 +901,13 @@ export function imTextEditor(s: TextEditorState, {
                                 }
                                 imEndList();
 
-                                const wasHovered = elementHasMouseHover();
-                                if (imBeginMemoComputation()
-                                    .val(wasHovered)
-                                    .changed()
-                                ) {
-                                    setStyle("backgroundColor", wasHovered ? cssVars.mg : "")
-                                    setStyle("color", wasHovered ? cssVars.bg : "")
-                                } imEndMemo();
-
                                 if (elementHasMouseDown(false)) {
                                     // Don't defer event for the line.
 
                                     // move cursor to current line
                                     s.cursor = i - 1;
-                                    s.canStartSelecting = true;
                                     shouldFocusTextArea = true;
+                                    setCanSelect(s);
 
                                     if (elementHasMouseClick()) {
                                         // single click, clear selection
@@ -904,40 +916,56 @@ export function imTextEditor(s: TextEditorState, {
                                 }
                             } imEnd();
 
-                            // Just put the find modal directly under the cursor, so that it's always in view.
-                            imBeginList();
-                            if (nextListRoot() && lineHasCursor && s.isFinding && s.finderTextEditorState) {
-                                imBeginLayout(COL); {
-                                    imBeginDiv(); {
-                                        if (imInit()) {
-                                            setStyle("height", "2px");
-                                            setStyle("backgroundColor", cssVars.fg)
-                                        }
-                                    } imEnd();
-
-                                    imBeginLayout(ROW | GAP); {
-                                        // NOTE: I am now thinking that this is better implemented at the user level...
-
-                                        textSpan("Find: ");
-                                        imTextEditor(s.finderTextEditorState, { 
-                                            isSingleLine: true,
-                                            canFind: false,
-                                        });
-                                    } imEnd();
-
-                                    imBeginDiv(); {
-                                        if (imInit()) {
-                                            setStyle("height", "2px");
-                                            setStyle("backgroundColor", cssVars.fg)
-                                        }
-                                    } imEnd();
-                                } imEnd();
-
-                            } imEndList();
-
-                            annotations?.(lineIdx - 1);
+                            imBeginLayout(); {
+                                imBeginList();
+                                nextListRoot();
+                                annotations?.(lineIdx - 1);
+                                imEndList();
+                            } imEnd();
                         } imEnd();
                     } imEnd();
+
+                    // Annocations section
+                    {
+                        const hSeperator = () => {
+                            imBeginDiv(); {
+                                if (imInit()) {
+                                    setStyle("height", "2px");
+                                    setStyle("backgroundColor", cssVars.fg)
+                                }
+                            } imEnd();
+                        }
+
+                        // Just put the find modal directly under the cursor, so that it's always in view.
+                        imBeginList();
+                        if (nextListRoot() && lineHasCursor && s.isFinding && s.finderTextEditorState) {
+                            hSeperator();
+
+                            imBeginLayout(COL); {
+                                imBeginLayout(ROW | GAP); {
+                                    // NOTE: I am now thinking that this is better implemented at the user level...
+
+                                    imTextSpan("Find: ");
+                                    imTextEditor(s.finderTextEditorState, {
+                                        isSingleLine: true,
+                                        canFind: false,
+                                    });
+                                } imEnd();
+                            } imEnd();
+                        } imEndList();
+
+                        const r = getCurrentRoot();
+                        const idx = r.domAppender.idx;
+                        imBeginList();
+                        if (nextListRoot() && figures) {
+                            figures(lineIdx - 1);
+                        }
+                        // Only draw a seprarator if figures didn't render any DOM elements
+                        if (nextListRoot() && figures && idx !== r.domAppender.idx) {
+                            hSeperator();
+                        }
+                        imEndList();
+                    }
                 }
                 imEndList();
 
@@ -987,7 +1015,7 @@ export function imTextEditor(s: TextEditorState, {
         } imEnd();
 
         imBeginLayout(); {
-            textSpan(s.buffer.length + " chars | " + s.undoBuffer.length + " in undo buffer ");
+            imTextSpan(s.buffer.length + " chars | " + s.undoBuffer.length + " in undo buffer ");
         } imEnd();
     } imEnd();
 }
