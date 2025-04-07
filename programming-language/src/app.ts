@@ -733,8 +733,7 @@ function renderAppCodeEditor(ctx: GlobalContext) {
                 // transparent span
                 imBeginSpan(); {
                     imInit() && setAttributes({ style: "color: transparent" });
-                    // Idk why I have to do -2 here xD - there must be two off-by-one errors somewhere that are constructively interfering
-                    setInnerText("0".repeat(max(0, -2 + err.pos.col + err.pos.tabs * UNANIMOUSLY_DECIDED_TAB_SIZE)));
+                    setInnerText("0".repeat(max(0, err.pos.col + err.pos.tabs * UNANIMOUSLY_DECIDED_TAB_SIZE)));
                 } imEnd();
 
                 imBeginSpan(); {
@@ -753,14 +752,13 @@ function renderAppCodeEditor(ctx: GlobalContext) {
             figures: (line) => {
 
                 const outputs = lastInterpreterResult?.outputs;
-                imBeginList();
-                if (nextListRoot() && outputs) {
-                    imBeginList();
-                    for (const ui of outputs.uiInputs.values()) {
-                        if (ui.expr.pos.line !== line) {
-                            continue;
-                        }
 
+                const inputs = outputs?.uiInputsPerLine?.get(line);
+                imBeginList();
+                if (nextListRoot() && inputs) {
+                    imBeginList();
+
+                    for (const ui of inputs) {
                         nextListRoot();
 
                         imBeginLayout(COL | GAP | NORMAL | PADDED); {
@@ -813,13 +811,13 @@ function renderAppCodeEditor(ctx: GlobalContext) {
                 imEndList();
             },
             annotations: (line) => {
-                // if (lastInterpreterResult?.errors) {
-                //     renderDiagnostics(lastInterpreterResult.errors, "#F00", line);
-                // }
-                //
-                // if (lastParseResult?.warnings) {
-                //     renderDiagnostics(lastParseResult?.warnings, "#F00", line);
-                // }
+                if (lastInterpreterResult?.errors) {
+                    renderDiagnostics(lastInterpreterResult.errors, "#F00", line);
+                }
+
+                if (lastParseResult?.warnings) {
+                    renderDiagnostics(lastParseResult?.warnings, "#F00", line);
+                }
             }
         });
 

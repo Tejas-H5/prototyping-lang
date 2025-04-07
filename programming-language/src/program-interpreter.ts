@@ -629,6 +629,7 @@ export type ProgramOutputs = {
     graphs: Map<number, ProgramGraphOutput>;
     plots: Map<number, ProgramPlotOutput>;
     uiInputs: Map<string, ProgramUiInput>;
+    uiInputsPerLine: Map<number, ProgramUiInput[]>;
     heatmapSubdivisions: number;
 };
 
@@ -1004,6 +1005,7 @@ function newEmptyProgramOutputs(): ProgramOutputs {
         graphs: new Map(),
         plots: new Map(),
         uiInputs: new Map(),
+        uiInputsPerLine: new Map(),
         heatmapSubdivisions: 20,
     };
 }
@@ -2780,9 +2782,31 @@ export function interpret(
 
     interpretRestOfProgram(result);
 
-    for (const input of result.outputs.uiInputs.values()) {
-        if (!input.fromThisRun) {
-            result.outputs.uiInputs.delete(input.name);
+    // Let's clean up the inputs
+    {
+        for (const input of result.outputs.uiInputs.values()) {
+            if (!input.fromThisRun) {
+                result.outputs.uiInputs.delete(input.name);
+            }
+        }
+
+        const uiInputsPerLine = result.outputs.uiInputsPerLine;
+        for (const input of result.outputs.uiInputs.values()) {
+            const line = input.expr.pos.line;
+
+            let existingInputs = uiInputsPerLine.get(line - 1);
+            if (existingInputs) {
+                uiInputsPerLine.delete(line - 1);
+                uiInputsPerLine.set(line, existingInputs);
+            } else {
+                existingInputs = uiInputsPerLine.get(line);
+                if (!existingInputs) {
+                    existingInputs = [];
+                    uiInputsPerLine.set(line, existingInputs);
+                }
+            }
+
+            existingInputs.push(input);
         }
     }
 

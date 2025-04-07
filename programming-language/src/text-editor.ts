@@ -216,9 +216,9 @@ export type TextEditorState = {
 
     selectionAnchor: number;
     selectionAnchorEnd: number;
-
     selectionStart: number;
     selectionEnd: number;
+    hasClick: boolean;
 
     inCommandMode: boolean;
     wasFinding: boolean;
@@ -548,6 +548,7 @@ export function newTextEditorState(): TextEditorState {
         selectionEnd: -1,
         selectionAnchorEnd: -1,
         selectionAnchor: -1,
+        hasClick: false,
         canStartSelecting: false,
         isSelecting: false,
 
@@ -663,6 +664,11 @@ export function imTextEditor(s: TextEditorState, {
     // rendered below the line and the line number
     figures?: (line: number) => void;   
 }) {
+
+    const mouse = getMouse();
+    if (!mouse.leftMouseButton) {
+        s.hasClick = false;
+    }
 
     // Only want to initialize this state if we've actually started
     // finding.
@@ -792,6 +798,10 @@ export function imTextEditor(s: TextEditorState, {
                         imEndList();
 
                         imBeginLayout(FLEX); {
+                            if (imInit()) {
+                                setStyle("cursor", "text");
+                            }
+
                             imBeginLayout(); {
                                 let tokenIdx = 0;
 
@@ -819,7 +829,11 @@ export function imTextEditor(s: TextEditorState, {
                                             root.text(c);
                                         }
 
-                                        if (elementHasMouseDown(false) || elementHasMouseClick()) {
+                                        if (elementHasMouseClick()) {
+                                            s.hasClick = true;
+                                        }
+
+                                        if (s.hasClick && elementHasMouseDown(false)) {
                                             // move cursor to current token
                                             s.cursor = i;
                                             setCanSelect(s);
@@ -901,7 +915,10 @@ export function imTextEditor(s: TextEditorState, {
                                 }
                                 imEndList();
 
-                                if (elementHasMouseDown(false)) {
+                                if (elementHasMouseClick()) {
+                                    s.hasClick = true;
+                                }
+                                if (s.hasClick && elementHasMouseDown(false)) {
                                     // Don't defer event for the line.
 
                                     // move cursor to current line

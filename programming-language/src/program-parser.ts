@@ -390,18 +390,18 @@ function reachedEnd(ctx: ParserContext) {
 }
 
 function advance(ctx: ParserContext) {
-    ctx.pos.i++;
     const c = currentChar(ctx);
     if (c === "\n") {
         ctx.pos.line++;
         ctx.pos.col = 0;
         ctx.pos.tabs = 0;
-    } if (c === "\t") {
+    } else if (c === "\t") {
         ctx.pos.tabs++;
     } else {
         ctx.pos.col++;
     }
 
+    ctx.pos.i++;
 
     return !reachedEnd(ctx);
 }
@@ -917,10 +917,11 @@ function computeNumberForNumberExpression(expr: ProgramExpressionNumberLiteral):
 // bunch of code everywhere checking that it was only happening as a 'block level' statement. also makes the
 // stack frame stuff easier to implement when we make it it's own thing like this
 function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boolean): ProgramExpression | undefined {
-    const pos = getParserPosition(ctx);
     let result: ProgramExpression = parseIdentifierOrPreviousResultOp(ctx);
 
     parseWhitespace(ctx);
+
+    const pos = getParserPosition(ctx);
 
     if (currentChar(ctx) === "[") {
         // TODO: move this to be for any expression
@@ -959,7 +960,7 @@ function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boo
         result = {
             t: T_FN,
             slice: newTextSlice(ctx.text, result.slice.start, ctx.pos.i),
-            pos,
+            pos: pos,
             fnName: result,
             arguments: [],
             body: null,
