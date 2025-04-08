@@ -60,7 +60,7 @@ import { GlobalContext, GlobalState, newGlobalContext, saveState, startDebugging
 import "./styling.ts";
 import { cnApp, cssVars, getCurrentTheme } from './styling.ts';
 import { imTextEditor, loadText, newTextEditorState, UNANIMOUSLY_DECIDED_TAB_SIZE } from './text-editor.ts';
-import { abortListAndRewindUiStack, assert, cn, deferClickEventToParent, deltaTimeSeconds, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, endFrame, getCurrentRoot, getKeys, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, newCssBuilder, nextListRoot, Ref, scrollIntoViewRect, scrollIntoViewVH, setAttributes, setClass, setInnerText, setStyle, SizeState, UIRoot } from './utils/im-dom-utils.ts';
+import { abortListAndRewindUiStack, assert, cn, deferClickEventToParent, deltaTimeSeconds, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, endFrame, getCurrentRoot, getKeys, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, newCssBuilder, nextListRoot, Ref, scrollIntoViewRect, scrollIntoViewVH, setAttributes, setClass, setInnerText, setStyle, SizeState, UIRoot } from './utils/im-dom-utils.ts';
 import { clamp, inverseLerp, lerp, max, min } from './utils/math-utils.ts';
 import { getSliceValue } from './utils/matrix-math.ts';
 import { getLineBeforePos, getLineEndPos, getLineStartPos } from './utils/text-utils.ts';
@@ -80,7 +80,7 @@ function beginCodeBlock(indent: number) {
 }
 
 
-function ParserOutput(parseResult: ProgramParseResult | undefined) {
+function imParserOutputs(parseResult: ProgramParseResult | undefined) {
     imBeginList();
     if (nextListRoot() && parseResult) {
         const statements = parseResult.statements;
@@ -117,7 +117,7 @@ function ParserOutput(parseResult: ProgramParseResult | undefined) {
                 let typeString = expressionTypeToString(expr);
                 switch (expr.t) {
                     case T_IDENTIFIER: {
-                        renderRow(title, typeString, depth, expressionToString(expr));
+                        renderRow(title, typeString, depth, expressionToString(parseResult.text, expr));
                     } break;
                     case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: {
                         renderRow(title, typeString, depth);
@@ -128,8 +128,8 @@ function ParserOutput(parseResult: ProgramParseResult | undefined) {
                         dfs("rhs", expr.rhs, depth + 1);
                     } break;
                     case T_BINARY_OP: {
-                        const lhsText = expressionToString(expr.lhs);
-                        const rhsText = expr.rhs ? expressionToString(expr.rhs) : INCOMPLETE;
+                        const lhsText = expressionToString(parseResult.text, expr.lhs);
+                        const rhsText = expr.rhs ? expressionToString(parseResult.text, expr.rhs) : INCOMPLETE;
                         const opSymbol = binOpToSymbolString(expr.op);
                         const text = `(${lhsText}) ${opSymbol} (${rhsText})`;
                         renderRow(title, binOpToString(expr.op), depth, text);
@@ -138,14 +138,14 @@ function ParserOutput(parseResult: ProgramParseResult | undefined) {
                         dfs("rhs", expr.rhs, depth + 1);
                     } break;
                     case T_UNARY_OP: {
-                        const exprText = expressionToString(expr.expr);
+                        const exprText = expressionToString(parseResult.text, expr.expr);
                         const opSymbol = unaryOpToOpString(expr.op);
                         const text = `${opSymbol}(${exprText})`;
                         renderRow(title, unaryOpToString(expr.op), depth, text);
                         dfs("expr", expr.expr, depth + 1);
                     } break;
                     case T_MAP_LITERAL: {
-                        renderRow(title, typeString, depth, expressionToString(expr));
+                        renderRow(title, typeString, depth, expressionToString(parseResult.text, expr));
 
                         for (let i = 0; i < expr.kvPairs.length; i++) {
                             dfs("key[" + i + "]", expr.kvPairs[i][0], depth + 1);
@@ -154,22 +154,22 @@ function ParserOutput(parseResult: ProgramParseResult | undefined) {
                     } break;
                     case T_LIST_LITERAL:
                     case T_VECTOR_LITERAL: {
-                        renderRow(title, typeString, depth, expressionToString(expr));
+                        renderRow(title, typeString, depth, expressionToString(parseResult.text, expr));
 
                         for (let i = 0; i < expr.items.length; i++) {
                             dfs("[" + i + "]", expr.items[i], depth + 1);
                         }
                     } break;
                     case T_NUMBER_LITERAL: {
-                        renderRow(title, typeString, depth, expressionToString(expr));
+                        renderRow(title, typeString, depth, expressionToString(parseResult.text, expr));
                     } break;
                     case T_STRING_LITERAL: {
-                        renderRow(title, typeString, depth, expressionToString(expr));
+                        renderRow(title, typeString, depth, expressionToString(parseResult.text, expr));
                     } break;
                     case T_TERNARY_IF: {
-                        const queryText = expressionToString(expr.query);
-                        const trueText = expressionToString(expr.trueBranch);
-                        const falseText = expr.falseBranch ? expressionToString(expr.falseBranch) : "";
+                        const queryText = expressionToString(parseResult.text, expr.query);
+                        const trueText = expressionToString(parseResult.text, expr.trueBranch);
+                        const falseText = expr.falseBranch ? expressionToString(parseResult.text, expr.falseBranch) : "";
                         renderRow(title, typeString, depth, `(${queryText}) ? (${trueText}) : (${falseText})`);
 
                         dfs("query", expr.query, depth + 1);
@@ -226,8 +226,8 @@ function ParserOutput(parseResult: ProgramParseResult | undefined) {
         }
         imEndList();
 
-        renderDiagnosticInfo("Errors", parseResult.errors, "No parsing errors!");
-        renderDiagnosticInfo("Warnings", parseResult.warnings, "No parsing warnings");
+        imDiagnosticInfo("Errors", parseResult.errors, "No parsing errors!");
+        imDiagnosticInfo("Warnings", parseResult.warnings, "No parsing warnings");
     } else {
         nextListRoot();
         imTextSpan("No parse results yet");
@@ -244,7 +244,7 @@ function beginHeading() {
 }
 
 // TODO: display these above the code editor itself. 
-function renderDiagnosticInfo(heading: string, info: DiagnosticInfo[], emptyText: string) {
+function imDiagnosticInfo(heading: string, info: DiagnosticInfo[], emptyText: string) {
     imBeginList();
     if (nextListRoot() && heading) {
         beginHeading(); {
@@ -370,28 +370,6 @@ function renderProgramResult(res: ProgramResult) {
     } imEnd();
 }
 
-function beginExpandableSectionHeading(text: string, isCollapsed: boolean) {
-    const root = beginHeading(); {
-        imTextSpan(text);
-
-        imBeginList();
-        if (nextListRoot() && isCollapsed) {
-            imTextSpan(" <");
-        } else {
-            nextListRoot();
-            imTextSpan(" v");
-        }
-        imEndList();
-
-        if (imInit()) {
-            setStyle("cursor", "pointer");
-            setClass(cn.userSelectNone);
-        }
-    }
-
-    return root;
-}
-
 function renderExecutionStep(step: ProgramExecutionStep) {
     imTextSpan(executionStepToString(step));
 }
@@ -450,7 +428,8 @@ function renderFunctionInstructions(interpretResult: ProgramInterpretResult, { n
 const cssb = newCssBuilder();
 
 const cnButton = cssb.cn("button", [
-    ` { user-select: none; cursor: pointer; border: 2px solid ${cssVars.fg}; border: 2px solid currentColor; border-radius: 8px; padding: 2px 2px; box-sizing: border-box; }`,
+    ` { user-select: none; cursor: pointer; border: 2px solid ${cssVars.fg}; border: 2px solid currentColor; border-radius: 8px; 
+    padding: 2px 10px; box-sizing: border-box; }`,
     `:hover { background-color: ${cssVars.bg2} }`,
     `:active { background-color: ${cssVars.mg} }`,
 
@@ -492,28 +471,48 @@ function imFunctionName(fn: ProgramResultFunction | null) {
 }
 
 function renderAppCodeOutput(ctx: GlobalContext) {
-    imBeginScrollContainer(FLEX); {
-        const parseResult = ctx.lastParseResult;
+    imBeginLayout(ROW | GAP); {
+        imBeginButton(ctx.state.autorun); {
+            imTextSpan("Autorun");
 
-        beginExpandableSectionHeading("Parser output", ctx.state.collapseParserOutput); {
+            if (elementHasMouseClick()) {
+                ctx.state.autorun = !ctx.state.autorun
+            }
+        } imEnd();
+
+        imBeginButton(); {
+            imTextSpan("Start debugging");
+            if (elementHasMouseClick()) {
+                startDebugging(ctx);
+            }
+        } imEnd();
+
+        imBeginButton(!ctx.state.collapseParserOutput); {
+            imTextSpan("Show AST");
             if (elementHasMouseClick()) {
                 ctx.state.collapseParserOutput = !ctx.state.collapseParserOutput;
             }
         } imEnd();
 
-        imBeginList();
-        if (nextListRoot() && !ctx.state.collapseParserOutput) {
-            ParserOutput(parseResult);
-        }
-        imEndList();
 
-        const message = imRef<string>();
-
-        beginExpandableSectionHeading("Instruction generation - output", ctx.state.collapseInterpreterPass1Output); {
+        imBeginButton(!ctx.state.collapseInterpreterPass1Output); {
+            imTextSpan("Show instructions");
             if (elementHasMouseClick()) {
                 ctx.state.collapseInterpreterPass1Output = !ctx.state.collapseInterpreterPass1Output;
             }
         } imEnd();
+    } imEnd();
+
+    const scrollContainer = imBeginScrollContainer(FLEX); {
+        const parseResult = ctx.lastParseResult;
+
+        imBeginList();
+        if (nextListRoot() && !ctx.state.collapseParserOutput) {
+            imParserOutputs(parseResult);
+        }
+        imEndList();
+
+        const message = imRef<string>();
 
         // TODO: better UI for this message
         imBeginDiv(); {
@@ -527,7 +526,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
                 const interpretResult = ctx.lastInterpreterResult;
 
                 imBeginDiv(); {
-                    renderDiagnosticInfo("Interpreting errors", interpretResult.errors, "No interpreting errors");
+                    imDiagnosticInfo("Interpreting errors", interpretResult.errors, "No interpreting errors");
 
                     imBeginEl(newH3); {
                         imTextSpan("Instructions");
@@ -574,34 +573,18 @@ function renderAppCodeOutput(ctx: GlobalContext) {
             } imEndList();
         } imEndList();
 
-        imBeginLayout(ROW | GAP); {
-            imBeginLayout(FLEX); {
-                imBeginButton(ctx.state.autorun); {
-                    imTextSpan("Autorun");
-
-                    if (elementHasMouseClick()) {
-                        ctx.state.autorun = !ctx.state.autorun
-                    }
-                } imEnd();
-            } imEnd();
-
-            imBeginLayout(FLEX); {
-                imBeginButton(); {
-                    imTextSpan("Start debugging");
-                    if (elementHasMouseClick()) {
-                        startDebugging(ctx);
-                    }
-                } imEnd();
-            } imEnd();
-        } imEnd();
-
         beginHeading(); {
             imTextSpan("Code output");
         } imEnd();
 
         imBeginList();
         if (nextListRoot() && ctx.lastInterpreterResult) {
-            renderProgramOutputs(ctx, ctx.lastInterpreterResult, ctx.lastInterpreterResult.outputs);
+            imProgramOutputs(
+                ctx, 
+                ctx.lastInterpreterResult, 
+                ctx.lastInterpreterResult.outputs,
+                scrollContainer.root
+            );
         } else {
             nextListRoot();
             imBeginLayout(); {
@@ -719,6 +702,8 @@ function renderAppCodeEditor(ctx: GlobalContext) {
             state.text = editorState.buffer.join("");
         } imEndMemo();
 
+        ctx.cursorPos = editorState.cursor;
+
         const renderDiagnostics = (diagnostics: DiagnosticInfo[], col: string, line: number) => {
             // NOTE: we're currently looping over this for every line.
             // if it becomes too slow, may need to do something about it.
@@ -805,7 +790,7 @@ function renderAppCodeEditor(ctx: GlobalContext) {
                             setStyle("maxWidth", "60vw");
                         }
 
-                        renderProgramOutputs(ctx, lastInterpreterResult, thisLineOutputs);
+                        imProgramOutputs(ctx, lastInterpreterResult, thisLineOutputs);
                     } imEnd();
                 }
                 imEndList();
@@ -971,14 +956,7 @@ function filterString(text: string, query: string) {
 }
 
 function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretResult) {
-    imBeginLayout(COL | GAP); {
-        if (imInit()) {
-            setClass(cn.h100);
-            setClass(cn.overflowYAuto);
-            setClass(cn.borderBox);
-            setStyle("padding", "10px");
-        }
-
+    imBeginScrollContainer(COL | GAP | H100); {
         const message = imRef<string>();
 
         imBeginLayout(ROW | GAP); {
@@ -1151,7 +1129,7 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
                         imTextSpan("Results");
                     } imEnd();
 
-                    renderProgramOutputs(ctx, interpretResult, interpretResult.outputs);
+                    imProgramOutputs(ctx, interpretResult, interpretResult.outputs);
                 } imEnd();
             } imEnd();
         } imEnd();
@@ -1282,7 +1260,7 @@ function renderImageOutput(image: ProgramImageOutput) {
     beginMaximizeableContainer(image); {
         imBeginLayout(COL | OPAQUE | FLEX | GAP); {
             imBeginLayout(ROW | GAP); {
-                maximizeItemButton(image);
+                imMaximizeItemButton(image);
             } imEnd();
 
             imBeginLayout(FLEX | RELATIVE); {
@@ -1294,7 +1272,7 @@ function renderImageOutput(image: ProgramImageOutput) {
 
                     const [canvasRoot, ctx] = beginCanvasRenderingContext2D();
                     const canvas = canvasRoot.root; {
-                        imPlotZoomingAndPanning(plotState, true, rect);
+                        imPlotZoomingAndPanning(plotState, rect);
 
                         const { width, height } = rect;
                         const pixelSize = 10;
@@ -1370,9 +1348,12 @@ function renderImageOutput(image: ProgramImageOutput) {
 
 function imPlotZoomingAndPanning(
     plotState: PlotState,
-    canZoom: boolean,
     size: SizeState,
 ) {
+    const isMaximized = plotState === currentMaximizedItem;
+    const canZoom = elementHasMouseHover() && (isShiftPressed() || isMaximized);
+    plotState.canZoom = canZoom;
+
     if (imInit()) {
         setStyle("cursor", "move");
     }
@@ -1407,7 +1388,7 @@ function imPlotZoomingAndPanning(
             const mouseYPlot = getPlotY(plotState, mouseY);
 
             plotState.zoom -= mouse.scrollY / 100;
-            plotState.zoom = clamp(plotState.zoom, 0.5, 10);
+            plotState.zoom = clamp(plotState.zoom, 0.5, 100000);
 
             const newMouseX = getCanvasElementX(plotState, mouseXPlot);
             const newMouseY = getCanvasElementY(plotState, mouseYPlot);
@@ -1462,7 +1443,7 @@ function renderGraph(graph: ProgramGraphOutput) {
 
         const [canvasRoot, ctx] = beginCanvasRenderingContext2D();
         const canvas = canvasRoot.root; {
-            imPlotZoomingAndPanning(plotState, true, rect);
+            imPlotZoomingAndPanning(plotState, rect);
 
             if (imBeginMemoComputation().val(width).val(height).val(graph).objectVals(plotState).changed()) {
                 canvas.width = width;
@@ -1534,8 +1515,30 @@ function renderGraph(graph: ProgramGraphOutput) {
     } imEnd();
 }
 
-function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResult, outputs: ProgramOutputs) {
-    // TODO: scroll container, also collapse repeated prints.
+type ProgramOutputState = {
+    currentThingToScrollTo: HTMLElement | undefined;
+};
+function programOutputsState(): ProgramOutputState {
+    return  {
+        currentThingToScrollTo: undefined
+    };
+}
+
+function canScrollToThing(ctx: GlobalContext, s: ProgramOutputState, expr: ProgramExpression) {
+    return !s.currentThingToScrollTo &&
+        expr.start.i <= ctx.cursorPos && ctx.cursorPos <= expr.end.i;
+}
+
+function imProgramOutputs(
+    ctx: GlobalContext, 
+    program: ProgramInterpretResult, 
+    outputs: ProgramOutputs,
+    scrollContainer?: HTMLElement,
+) {
+    const s = imState(programOutputsState);
+    s.currentThingToScrollTo = undefined;
+    const programText = program.parseResult.text;
+
     imBeginLayout(); {
         if (imInit()) {
             setStyle("height", "5px")
@@ -1544,13 +1547,17 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
     imBeginList();
     for (const result of outputs.prints) {
         nextListRoot();
-        imBeginLayout(ROW | GAP); {
+        const root = imBeginLayout(ROW | GAP); {
+            if (canScrollToThing(ctx, s, result.expr)) {
+                s.currentThingToScrollTo = root.root;
+            }
+
             imVerticalBar();
 
             imBeginLayout(COL | GAP); {
                 beginCodeBlock(0); {
                     imTextSpan(
-                        expressionToString(result.expr)
+                        expressionToString(programText, result.expr)
                     )
                 } imEnd();
 
@@ -1565,23 +1572,29 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
         imBeginList();
         for (const [idx, graph] of outputs.graphs) {
             nextListRoot();
-            imBeginLayout(COL | GAP); {
+
+            const root = imBeginLayout(COL | GAP); {
+                if (canScrollToThing(ctx, s, graph.expr)) {
+                    s.currentThingToScrollTo = root.root;
+                }
+
                 imTextSpan("Graph #" + idx, H3);
             } imEnd();
+
             imBeginLayout(ROW | GAP); {
                 imVerticalBar();
 
                 imBeginLayout(COL | GAP | FLEX); {
                     beginCodeBlock(0); {
                         imTextSpan(
-                            expressionToString(graph.expr)
+                            expressionToString(programText, graph.expr)
                         )
                     } imEnd();
 
                     beginMaximizeableContainer(graph); {
                         imBeginLayout(COL | OPAQUE | FLEX | GAP); {
                             imBeginLayout(ROW | GAP); {
-                                maximizeItemButton(graph);
+                                imMaximizeItemButton(graph);
                             } imEnd();
 
                             imBeginAspectRatio(16, 9); {
@@ -1597,13 +1610,23 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
     imBeginList();
     for (const image of outputs.images) {
         nextListRoot();
-        imBeginLayout(ROW | GAP); {
+        const root = imBeginLayout(ROW | GAP); {
+            if (canScrollToThing(ctx, s, image.expr)) {
+                s.currentThingToScrollTo = root.root;
+            }
+
             imVerticalBar();
 
             imBeginLayout(COL | GAP | FLEX); {
                 beginCodeBlock(0); {
-                    imTextSpan(
-                        expressionToString(image.expr)
+                    if (imInit()) {
+                        setStyle("textOverflow", "ellipsis");
+                        setStyle("whiteSpace", "nowrap");
+                        setStyle("overflow", "hidden");
+                    }
+
+                    setInnerText(
+                        expressionToString(programText, image.expr)
                     )
                 } imEnd();
 
@@ -1617,7 +1640,18 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
         imBeginList();
         for (const [idx, plot] of outputs.plots) {
             nextListRoot();
-            imBeginLayout(COL | GAP); {
+            const root = imBeginLayout(COL | GAP); {
+                for (const line of plot.lines) {
+                    if (canScrollToThing(ctx, s, line.expr)) {
+                        s.currentThingToScrollTo = root.root;
+                    }
+                }
+                for (const func of plot.functions) {
+                    if (canScrollToThing(ctx, s, func.expr)) {
+                        s.currentThingToScrollTo = root.root;
+                    }
+                }
+
                 imBeginLayout(COL | GAP); {
                     imTextSpan("Plot #" + idx, H3);
                 } imEnd();
@@ -1637,7 +1671,7 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
                     nextListRoot();
                     imBeginLayout(ROW | GAP); {
                         imTextSpan(count + "x: ");
-                        imTextSpan(expressionToString(expr), CODE);
+                        imTextSpan(expressionToString(programText, expr), CODE);
                     } imEnd();
                 }
                 imEndList();
@@ -1653,6 +1687,16 @@ function renderProgramOutputs(ctx: GlobalContext, program: ProgramInterpretResul
         imTextSpan("No results yet");
     }
     imEndList();
+
+    if (imBeginMemo()
+        .val(scrollContainer)
+        .val(s.currentThingToScrollTo)
+        .changed()
+    ) {
+        if (scrollContainer && s.currentThingToScrollTo) {
+            scrollIntoViewVH(scrollContainer, s.currentThingToScrollTo, 0.5);
+        }
+    } imEndMemo();
 }
 
 let currentMaximizedItem: object | null = null;
@@ -1668,6 +1712,7 @@ function setInset(amount: string) {
 }
 
 type PlotState = {
+    grid: boolean;
     posX: number;
     posY: number;
     originalExtent: number;
@@ -1676,10 +1721,12 @@ type PlotState = {
     height: number;
     maximized: boolean;
     isPanning: boolean;
+    canZoom: boolean;
 }
 
 function newPlotState(): PlotState {
     return {
+        grid: false,
         posX: 0,
         posY: 0,
         zoom: 1,
@@ -1688,6 +1735,7 @@ function newPlotState(): PlotState {
         height: 0,
         maximized: false,
         isPanning: false,
+        canZoom: false,
     };
 }
 
@@ -1906,7 +1954,7 @@ function beginMaximizeableContainer(item: object) {
 
 }
 
-function maximizeItemButton(item: object) {
+function imMaximizeItemButton(item: object) {
     const isMaximized = currentMaximizedItem === item;
 
     imBeginButton(isMaximized); {
@@ -1929,12 +1977,23 @@ function maximizeItemButton(item: object) {
     } imEnd();
 }
 
+
 function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
     const isMaximized = plot === currentMaximizedItem;
+    const plotState = imState(newPlotState);
+    plotState.maximized = isMaximized;
+
     beginMaximizeableContainer(plot); {
         imBeginLayout(COL | OPAQUE | FLEX | GAP); {
             imBeginLayout(ROW | GAP); {
-                maximizeItemButton(plot);
+                imMaximizeItemButton(plot);
+
+                imBeginButton(plotState.grid); {
+                    setInnerText("Grid");
+                    if (elementHasMouseClick()) {
+                        plotState.grid = !plotState.grid;
+                    }
+                } imEnd();
             } imEnd();
 
             imBeginLayout(FLEX | RELATIVE).root; {
@@ -1950,20 +2009,24 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                 const [canvasRoot, ctx] = beginCanvasRenderingContext2D();
                 const canvas = canvasRoot.root; {
                     const mouse = getMouse();
-                    const canZoom = elementHasMouseHover() && (isShiftPressed() || isMaximized);
 
-                    if (elementHasMouseHover() && (mouse.scrollY !== 0 && !canZoom)) {
+                    // init canvas 
+
+                    if (elementHasMouseHover() && (mouse.scrollY !== 0 && !plotState.canZoom)) {
                         shiftScrollToZoomVal.val = 1;
                     }
 
-                    // init canvas 
-                    const plotState = imState(newPlotState);
-                    plotState.maximized = isMaximized;
-
-                    imPlotZoomingAndPanning(plotState, canZoom, rect);
+                    imPlotZoomingAndPanning(plotState, rect);
 
                     const { width, height } = rect;
-                    if (imBeginMemoComputation().val(program.parseResult.text).val(width).val(height).changed()) {
+
+                    if (imBeginMemoComputation()
+                        .val(program.parseResult.text)
+                        .val(width)
+                        .val(height)
+                        .changed()
+                    ) {
+
                         plotState.width = rect.width;
                         plotState.height = rect.height;
                         canvas.width = width;
@@ -2160,6 +2223,51 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                                     }
                                 }
                             }
+                        }
+
+                        // Draw the grid
+                        if (true || plotState.grid) { // TODO: gate
+                            const xMin = getPlotX(plotState, 0);
+                            const xMax = getPlotX(plotState, width);
+                            const yMin = getPlotY(plotState, 0);
+                            const yMax = getPlotY(plotState, height);
+                            const padding = 5;
+
+                            const theme = getCurrentTheme();
+                            ctx.fillStyle = theme.fg.toCssString();
+                            ctx.strokeStyle = theme.fg.toCssString();
+                            ctx.font = "0.7em Arial";
+
+                            // draw the extent info
+                            {
+                                ctx.textAlign = "start";
+                                ctx.textBaseline = "middle";
+                                ctx.fillText("" + xMin.toPrecision(3), padding, plotState.height / 2);
+
+                                ctx.textAlign = "end";
+                                ctx.textBaseline = "middle";
+                                ctx.fillText("" + xMax.toPrecision(3), plotState.width - padding, plotState.height / 2);
+
+                                ctx.textAlign = "center";
+                                ctx.textBaseline = "top";
+                                ctx.fillText("" + yMin.toPrecision(3), plotState.width / 2, padding);
+
+                                ctx.textAlign = "center";
+                                ctx.textBaseline = "bottom";
+                                ctx.fillText("" + yMax.toPrecision(3), plotState.width / 2, plotState.height - padding);
+                            }
+
+                            // draw the grid
+                            {
+                                ctx.beginPath(); {
+                                    ctx.moveTo(0, height / 2);
+                                    ctx.lineTo(width, height / 2);
+                                    ctx.moveTo(width / 2, 0);
+                                    ctx.lineTo(width / 2, height);
+                                } ctx.closePath();
+                                ctx.stroke();
+                            }
+
                         }
 
                         drawBoundary(ctx, width, height);
@@ -2429,40 +2537,22 @@ export function renderApp() {
                         renderAppCodeEditor(ctx);
                     } imEnd();
 
-                    const canCollapse = !ctx.isDebugging;
-                    let sidebarCollapsed = ctx.isSidebarCollapsed && canCollapse;
-                    imBeginList();
-                    if (nextListRoot() && !sidebarCollapsed) {
-                        imBeginLayout(FLEX | COL); {
-                            if (imInit()) {
-                                setInset("10px");
-                            }
+                    imBeginLayout(FLEX | COL | GAP); {
+                        if (imInit()) {
+                            setInset("10px");
+                        }
 
-                            imBeginList();
-                            if (nextListRoot() && ctx.isDebugging) {
-                                const interpretResult = ctx.lastInterpreterResult;
-                                assert(interpretResult);
-                                renderDebugger(ctx, interpretResult);
-                            } else {
-                                nextListRoot();
-                                renderAppCodeOutput(ctx);
-                            }
-                            imEndList();
-
-                            imBeginList();
-                            if (nextListRoot() && canCollapse) {
-                                imBeginButton(); {
-                                    imTextSpan("Collapse >");
-
-                                    if (elementHasMouseClick()) {
-                                        ctx.isSidebarCollapsed = true;
-                                    }
-                                } imEnd();
-                            } 
-                            imEndList();
-                        } imEnd();
-                    } 
-                    imEndList();
+                        imBeginList();
+                        if (nextListRoot() && ctx.isDebugging) {
+                            const interpretResult = ctx.lastInterpreterResult;
+                            assert(interpretResult);
+                            renderDebugger(ctx, interpretResult);
+                        } else {
+                            nextListRoot();
+                            renderAppCodeOutput(ctx);
+                        }
+                        imEndList();
+                    } imEnd();
                 } imEnd();
 
                 imBeginLayout(ROW | GAP | ALIGN_CENTER | ABSOLUTE | NORMAL); {
@@ -2471,24 +2561,6 @@ export function renderApp() {
                     });
 
                     imTextSpan(saveTimeout ? "Saving..." : "Saved");
-
-                    imBeginList()
-                    if (nextListRoot() && ctx.isSidebarCollapsed) {
-                        imBeginButton(); {
-                            if (imInit()) {
-                                setStyle("padding", "10px");
-                                setStyle("width", "2em");
-                                setStyle("height", "2em");
-                            }
-
-                            imTextSpan(" < ");
-
-                            if (elementHasMouseClick()) {
-                                ctx.isSidebarCollapsed = false;
-                            }
-                        } imEnd();
-                    }
-                    imEndList();
                 } imEnd();
             } else {
                 nextListRoot(2);

@@ -11,8 +11,8 @@ export type GlobalState = {
 
 export type GlobalContext = {
     isDebugging: boolean;
-    isSidebarCollapsed: boolean;
     functionToDebug: ProgramResultFunction | null;
+    cursorPos: number;
 
     lastParseResult: ProgramParseResult | undefined;
     lastInterpreterResult: ProgramInterpretResult | undefined;
@@ -66,7 +66,7 @@ export function newGlobalContext(): GlobalContext {
 
         isDebugging: false,
         functionToDebug: null,
-        isSidebarCollapsed: false,
+        cursorPos: 0,
 
         lastParseResult: undefined, 
         lastInterpreterResult: undefined,

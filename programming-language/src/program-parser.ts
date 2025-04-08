@@ -5,14 +5,6 @@ import { isWhitespace } from "./utils/text-utils";
 // Parser
 
 
-export type TextSlice = {
-    // Don't serialize this :D
-    fullText: string;
-
-    start: number;
-    end: number;
-}
-
 export type TextPosition = {
     i: number;
     line: number;
@@ -21,15 +13,13 @@ export type TextPosition = {
 };
 
 function newTextPosition(i: number, line: number, col: number, tabs: number): TextPosition {
-    return { i, line, col, tabs: tabs};
+    return { i, line, col, tabs: tabs };
 }
 
 export const T_IDENTIFIER = 1;
 export const T_IDENTIFIER_THE_RESULT_FROM_ABOVE = 2;
 
 export const T_BINARY_OP = 3;
-
-const ZERO_TEXT_SLICE = newTextSlice("0", 0, 1);
 
 export const T_NUMBER_LITERAL = 4;
 export const T_LIST_LITERAL = 5;
@@ -45,7 +35,7 @@ export const T_UNARY_OP = 14;
 export const T_MAP_LITERAL = 15;
 
 export function expressionTypeToString(expr: ProgramExpression): string {
-    switch(expr.t) {
+    switch (expr.t) {
         case T_IDENTIFIER:
             return "Identifier";
         case T_IDENTIFIER_THE_RESULT_FROM_ABOVE:
@@ -154,11 +144,11 @@ export function isUnreachable(): never {
 // This precedence table is the gift that keeps giving. thank you j blow, very cool.
 function getBinOpPrecedence(op: BinaryOperatorType): number {
     switch (op) {
-        case BIN_OP_IS_EQUAL_TO: 
-        case BIN_OP_GREATER_THAN: 
-        case BIN_OP_GREATER_THAN_EQ: 
-        case BIN_OP_LESS_THAN: 
-        case BIN_OP_LESS_THAN_EQ: 
+        case BIN_OP_IS_EQUAL_TO:
+        case BIN_OP_GREATER_THAN:
+        case BIN_OP_GREATER_THAN_EQ:
+        case BIN_OP_LESS_THAN:
+        case BIN_OP_LESS_THAN_EQ:
             return 2;
         case BIN_OP_AND_AND:
             return 3;
@@ -198,12 +188,12 @@ export function binOpToString(op: BinaryOperatorType): string {
 
 
 export type ProgramExpressionBase = {
-    slice: TextSlice;
-    pos: TextPosition;
+    start: TextPosition;
+    end: TextPosition;
 };
 
-export function expressionToString(expr: ProgramExpression): string {
-    return getSliceText(expr.slice);
+export function expressionToString(text: string, expr: ProgramExpression): string {
+    return text.slice(expr.start.i, expr.end.i)
 }
 
 // An identifier is just something that refers to a thing in the program.
@@ -219,9 +209,9 @@ export type ProgramExpressionPreviousResult = ProgramExpressionBase & {
 
 export type ProgramExpressionNumberLiteral = ProgramExpressionBase & {
     t: typeof T_NUMBER_LITERAL;
-    integerPart: TextSlice;
-    decimalPart: TextSlice | null;
-    exponentPart: TextSlice | null;
+    integerPart: string;
+    decimalPart: string | null;
+    exponentPart: string | null;
     isNegative: boolean;
     val: number;
 }
@@ -250,14 +240,14 @@ export type ProgramExpressionTernaryIf = ProgramExpressionBase & {
 
 export type ProgramExpressionBinaryOperator = ProgramExpressionBase & {
     t: typeof T_BINARY_OP;
-    op: BinaryOperatorType; 
+    op: BinaryOperatorType;
     lhs: ProgramExpression;
-    rhs?: ProgramExpression; 
+    rhs?: ProgramExpression;
 }
 
 export type ProgramExpressionUnaryOperator = ProgramExpressionBase & {
     t: typeof T_UNARY_OP;
-    op: UnaryOperatorType; 
+    op: UnaryOperatorType;
     expr: ProgramExpression;
 }
 
@@ -291,7 +281,7 @@ export type ProgramExpressionRangedFor = ProgramExpressionBase & {
 export type ProgramExpressionAssignment = ProgramExpressionBase & {
     t: typeof T_ASSIGNMENT;
     lhs: ProgramExpression;
-    rhs?: ProgramExpression; 
+    rhs?: ProgramExpression;
 };
 
 export type ProgramExpression = ProgramExpressionIdentifier
@@ -331,35 +321,10 @@ type ParserContext = {
     pos: TextPosition;
 }
 
-function newOptionalTextSlice(text: string, start: number, end: number): TextSlice | null {
-    if (start === end) {
-        return null;
-    }
-
-    return newTextSlice(text, start, end);
-}
-
-function newTextSlice(text: string, start: number, end: number): TextSlice {
-    return {
-        start,
-        end,
-        fullText: text,
-    };
-}
-
-export function getSliceText(slice: TextSlice) {
-    // DEV: you forgot to set the span correctly
-    assert(slice.end >= slice.start);
-
-    return slice.fullText.substring(slice.start, slice.end);
-}
-
-
-
 function isDigit(c: string) {
     const code = c.charCodeAt(0);
     // ASCII codes for '0' and '9'
-    return code >= 48 && code <= 57; 
+    return code >= 48 && code <= 57;
 }
 
 function isLetter(c: string) {
@@ -442,12 +407,11 @@ function isValidNumberPart(c: string) {
 
 function parseTernaryIf(ctx: ParserContext, query: ProgramExpression): ProgramExpressionTernaryIf | undefined {
     assert(currentChar(ctx) === "?");
-    const pos = getParserPosition(ctx);
 
     advance(ctx);
     parseWhitespace(ctx);
 
-    const start = query.slice.start
+    const start = query.start;
 
     const trueBranch = parseExpression(ctx);
     if (!trueBranch) {
@@ -456,8 +420,8 @@ function parseTernaryIf(ctx: ParserContext, query: ProgramExpression): ProgramEx
 
     const res: ProgramExpressionTernaryIf = {
         t: T_TERNARY_IF,
-        slice: newTextSlice(ctx.text, start, ctx.pos.i),
-        pos,
+        start,
+        end: getParserPosition(ctx),
         query,
         trueBranch,
         falseBranch: undefined,
@@ -475,7 +439,7 @@ function parseTernaryIf(ctx: ParserContext, query: ProgramExpression): ProgramEx
     const falseBranch = parseExpression(ctx);
     if (falseBranch) {
         res.falseBranch = falseBranch;
-        res.slice.end = ctx.pos.i;
+        res.end = getParserPosition(ctx);
     }
 
     return res;
@@ -489,7 +453,6 @@ function parseTernaryIf(ctx: ParserContext, query: ProgramExpression): ProgramEx
 // - need some form of interpolation, since that is always nice to have.
 function parseStringLiteral(ctx: ParserContext): ProgramExpressionStringLiteral | undefined {
     assert(currentChar(ctx) === "\"");
-    const pos = getParserPosition(ctx);
 
     const startPos = getParserPosition(ctx);
 
@@ -517,15 +480,16 @@ function parseStringLiteral(ctx: ParserContext): ProgramExpressionStringLiteral 
         return;
     }
 
-
     const result: ProgramExpressionStringLiteral = {
         t: T_STRING_LITERAL,
-        slice: newTextSlice(ctx.text, startPos.i, ctx.pos.i),
-        pos,
+        start: startPos,
+        end: getParserPosition(ctx),
         val: "",
     };
 
-    const [val, error] = computeStringForStringLiteral(result);
+    const [val, error] = computeStringForStringLiteral(
+        expressionToString(ctx.text, result)
+    );
     if (!val) {
         addErrorAtCurrentPosition(ctx, error);
         return;
@@ -535,8 +499,7 @@ function parseStringLiteral(ctx: ParserContext): ProgramExpressionStringLiteral 
     return result;
 }
 
-function computeStringForStringLiteral(expr: ProgramExpressionStringLiteral): [string | undefined, string] {
-    const fullText = getSliceText(expr.slice);
+function computeStringForStringLiteral(fullText: string): [string | undefined, string] {
     const text = fullText.slice(1, fullText.length - 1);
     const sb = [];
 
@@ -552,7 +515,7 @@ function computeStringForStringLiteral(expr: ProgramExpressionStringLiteral): [s
             sb.push(c);
         } else {
             isEscape = false;
-            switch(c) {
+            switch (c) {
                 case "n":
                     sb.push("\n");
                     break;
@@ -587,9 +550,8 @@ function computeStringForStringLiteral(expr: ProgramExpressionStringLiteral): [s
 function parseBlock(ctx: ParserContext): ProgramExpressionBlock | undefined {
     assert(currentChar(ctx) === "{");
     advance(ctx);
-    const pos = getParserPosition(ctx);
 
-    const start = ctx.pos.i;
+    const start = getParserPosition(ctx);
 
     const statements: ProgramExpression[] = [];
     parseStatements(ctx, statements, "}");
@@ -608,17 +570,15 @@ function parseBlock(ctx: ParserContext): ProgramExpressionBlock | undefined {
 
     return {
         t: T_BLOCK,
-        slice: newTextSlice(ctx.text, start, ctx.pos.i),
-        pos,
+        start,
+        end: getParserPosition(ctx),
         statements
     };
 }
 
 function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefined {
     assert(compareCurrent(ctx, "for"));
-    const pos = getParserPosition(ctx);
-
-    const start = ctx.pos.i;
+    const start = getParserPosition(ctx);
 
     for (let i = 0; i < 3; i++) {
         advance(ctx);
@@ -667,8 +627,8 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
 
     const result: ProgramExpressionRangedFor = {
         t: T_RANGE_FOR,
-        slice: newTextSlice(ctx.text, start, ctx.pos.i),
-        pos,
+        start,
+        end: getParserPosition(ctx),
         loopVar,
         rangeExpr,
         body: loopExpr,
@@ -678,9 +638,9 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
 }
 
 function parseExpressionsDelimiterSeparated(
-    ctx: ParserContext, 
-    expressions: ProgramExpression[], 
-    delimiter: string, 
+    ctx: ParserContext,
+    expressions: ProgramExpression[],
+    delimiter: string,
     closingDelimiterChar: string,
 ) {
     assert(delimiter.length === 1);
@@ -688,7 +648,7 @@ function parseExpressionsDelimiterSeparated(
 
     let foundClosingDelimiter = false;
 
-    while(!reachedEnd(ctx)) {
+    while (!reachedEnd(ctx)) {
         parseWhitespace(ctx);
 
         const expr = parseExpression(ctx);
@@ -696,7 +656,7 @@ function parseExpressionsDelimiterSeparated(
             expressions.push(expr);
 
             parseWhitespace(ctx);
-        } 
+        }
 
         let foundDelimiter = false;
         if (compareCurrent(ctx, delimiter)) {
@@ -734,16 +694,11 @@ function parseMapLiteral(ctx: ParserContext, pos: TextPosition): ProgramExpressi
     assert(currentChar(ctx) === "{");
     advance(ctx);
 
-    const result: ProgramExpressionMapLiteral = {
-        t: T_MAP_LITERAL,
-        slice: newTextSlice(ctx.text, pos.i, 0),
-        pos,
-        kvPairs: [],
-    };
+    const kvPairs: [ProgramExpression, ProgramExpression][] = [];
 
     let foundClosingBrace = false;
 
-    while(!reachedEnd(ctx)) {
+    while (!reachedEnd(ctx)) {
         parseWhitespace(ctx);
 
         const keyExpr = parseExpression(ctx);
@@ -764,12 +719,12 @@ function parseMapLiteral(ctx: ParserContext, pos: TextPosition): ProgramExpressi
                     addErrorAtPosition(ctx, getParserPosition(ctx), "Expected value expression after this");
                 }
                 return undefined;
-            } 
+            }
 
             parseWhitespace(ctx);
 
-            result.kvPairs.push([keyExpr, valueExpr]);
-        } 
+            kvPairs.push([keyExpr, valueExpr]);
+        }
 
         const foundDelimiter = currentChar(ctx) === ",";
         if (foundDelimiter) {
@@ -788,19 +743,23 @@ function parseMapLiteral(ctx: ParserContext, pos: TextPosition): ProgramExpressi
             return undefined;
         }
     }
-    
-    if (!foundClosingBrace) {
-        addErrorAtPosition(ctx, result.pos, `Never found a closing brance for this`);
-        return undefined;
-    } 
 
-    result.slice.end = ctx.pos.i;
-    return result;
+    if (!foundClosingBrace) {
+        addErrorAtPosition(ctx, pos, `Never found a closing brance for this`);
+        return undefined;
+    }
+
+    return {
+        t: T_MAP_LITERAL,
+        start: pos,
+        end: getParserPosition(ctx),
+        kvPairs,
+    };
 }
 
 function parseListLiteral(
-    ctx: ParserContext, 
-    type: (typeof T_VECTOR_LITERAL | typeof T_LIST_LITERAL), 
+    ctx: ParserContext,
+    type: (typeof T_VECTOR_LITERAL | typeof T_LIST_LITERAL),
     pos?: TextPosition
 ): ProgramExpressionListLiteral | undefined {
     assert(currentChar(ctx) === "[");
@@ -808,25 +767,24 @@ function parseListLiteral(
         pos = getParserPosition(ctx);
     }
 
-    const result: ProgramExpressionListLiteral = {
-        t: type,
-        slice: newTextSlice(ctx.text, pos.i, 0),
-        pos,
-        items: [],
-    };
-
     advance(ctx);
 
-    parseExpressionsDelimiterSeparated(ctx, result.items, "," ,"]");
+    const items: ProgramExpression[] = [];
 
-    result.slice.end = ctx.pos.i;
-    return result;
+    parseExpressionsDelimiterSeparated(ctx, items, ",", "]");
+
+    return {
+        t: type,
+        start: pos,
+        end: getParserPosition(ctx),
+        items,
+    };
 }
 
 function parseNumberLiteral(ctx: ParserContext): ProgramExpressionNumberLiteral {
-    assert(canParseNumberLiteral(ctx));
-    const pos = getParserPosition(ctx);
+    const start = getParserPosition(ctx);
 
+    assert(canParseNumberLiteral(ctx));
     let isNegative = false;
     if (currentChar(ctx) === "+") {
         advance(ctx);
@@ -835,14 +793,16 @@ function parseNumberLiteral(ctx: ParserContext): ProgramExpressionNumberLiteral 
         advance(ctx);
     }
 
-    const start = ctx.pos.i;
+    const intStart = ctx.pos.i;
     while (advance(ctx) && isValidNumberPart(currentChar(ctx))) { }
+
+    const integerPart = ctx.text.slice(intStart, ctx.pos.i);
 
     const result: ProgramExpressionNumberLiteral = {
         t: T_NUMBER_LITERAL,
-        integerPart: newTextSlice(ctx.text, start, ctx.pos.i),
-        slice: newTextSlice(ctx.text, start, ctx.pos.i),
-        pos,
+        integerPart,
+        start,
+        end: getParserPosition(ctx),
         decimalPart: null,
         exponentPart: null,
         isNegative,
@@ -857,8 +817,8 @@ function parseNumberLiteral(ctx: ParserContext): ProgramExpressionNumberLiteral 
     ) {
         const decimalPartStart = ctx.pos.i;
         while (isValidNumberPart(currentChar(ctx)) && advance(ctx)) { }
-        result.decimalPart = newOptionalTextSlice(ctx.text, decimalPartStart, ctx.pos.i);
-        result.slice.end = ctx.pos.i;
+        result.decimalPart = ctx.text.slice(decimalPartStart, ctx.pos.i);
+        result.end = getParserPosition(ctx);
     }
 
     if (currentChar(ctx) === "e" && advance(ctx)) {
@@ -871,8 +831,8 @@ function parseNumberLiteral(ctx: ParserContext): ProgramExpressionNumberLiteral 
         }
 
         while (isValidNumberPart(currentChar(ctx)) && advance(ctx)) { }
-        result.exponentPart = newOptionalTextSlice(ctx.text, exponentPartStart, ctx.pos.i);
-        result.slice.end = ctx.pos.i;
+        result.decimalPart = ctx.text.slice(exponentPartStart, ctx.pos.i);
+        result.end = getParserPosition(ctx);
     }
 
     result.val = computeNumberForNumberExpression(result);
@@ -884,19 +844,19 @@ function computeNumberForNumberExpression(expr: ProgramExpressionNumberLiteral):
     let result = 0;
 
     if (expr.decimalPart) {
-        const text = getSliceText(expr.decimalPart).replace(/_/g, "");
+        const text = expr.decimalPart.replace(/_/g, "");
         const decimalVal = parseInt(text) / Math.pow(10, text.length)
         result += decimalVal;
     }
 
     if (expr.integerPart) {
-        const text = getSliceText(expr.integerPart).replace(/_/g, "");
+        const text = expr.integerPart.replace(/_/g, "");
         const intVal = parseInt(text);
         result += intVal;
     }
 
     if (expr.exponentPart) {
-        const text = getSliceText(expr.exponentPart).replace(/_/g, "");
+        const text = expr.exponentPart.replace(/_/g, "");
         const expVal = parseInt(text);
         result *= Math.pow(10, expVal);
     }
@@ -921,14 +881,14 @@ function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boo
 
     parseWhitespace(ctx);
 
-    const pos = getParserPosition(ctx);
+    const start = getParserPosition(ctx);
 
     if (currentChar(ctx) === "[") {
         // TODO: move this to be for any expression
         result = {
             t: T_DATA_INDEX_OP,
-            slice: newTextSlice(ctx.text, result.slice.start, ctx.pos.i),
-            pos,
+            start,
+            end: getParserPosition(ctx),
             lhs: result,
             indexes: [],
         };
@@ -953,14 +913,14 @@ function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boo
             parseWhitespace(ctx);
         }
 
-        result.slice.end = ctx.pos.i;
+        result.end = getParserPosition(ctx);
     }
 
     if (result.t === T_IDENTIFIER && currentChar(ctx) === "(") {
         result = {
             t: T_FN,
-            slice: newTextSlice(ctx.text, result.slice.start, ctx.pos.i),
-            pos: pos,
+            start,
+            end: getParserPosition(ctx),
             fnName: result,
             arguments: [],
             body: null,
@@ -971,6 +931,8 @@ function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boo
 
         parseExpressionsDelimiterSeparated(ctx, result.arguments, ",", ")");
 
+        result.end = getParserPosition(ctx);
+
         parseWhitespace(ctx);
 
         if (currentChar(ctx) === "{" && !ctx.isInForLoopRangeExpr) {
@@ -979,14 +941,14 @@ function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boo
                 const arg = result.arguments[i];
 
                 if (arg.t !== T_IDENTIFIER) {
-                    addErrorAtPosition(ctx, arg.pos, "A function declaration's arguments list can only be identifiers");
+                    addErrorAtPosition(ctx, arg.start, "A function declaration's arguments list can only be identifiers");
                     return;
                 }
 
                 const name = arg.name;
                 for (const otherName of argNames) {
                     if (otherName.name === name) {
-                        addErrorAtPosition(ctx, arg.pos, "This argument name matches the name of a previous argument");
+                        addErrorAtPosition(ctx, arg.start, "This argument name matches the name of a previous argument");
                         return;
                     }
                 }
@@ -1004,16 +966,16 @@ function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boo
 
             result.body = block;
             if (ctx.parseResult.functions.has(result.fnName.name)) {
-                addErrorAtPosition(ctx, result.fnName.pos, "A function with this name already exists");
+                addErrorAtPosition(ctx, result.fnName.start, "A function with this name already exists");
                 return;
             }
             ctx.parseResult.functions.set(result.fnName.name, result);
+            result.end = getParserPosition(ctx);
         }
 
-        result.slice.end = ctx.pos.i;
     } else if (currentChar(ctx) === "=" && currentChar(ctx, 1) !== "=") {
         if (!canParseAssignment) {
-            addErrorAtPosition(ctx, result.pos, "Assignments may only be done at the root of an expression");
+            addErrorAtPosition(ctx, result.start, "Assignments may only be done at the root of an expression");
             return;
         }
 
@@ -1023,8 +985,8 @@ function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boo
         // TODO: move this to be for any expression
         result = {
             t: T_ASSIGNMENT,
-            slice: newTextSlice(ctx.text, result.slice.start, ctx.pos.i),
-            pos,
+            start: start,
+            end: getParserPosition(ctx),
             lhs: result,
             rhs: undefined,
         };
@@ -1038,7 +1000,7 @@ function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boo
         }
 
         result.rhs = rhs;
-        result.slice.end = ctx.pos.i;
+        result.end = getParserPosition(ctx);
     }
 
     return result;
@@ -1046,7 +1008,7 @@ function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boo
 
 function parseIdentifierOrPreviousResultOp(ctx: ParserContext): ProgramExpressionIdentifier | ProgramExpressionPreviousResult {
     const c = currentChar(ctx);
-    const pos = getParserPosition(ctx);
+    const start = getParserPosition(ctx);
 
     // Sometimes, someone might message something into the chat, and then rather than typing
     // "I agree" or something, I'll type "^" - shorthand for (this right here :upwards finger:). 
@@ -1059,38 +1021,35 @@ function parseIdentifierOrPreviousResultOp(ctx: ParserContext): ProgramExpressio
         advance(ctx);
         return {
             t: T_IDENTIFIER_THE_RESULT_FROM_ABOVE,
-            slice: newTextSlice(ctx.text, ctx.pos.i - 1, ctx.pos.i),
-            pos,
+            start,
+            end: getParserPosition(ctx),
         };
     }
 
     return parseIdentifier(ctx);
 }
 
-function parseIdentifier(ctx: ParserContext): ProgramExpressionIdentifier  {
+function parseIdentifier(ctx: ParserContext): ProgramExpressionIdentifier {
     assert(isLetter(currentChar(ctx)));
-    const pos = getParserPosition(ctx);
+    const start = getParserPosition(ctx);
 
-    const start = ctx.pos.i;
     while (
-        isAllowedIdentifierSymbol(currentChar(ctx)) && 
+        isAllowedIdentifierSymbol(currentChar(ctx)) &&
         advance(ctx)
-    ) {}
+    ) { }
 
-    const slice = newTextSlice(ctx.text, start, ctx.pos.i);
-
-    const name = getSliceText(slice);
+    const name = ctx.text.slice(start.i, ctx.pos.i);
 
     return {
         t: T_IDENTIFIER,
-        slice,
-        pos,
+        start,
+        end: getParserPosition(ctx),
         name,
     };
 }
 
 export function parseIdentifierBackwardsFromPoint(
-    text: string, 
+    text: string,
     pos: number
 ): string {
     const start = pos;
@@ -1112,8 +1071,8 @@ function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
     const c = currentChar(ctx);
     const c2 = currentChar(ctx, 1);
     const c3 = currentChar(ctx, 2);
-    switch(c) {
-        case "=": 
+    switch (c) {
+        case "=":
             if (c2 === "=") {
                 op = BIN_OP_IS_EQUAL_TO;
             }
@@ -1121,13 +1080,13 @@ function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
         case "*": op = BIN_OP_MULTIPLY; break;
         case "/": op = BIN_OP_DIVIDE; break;
         case "+": op = BIN_OP_ADD; break;
-        case "-": 
+        case "-":
             // Avoid conflicting with "->"
             if (c2 !== ">" && c2 !== "<") {
-                op = BIN_OP_SUBTRACT; 
+                op = BIN_OP_SUBTRACT;
             }
             break;
-        case "<": 
+        case "<":
             // Avoid conflicting with "<-"
             if (c2 !== "-") {
                 if (c2 === "=") {
@@ -1137,7 +1096,7 @@ function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
                 }
             }
             break;
-        case ">": 
+        case ">":
             if (c2 !== ">" && c3 !== ">") {
                 if (c2 === "=") {
                     op = BIN_OP_GREATER_THAN_EQ;
@@ -1146,12 +1105,12 @@ function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
                 }
             }
             break;
-        case "&": 
+        case "&":
             if (c2 === "&") {
-                op = BIN_OP_AND_AND; 
+                op = BIN_OP_AND_AND;
             }
             break;
-        case "|":  {
+        case "|": {
             if (c2 === "|") {
                 op = BIN_OP_OR_OR;
             }
@@ -1167,7 +1126,6 @@ function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
 // NOTE: My precedence is the other way around to what they had.
 function parseBinaryOperatorIncreasingPrecedence(ctx: ParserContext, lhs: ProgramExpression, maxPrecedence: number): ProgramExpression | undefined {
     assert(!isWhitespace(currentChar(ctx)));
-    const pos = getParserPosition(ctx);
 
     const op = parseBinaryOperator(ctx);
     const prec = getBinOpPrecedence(op);
@@ -1183,8 +1141,7 @@ function parseBinaryOperatorIncreasingPrecedence(ctx: ParserContext, lhs: Progra
         advance(ctx);
     }
 
-    const start = lhs.slice.start;
-    const endOfLhs = ctx.pos.i;
+    const start = lhs.start;
 
     parseWhitespace(ctx);
     const rhs = parseExpression(ctx, false, prec);
@@ -1194,8 +1151,8 @@ function parseBinaryOperatorIncreasingPrecedence(ctx: ParserContext, lhs: Progra
         op,
         lhs: lhs,
         rhs,
-        slice: newTextSlice(ctx.text, start, rhs?.slice?.end ?? endOfLhs),
-        pos,
+        start: start,
+        end: getParserPosition(ctx),
     };
 }
 
@@ -1288,15 +1245,15 @@ function parseExpression(ctx: ParserContext, canParseAssignment: boolean = false
             // Rewrite negatives to be like 0 - blah.
 
             res = {
-                slice: newTextSlice(ctx.text, start.i, ctx.pos.i),
-                pos: start,
+                start,
+                end: getParserPosition(ctx),
                 t: T_BINARY_OP,
                 // virtual expression. Source? where the text live? I made it tf up
                 lhs: {
                     t: T_NUMBER_LITERAL,
-                    pos: start, 
-                    slice: ZERO_TEXT_SLICE,
-                    integerPart: ZERO_TEXT_SLICE, 
+                    start: start,
+                    end: start,
+                    integerPart: "",
                     decimalPart: null,
                     exponentPart: null,
                     isNegative: false,
@@ -1316,14 +1273,13 @@ function parseExpression(ctx: ParserContext, canParseAssignment: boolean = false
             }
 
             res = {
-                slice: newTextSlice(ctx.text, start.i, ctx.pos.i),
-                pos: start,
+                start: start,
+                end: getParserPosition(ctx),
                 t: T_UNARY_OP,
                 op,
                 expr
             };
         }
-
     }
 
     if (res) {
@@ -1384,7 +1340,7 @@ function parseExpressionOrMoveToNextLine(ctx: ParserContext, canParseAssignments
     const statement = parseExpression(ctx, canParseAssignments);
     if (statement) {
         return statement;
-    } 
+    }
 
     if (ctx.parseResult.errors.length === 0) {
         if (currentChar(ctx) === "=") {
@@ -1428,7 +1384,9 @@ function parseStatements(ctx: ParserContext, statements: ProgramExpression[], cl
             if (thisLine === lastLine) {
                 ctx.parseResult.errors.push({
                     pos: lineStartPos,
-                    problem: "You've put multiple statements on the same line. This is so likely to be a mistake that I've promoted this message to be an error"
+                    // This is so likely to be a mistake that I've promoted this message to be an error. 
+                    // Might be worth adding a semicolon for this stuff?
+                    problem: "You've put multiple statements on the same line, which is no-longer allowed"
                 });
             }
             lastLine = thisLine;

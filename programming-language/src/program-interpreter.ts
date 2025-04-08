@@ -603,6 +603,7 @@ export type ProgramPlotOutputHeatmapFunction = {
     step: ProgramExecutionStep;
     fn: ProgramResultFunction;
     color: CssColor | undefined;
+    expr: ProgramExpression;
 }
 
 type ProgramUiInputBase = {
@@ -646,7 +647,7 @@ function getExecutionSteps(
 ) {
 
     const addError = (expr: ProgramExpression, problem: string) => {
-        result.errors.push({ pos: expr.pos, problem });
+        result.errors.push({ pos: expr.start, problem });
     }
 
     const incompleteExpressionError = (expr: ProgramExpression) => {
@@ -969,7 +970,7 @@ function pop(result: ProgramInterpretResult): ProgramResult {
 
 
 function addError(result: ProgramInterpretResult, step: ProgramExecutionStep, problem: string, betterPos: TextPosition | null = null) {
-    result.errors.push({ pos: betterPos ?? step.expr.pos, problem });
+    result.errors.push({ pos: betterPos ?? step.expr.start, problem });
 }
 
 function getVarExecutionState(result: ProgramInterpretResult, name: string): ExecutionState | null {
@@ -1435,7 +1436,7 @@ export function getBuiltinFunctionsMap() {
             }
 
             const plot = getOrAddNewPlot(program, idx.val);
-            plot.functions.push({ step, fn, color });
+            plot.functions.push({ step, fn, color, expr: step.expr });
 
             // can't be variadic, because print needs to return something...
             // That's ok, just put the args in a list, lol
@@ -2044,7 +2045,7 @@ export function getBuiltinFunctionsMap() {
         result.outputs.uiInputs = outputs.uiInputs;  // can't flush these, they are important.
         result.outputs.heatmapSubdivisions = outputs.heatmapSubdivisions;
         outputs.uiInputs = new Map();
-        result.flushedOutputs.set(step.expr.pos.line, outputs);
+        result.flushedOutputs.set(step.expr.start.line, outputs);
 
         for (const o of outputs.prints) {
             o.expr = step.expr;
@@ -2135,7 +2136,7 @@ function evaluateBuiltinFunctionCall(
 
                 const gotType = (res ? programResultTypeStringFromType(res.t) : "nothing");
 
-                addError(program, step, "Expected " + expectedType + " for " + typeInfo.name + ", got " + gotType, argExpr?.pos);
+                addError(program, step, "Expected " + expectedType + " for " + typeInfo.name + ", got " + gotType, argExpr?.start);
                 return null;
             }
         }
@@ -2792,7 +2793,7 @@ export function interpret(
 
         const uiInputsPerLine = result.outputs.uiInputsPerLine;
         for (const input of result.outputs.uiInputs.values()) {
-            const line = input.expr.pos.line;
+            const line = input.expr.start.line;
 
             let existingInputs = uiInputsPerLine.get(line - 1);
             if (existingInputs) {
