@@ -2123,30 +2123,35 @@ function evaluateBuiltinFunctionCall(
             return null;
         }
 
-        const res = get(program, -numArgsInputted + 1 + i);
+        let res;
+        if (i >= numArgsInputted) {
+            res = null;
+        } else {
+            res = get(program, -numArgsInputted + 1 + i);
+        }
         const typeInfo = fn.args[i];
 
-        if (typeInfo.type.length > 0) {
-            if (
-                (!res && !typeInfo.optional) ||
-                (res && !typeInfo.type.includes(res.t))
-            ) {
-                let expectedType;
-                if (typeInfo.type.length === 1) {
-                    expectedType = programResultTypeStringFromType(typeInfo.type[0]);
-                } else {
-                    expectedType = "one of " + typeInfo.type.map(programResultTypeStringFromType).join(" or ");
-                }
-
-                if (typeInfo.optional) {
-                    expectedType += " or nothing";
-                }
-
-                const gotType = (res ? programResultTypeStringFromType(res.t) : "nothing");
-
-                addError(program, step, "Expected " + expectedType + " for " + typeInfo.name + ", got " + gotType, argExpr?.start);
-                return null;
+        if (
+            (!res && !typeInfo.optional) ||
+            (res && (typeInfo.type.length > 0 && !typeInfo.type.includes(res.t)))
+        ) {
+            let expectedType;
+            if (typeInfo.type.length === 0) {
+                expectedType = "anything";
+            } else if (typeInfo.type.length === 1) {
+                expectedType = programResultTypeStringFromType(typeInfo.type[0]);
+            } else {
+                expectedType = "one of " + typeInfo.type.map(programResultTypeStringFromType).join(" or ");
             }
+
+            if (typeInfo.optional) {
+                expectedType += " or nothing";
+            }
+
+            const gotType = (res ? programResultTypeStringFromType(res.t) : "nothing");
+
+            addError(program, step, "Expected " + expectedType + " for " + typeInfo.name + ", got " + gotType, argExpr?.start);
+            return null;
         }
 
         return res;

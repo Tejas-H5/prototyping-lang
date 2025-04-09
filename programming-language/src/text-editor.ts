@@ -206,6 +206,7 @@ export type TextEditorState = {
     numLines: number;
     modifiedAt: number;
     cursor: number;
+    cursorLine: number;
     lastSelectCursor: number;
     hasFocus: boolean;
 
@@ -542,6 +543,7 @@ export function newTextEditorState(): TextEditorState {
         currentKeyDown: "",
         modifiedAt: 0,
         cursor: 0,
+        cursorLine: 0,
         lastSelectCursor: 0,
 
         selectionStart: -1,
@@ -894,6 +896,7 @@ export function imTextEditor(s: TextEditorState, {
                                             .changed()
                                         ) {
                                             setStyle("backgroundColor", (!isCursor && isAFindResultToken) ? "#00F" : "");
+                                            s.cursorLine = lineIdx;
                                         } imEndMemo();
                                     } imEnd();
 

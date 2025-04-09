@@ -13,6 +13,7 @@ export type GlobalContext = {
     isDebugging: boolean;
     functionToDebug: ProgramResultFunction | null;
     cursorPos: number;
+    cursorLine: number;
 
     lastParseResult: ProgramParseResult | undefined;
     lastInterpreterResult: ProgramInterpretResult | undefined;
@@ -67,6 +68,7 @@ export function newGlobalContext(): GlobalContext {
         isDebugging: false,
         functionToDebug: null,
         cursorPos: 0,
+        cursorLine: 0,
 
         lastParseResult: undefined, 
         lastInterpreterResult: undefined,

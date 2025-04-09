@@ -24,9 +24,12 @@ import {
     imTextSpan,
     TRANSLUCENT,
     imVerticalBar,
-    W100
+    W100,
+    setStyleFlags,
+    TRANSPARENT,
+    PREWRAP
 } from './layout.ts';
-import { evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getCurrentCallstack, interpret, newNumberResult, ProgramExecutionStep, ProgramGraphOutput, ProgramImageOutput, ProgramInterpretResult, ProgramOutputs, ProgramPlotOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MAP, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING, UI_INPUT_SLIDER } from './program-interpreter.ts';
+import { BuiltinFunction, evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getBuiltinFunctionsMap, getCurrentCallstack, interpret, newNumberResult, ProgramExecutionStep, ProgramGraphOutput, ProgramImageOutput, ProgramInterpretResult, ProgramOutputs, ProgramPlotOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, programResultTypeStringFromType, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MAP, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING, UI_INPUT_SLIDER } from './program-interpreter.ts';
 import {
     binOpToString,
     binOpToOpString as binOpToSymbolString,
@@ -34,6 +37,7 @@ import {
     expressionToString,
     expressionTypeToString,
     parse,
+    parseIdentifierBackwardsFromPoint,
     ProgramExpression,
     ProgramParseResult,
     T_ASSIGNMENT,
@@ -643,6 +647,7 @@ function renderAppCodeEditor(ctx: GlobalContext) {
         } imEndMemo();
 
         ctx.cursorPos = editorState.cursor;
+        ctx.cursorLine = editorState.cursorLine;
 
         const renderDiagnostics = (diagnostics: DiagnosticInfo[], col: string, line: number) => {
             // NOTE: we're currently looping over this for every line.
@@ -738,13 +743,105 @@ function renderAppCodeEditor(ctx: GlobalContext) {
                 imEndList();
             },
             annotations: (line) => {
-                if (lastInterpreterResult?.errors) {
+                imBeginList();
+                if (nextListRoot() && lastInterpreterResult?.errors) {
                     renderDiagnostics(lastInterpreterResult.errors, "#F00", line);
                 }
 
-                if (lastParseResult?.warnings) {
+                if (nextListRoot() && lastParseResult?.warnings) {
                     renderDiagnostics(lastParseResult?.warnings, "#F00", line);
                 }
+
+                if (nextListRoot() && line === ctx.cursorLine) {
+                    // we do a little autocomplete
+
+                    // autocomplete
+                    // right now you can't interact with it - it is more so that I actually remember all the crap I've put into here
+                    {
+                        const pos = ctx.cursorPos;
+                        const lastIdentifier = parseIdentifierBackwardsFromPoint(
+                            state.text,
+                            pos - 1
+                        );
+
+                        const results = imStateInline<BuiltinFunction[]>(() => []);
+                        if (imBeginMemoComputation().val(lastIdentifier).changed()) {
+                            results.length = 0;
+                            if (lastIdentifier.length > 0) {
+                                const funcs = getBuiltinFunctionsMap();
+                                for (const [k, v] of funcs) {
+                                    if (!filterString(k, lastIdentifier)) {
+                                        continue;
+                                    }
+                                    results.push(v);
+                                }
+                            }
+                        } imEndMemo();
+
+                        imBeginList();
+                        if (nextListRoot() && results.length > 0) {
+                            // TODO: when we do the AST editor, this will completely change, or be ripped out.
+
+                            imBeginLayout(PREWRAP |  CODE | TRANSPARENT); {
+                                if (imInit()) {
+                                    setClass(cn.pointerEventsNone);
+                                }
+
+                                setStyle("border", "1px solid black");
+
+                                imBeginList();
+                                let i = 0;
+                                for (const v of results) {
+                                    i++;
+                                    if (i > 5) {
+                                        break;
+                                    }
+                                    nextListRoot();
+
+                                    imBeginLayout(CODE); {
+                                        setStyle("border", "1px solid black");
+                                        imTextSpan(v.name);
+                                        imTextSpan("(");
+                                        imBeginList();
+                                        for (let i = 0; i < v.args.length; i++) {
+                                            const arg = v.args[i];
+                                            nextListRoot();
+                                            imTextSpan(arg.name);
+
+                                            imBeginList();
+                                            if (nextListRoot() && arg.optional) {
+                                                imTextSpan("?");
+                                            }
+                                            imEndList();
+
+                                            imTextSpan(":");
+
+                                            let type;
+                                            if (arg.type.length === 0) {
+                                                type = "any"
+                                            } else {
+                                                type = arg.type.map(programResultTypeStringFromType)
+                                                    .join("|");
+                                            }
+                                            imTextSpan(type);
+
+                                            imBeginList();
+                                            if (nextListRoot() && i < v.args.length - 1) {
+                                                imTextSpan(", ");
+                                            }
+                                            imEndList();
+                                        }
+                                        imEndList();
+                                        imTextSpan(")");
+                                    } imEnd();
+                                }
+                                imEndList();
+                            } imEnd();
+                        }
+                        imEndList();
+                    }
+                }
+                imEndList();
             }
         });
 
@@ -758,6 +855,10 @@ function renderAppCodeEditor(ctx: GlobalContext) {
             }
         } imEndMemo();
     } imEnd();
+}
+
+function filterString(text: string, query: string) {
+    return text.includes(query);
 }
 
 function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretResult) {
