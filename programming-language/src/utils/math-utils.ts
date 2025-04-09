@@ -37,3 +37,7 @@ export function sqrMag(x: number, y: number): number {
 export function mag(x: number, y: number): number {
     return sqrMag(x, y) ** 0.5;
 }
+
+export function gridSnap(x: number, spacing: number) {
+    return spacing * Math.floor(x / spacing);
+}

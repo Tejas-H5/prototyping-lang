@@ -763,6 +763,10 @@ export function imTextEditor(s: TextEditorState, {
                     let lineHasCursor = false;
 
                     imBeginLayout(CODE | PRE | ROW); {
+                        if (imInit()) {
+                            setStyle("alignItems", "flex-start");
+                        }
+
                         imBeginList();
                         if (nextListRoot() && !isSingleLine) {
                             const lineSb = imSb();

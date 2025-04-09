@@ -1,12 +1,12 @@
-import { evaluateFunctionWithinProgramWithArgs, interpret, ProgramInterpretResult, ProgramResultFunction, startEvaluatingFunctionWithingProgramWithArgs, startInterpreting } from "./program-interpreter";
+import { interpret, ProgramInterpretResult, ProgramResultFunction, startInterpreting } from "./program-interpreter";
 import { parse, ProgramParseResult } from "./program-parser";
-import { assert } from "./utils/im-dom-utils";
+import { autoMigrate, recursiveCloneNonComputedFields } from "./utils/serialization";
 
 export type GlobalState = {
     text: string;
-    collapseParserOutput: boolean;
-    collapseInterpreterPass1Output: boolean;
-    autorun: boolean;
+    showParserOutput: boolean;
+    showInterpreterOutput: boolean;
+    autoRun: boolean;
 };
 
 export type GlobalContext = {
@@ -76,18 +76,23 @@ export function newGlobalContext(): GlobalContext {
 export function newGlobalState(): GlobalState {
     return {
         text: "",
-        collapseParserOutput: false,
-        collapseInterpreterPass1Output: false,
-        autorun: false,
+        showParserOutput: false,
+        showInterpreterOutput: false,
+        autoRun: true,
     };
 }
+
 export function loadStateFromJson(string: string): GlobalState {
-    // trust me, bro
-    return JSON.parse(string);
+    const state: GlobalState = JSON.parse(string);
+
+    autoMigrate(state, newGlobalState);
+
+    return state;
 }
 
 export function getStateJSON(state: GlobalState): string {
-    return JSON.stringify(state);
+    const stripped = recursiveCloneNonComputedFields(state);
+    return JSON.stringify(stripped);
 }
 
 const KEY = "programming-lang-save-state";

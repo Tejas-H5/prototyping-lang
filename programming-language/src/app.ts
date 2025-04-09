@@ -19,12 +19,10 @@ import {
     OPAQUE,
     PADDED,
     PRE,
-    PREWRAP,
     RELATIVE,
     ROW,
     imTextSpan,
     TRANSLUCENT,
-    TRANSPARENT,
     imVerticalBar,
     W100
 } from './layout.ts';
@@ -60,8 +58,8 @@ import { GlobalContext, GlobalState, newGlobalContext, saveState, startDebugging
 import "./styling.ts";
 import { cnApp, cssVars, getCurrentTheme } from './styling.ts';
 import { imTextEditor, loadText, newTextEditorState, UNANIMOUSLY_DECIDED_TAB_SIZE } from './text-editor.ts';
-import { abortListAndRewindUiStack, assert, cn, deferClickEventToParent, deltaTimeSeconds, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, endFrame, getCurrentRoot, getKeys, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, newCssBuilder, nextListRoot, Ref, scrollIntoViewRect, scrollIntoViewVH, setAttributes, setClass, setInnerText, setStyle, SizeState, UIRoot } from './utils/im-dom-utils.ts';
-import { clamp, inverseLerp, lerp, max, min } from './utils/math-utils.ts';
+import { abortListAndRewindUiStack, assert, cn, deferClickEventToParent, deltaTimeSeconds, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, endFrame, getCurrentRoot, getElementExtentNormalized, getKeys, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, newCssBuilder, nextListRoot, Ref, scrollIntoViewRect, scrollIntoViewVH, setAttributes, setClass, setInnerText, setStyle, SizeState, UIRoot } from './utils/im-dom-utils.ts';
+import { clamp, gridSnap, inverseLerp, lerp, max, min } from './utils/math-utils.ts';
 import { getSliceValue } from './utils/matrix-math.ts';
 import { getLineBeforePos, getLineEndPos, getLineStartPos } from './utils/text-utils.ts';
 
@@ -472,11 +470,11 @@ function imFunctionName(fn: ProgramResultFunction | null) {
 
 function renderAppCodeOutput(ctx: GlobalContext) {
     imBeginLayout(ROW | GAP); {
-        imBeginButton(ctx.state.autorun); {
+        imBeginButton(ctx.state.autoRun); {
             imTextSpan("Autorun");
 
             if (elementHasMouseClick()) {
-                ctx.state.autorun = !ctx.state.autorun
+                ctx.state.autoRun = !ctx.state.autoRun
             }
         } imEnd();
 
@@ -487,18 +485,18 @@ function renderAppCodeOutput(ctx: GlobalContext) {
             }
         } imEnd();
 
-        imBeginButton(!ctx.state.collapseParserOutput); {
+        imBeginButton(ctx.state.showParserOutput); {
             imTextSpan("Show AST");
             if (elementHasMouseClick()) {
-                ctx.state.collapseParserOutput = !ctx.state.collapseParserOutput;
+                ctx.state.showParserOutput = ctx.state.showParserOutput;
             }
         } imEnd();
 
 
-        imBeginButton(!ctx.state.collapseInterpreterPass1Output); {
+        imBeginButton(ctx.state.showInterpreterOutput); {
             imTextSpan("Show instructions");
             if (elementHasMouseClick()) {
-                ctx.state.collapseInterpreterPass1Output = !ctx.state.collapseInterpreterPass1Output;
+                ctx.state.showInterpreterOutput = !ctx.state.showInterpreterOutput;
             }
         } imEnd();
     } imEnd();
@@ -507,7 +505,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
         const parseResult = ctx.lastParseResult;
 
         imBeginList();
-        if (nextListRoot() && !ctx.state.collapseParserOutput) {
+        if (nextListRoot() && ctx.state.showParserOutput) {
             imParserOutputs(parseResult);
         }
         imEndList();
@@ -520,7 +518,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
         } imEnd();
 
         imBeginList();
-        if (nextListRoot() && !ctx.state.collapseInterpreterPass1Output) {
+        if (nextListRoot() && ctx.state.showInterpreterOutput) {
             imBeginList();
             if (nextListRoot() && ctx.lastInterpreterResult) {
                 const interpretResult = ctx.lastInterpreterResult;
@@ -621,64 +619,6 @@ function renderAppCodeOutput(ctx: GlobalContext) {
     } imEnd();
 }
 
-function renderInvisibleSpanUpToPos(
-    text: string,
-    idx: number
-) {
-    imBeginSpan(); {
-        imInit() && setAttributes({ style: "color: transparent" });
-
-        const line = getLineBeforePos(text, idx);
-        setInnerText(
-            text.substring(0, idx + 1) + "\n" + " ".repeat(line.length)
-        );
-    } imEnd();
-}
-
-// TODO: delete
-function renderDiagnosticInfoOverlay(
-    state: GlobalState,
-    textAreaRef: Ref<HTMLTextAreaElement>,
-    errors: DiagnosticInfo[],
-    color: string
-) {
-    imBeginList();
-    for (const e of errors) {
-        nextListRoot();
-        imBeginLayout(PREWRAP | ABSOLUTE | W100 | H100 | CODE | TRANSPARENT); {
-            if (imInit()) {
-                setClass(cn.pointerEventsNone);
-                setStyle("left", "0px");
-                setStyle("top", "0px");
-            }
-
-            renderInvisibleSpanUpToPos(state.text, e.pos.i);
-
-            imBeginSpan(); {
-                imInit() && setAttributes({
-                    style: `background-color: ${cssVars.bg2}`,
-                });
-
-                setStyle("color", color);
-
-                setInnerText("^ " + e.problem);
-
-                let opacity = 1;
-                if (textAreaRef.val) {
-                    const errorLinePos = getLineEndPos(state.text, e.pos.i);
-                    const textAreaLinePos = getLineStartPos(state.text, textAreaRef.val.selectionStart);
-                    if (textAreaLinePos === errorLinePos) {
-                        opacity = 0.2;
-                    }
-                }
-
-                setStyle("opacity", "" + opacity);
-            } imEnd();
-        } imEnd();
-    } imEndList();
-}
-
-
 let loaded = false;
 function renderAppCodeEditor(ctx: GlobalContext) {
     const { state, lastInterpreterResult, lastParseResult } = ctx;
@@ -716,18 +656,20 @@ function renderAppCodeEditor(ctx: GlobalContext) {
                 nextListRoot();
 
                 // transparent span
-                imBeginSpan(); {
-                    imInit() && setAttributes({ style: "color: transparent" });
-                    setInnerText("0".repeat(max(0, err.pos.col + err.pos.tabs * UNANIMOUSLY_DECIDED_TAB_SIZE)));
-                } imEnd();
+                imBeginLayout(); {
+                    imBeginSpan(); {
+                        imInit() && setAttributes({ style: "color: transparent" });
+                        setInnerText("0".repeat(max(0, err.pos.col + err.pos.tabs * UNANIMOUSLY_DECIDED_TAB_SIZE)));
+                    } imEnd();
 
-                imBeginSpan(); {
-                    if (imInit()) {
-                        setStyle("color", col);
-                    }
+                    imBeginSpan(); {
+                        if (imInit()) {
+                            setStyle("color", col);
+                        }
 
-                    imTextSpan("^ ");
-                    imTextSpan(err.problem);
+                        imTextSpan("^ ");
+                        imTextSpan(err.problem);
+                    } imEnd();
                 } imEnd();
             }
             imEndList();
@@ -815,144 +757,7 @@ function renderAppCodeEditor(ctx: GlobalContext) {
                     0.25, 0.25, 0.75, 0.75);
             }
         } imEndMemo();
-
-        // NOTE: WE are no longer going to bother wrestling with this hting, we will just make our own using divs and spans, as god intended.
-        // beginTextArea({
-        //     text: state.text,
-        //     isEditing: true,
-        //     onInput,
-        //     onInputKeyDown,
-        //     textAreaRef,
-        //     config: {
-        //         useSpacesInsteadOfTabs: true,
-        //         tabStopSize: 4
-        //     },
-        // }); {
-        //
-        //     let hasErrors = false;
-        //
-        //     // error overlays
-        //     imBeginList();
-        //     const errors = lastInterpreterResult?.errors;
-        //     if (nextListRoot() && errors && errors.length > 0) {
-        //         hasErrors = true;
-        //         renderDiagnosticInfoOverlay(state, textAreaRef, errors, "red");
-        //     }
-        //     // warning overlays
-        //     const warnings = lastParseResult?.warnings;
-        //     if (nextListRoot() && warnings && warnings.length > 0) {
-        //         hasErrors = true;
-        //         renderDiagnosticInfoOverlay(state, textAreaRef, warnings, "orange");
-        //     };
-        //     imEndList();
-        //
-        //     // autocomplete
-        //     // right now you can't interact with it - it is more so that I actually remember all the crap I've put into here
-        //     {
-        //         assert(textAreaRef.val);
-        //         const pos = textAreaRef.val.selectionStart;
-        //         const lastIdentifier = parseIdentifierBackwardsFromPoint(
-        //             state.text,
-        //             pos - 1
-        //         );
-        //
-        //         const results = imStateInline<BuiltinFunction[]>(() => []);
-        //         if (imBeginMemoComputation().val(lastIdentifier).changed()) {
-        //             results.length = 0;
-        //             if (lastIdentifier.length > 0) {
-        //                 const funcs = getBuiltinFunctionsMap();
-        //                 for (const [k, v] of funcs) {
-        //                     if (!filterString(k, lastIdentifier)) {
-        //                         continue;
-        //                     }
-        //                     results.push(v);
-        //                 }
-        //             }
-        //         } endMemo();
-        //
-        //         imBeginList();
-        //         if (nextListRoot() && results.length > 0) {
-        //             // TODO: when we do the AST editor, this will completely change, or be ripped out.
-        //
-        //             imBeginLayout(PREWRAP | ABSOLUTE | CODE | TRANSPARENT); {
-        //                 if (imInit()) {
-        //                     setClass(cn.pointerEventsNone);
-        //                 }
-        //
-        //                 if (imInit()) {
-        //                     setStyleFlags(RELATIVE);
-        //                 }
-        //
-        //                 // this thing is going to have 0x0 dimensions, so it could have also been rect.bottom here.
-        //                 // also, top -> bottom coordinate system.
-        //                 const r = getCurrentRoot();
-        //                 const rect = r.root.getBoundingClientRect();
-        //                 const isAboveCenter = rect.top < window.innerHeight / 2;
-        //
-        //                 setStyle("width", "fit-content");
-        //                 setStyle("left", "0px");
-        //                 setStyle("right", "0px");
-        //                 setStyle("top", isAboveCenter ? "0px" : "");
-        //                 setStyle("bottom", !isAboveCenter ? "0em" : "");
-        //                 setStyle("border", "1px solid black");
-        //
-        //                 imBeginList();
-        //                 let i = 0;
-        //                 for (const v of results) {
-        //                     i++;
-        //                     if (i > 5) {
-        //                         break;
-        //                     }
-        //                     nextListRoot();
-        //
-        //                     imBeginLayout(CODE); {
-        //                         setStyle("border", "1px solid black");
-        //                         textSpan(v.name);
-        //                         textSpan("(");
-        //                         imBeginList();
-        //                         for (let i = 0; i < v.args.length; i++) {
-        //                             const arg = v.args[i];
-        //                             nextListRoot();
-        //                             textSpan(arg.name);
-        //
-        //                             imBeginList();
-        //                             if (nextListRoot() && arg.optional) {
-        //                                 textSpan("?");
-        //                             }
-        //                             imEndList();
-        //
-        //                             textSpan(":");
-        //
-        //                             let type;
-        //                             if (arg.type.length === 0) {
-        //                                 type = "any"
-        //                             } else {
-        //                                 type = arg.type.map(programResultTypeStringFromType)
-        //                                     .join("|");
-        //                             }
-        //                             textSpan(type);
-        //
-        //                             imBeginList();
-        //                             if (nextListRoot() && i < v.args.length - 1) {
-        //                                 textSpan(", ");
-        //                             }
-        //                             imEndList();
-        //                         }
-        //                         imEndList();
-        //                         textSpan(")");
-        //                     } imEnd();
-        //                 }
-        //                 imEndList();
-        //             } imEnd();
-        //         }
-        //     }
-        //     imEndList();
-        // } imEnd();
     } imEnd();
-}
-
-function filterString(text: string, query: string) {
-    return text.includes(query);
 }
 
 function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretResult) {
@@ -1387,8 +1192,12 @@ function imPlotZoomingAndPanning(
             const mouseXPlot = getPlotX(plotState, mouseX);
             const mouseYPlot = getPlotY(plotState, mouseY);
 
-            plotState.zoom -= mouse.scrollY / 100;
-            plotState.zoom = clamp(plotState.zoom, 0.5, 100000);
+            if (mouse.scrollY < 0) {
+                plotState.zoom = plotState.zoom * 1.1 * (-mouse.scrollY / 100);
+            } else {
+                plotState.zoom = plotState.zoom / (1.1 * (mouse.scrollY / 100));
+            }
+            plotState.zoom = clamp(plotState.zoom, 0.5, 10000000);
 
             const newMouseX = getCanvasElementX(plotState, mouseXPlot);
             const newMouseY = getCanvasElementY(plotState, mouseYPlot);
@@ -1712,7 +1521,7 @@ function setInset(amount: string) {
 }
 
 type PlotState = {
-    grid: boolean;
+    overlay: boolean;
     posX: number;
     posY: number;
     originalExtent: number;
@@ -1726,7 +1535,7 @@ type PlotState = {
 
 function newPlotState(): PlotState {
     return {
-        grid: false,
+        overlay: false,
         posX: 0,
         posY: 0,
         zoom: 1,
@@ -1988,10 +1797,10 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
             imBeginLayout(ROW | GAP); {
                 imMaximizeItemButton(plot);
 
-                imBeginButton(plotState.grid); {
-                    setInnerText("Grid");
+                imBeginButton(plotState.overlay); {
+                    setInnerText("Overlays");
                     if (elementHasMouseClick()) {
-                        plotState.grid = !plotState.grid;
+                        plotState.overlay = !plotState.overlay;
                     }
                 } imEnd();
             } imEnd();
@@ -2226,7 +2035,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                         }
 
                         // Draw the grid
-                        if (true || plotState.grid) { // TODO: gate
+                        if (true || plotState.overlay) { // TODO: gate
                             const xMin = getPlotX(plotState, 0);
                             const xMax = getPlotX(plotState, width);
                             const yMin = getPlotY(plotState, 0);
@@ -2240,34 +2049,58 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
 
                             // draw the extent info
                             {
+                                let precision = max(3, Math.ceil(Math.log10(plotState.zoom)));
+
                                 ctx.textAlign = "start";
                                 ctx.textBaseline = "middle";
-                                ctx.fillText("" + xMin.toPrecision(3), padding, plotState.height / 2);
+                                ctx.fillText("" + xMin.toPrecision(precision), padding, plotState.height / 2);
 
                                 ctx.textAlign = "end";
                                 ctx.textBaseline = "middle";
-                                ctx.fillText("" + xMax.toPrecision(3), plotState.width - padding, plotState.height / 2);
+                                ctx.fillText("" + xMax.toPrecision(precision), plotState.width - padding, plotState.height / 2);
 
                                 ctx.textAlign = "center";
                                 ctx.textBaseline = "top";
-                                ctx.fillText("" + yMin.toPrecision(3), plotState.width / 2, padding);
+                                ctx.fillText("" + yMin.toPrecision(precision), plotState.width / 2, padding);
 
                                 ctx.textAlign = "center";
                                 ctx.textBaseline = "bottom";
-                                ctx.fillText("" + yMax.toPrecision(3), plotState.width / 2, plotState.height - padding);
+                                ctx.fillText("" + yMax.toPrecision(precision), plotState.width / 2, plotState.height - padding);
                             }
 
                             // draw the grid
+                            ctx.strokeStyle = theme.mg.toCssString();
+                            ctx.lineWidth = 1;
                             {
-                                ctx.beginPath(); {
-                                    ctx.moveTo(0, height / 2);
-                                    ctx.lineTo(width, height / 2);
-                                    ctx.moveTo(width / 2, 0);
-                                    ctx.lineTo(width / 2, height);
-                                } ctx.closePath();
+                                const extent = getExtent(plotState);
+                                const gridFractalLevel = Math.floor(Math.log10(extent));
+                                const gridLargeSpacing = Math.pow(10, gridFractalLevel)
+
+                                let spacing = gridLargeSpacing;
+                                let spacingEl = getCanvasElementLength(plotState, spacing);
+
+                                let safety = 0;
+
+                                ctx.beginPath();
+                                let x = getCanvasElementX(plotState, gridSnap(getPlotX(plotState, 0), spacing));
+                                for (; x < width; x += spacingEl) {
+                                    if (safety++>1000) {
+                                        throw new Error("Bruh");
+                                    }
+                                    ctx.moveTo(x, 0);
+                                    ctx.lineTo(x, height);
+                                } 
+                                let y = getCanvasElementY(plotState, gridSnap(getPlotY(plotState, 0), spacing));
+                                for (; y < height; y += spacingEl) {
+                                    if (safety++>1000) {
+                                        throw new Error("Bruh");
+                                    }
+                                    ctx.moveTo(0, y);
+                                    ctx.lineTo(width, y);
+                                }
+                                ctx.closePath();
                                 ctx.stroke();
                             }
-
                         }
 
                         drawBoundary(ctx, width, height);
@@ -2517,7 +2350,7 @@ export function renderApp() {
 
                 if (imBeginMemoComputation()
                     .val(state.text)
-                    .val(state.autorun)
+                    .val(state.autoRun)
                     .changed() ||
                     (ctx.reinterpretSignal && !ctx.isDebugging)
                 ) {
@@ -2525,7 +2358,7 @@ export function renderApp() {
 
                     const text = state.text;
                     ctx.lastParseResult = parse(text);
-                    if (state.autorun) {
+                    if (state.autoRun) {
                         ctx.lastInterpreterResult = interpret(ctx.lastParseResult, ctx.lastInterpreterResult);
                     }
 

@@ -1353,6 +1353,14 @@ export function getBuiltinFunctionsMap() {
         assert(val?.t === T_RESULT_NUMBER);
         return newNumberResult(Math.log(val.val));
     })
+    newBuiltinFunction("log10", [newArg("x", [T_RESULT_NUMBER])], (_result, _step, val) => {
+        assert(val?.t === T_RESULT_NUMBER);
+        return newNumberResult(Math.log10(val.val));
+    })
+    newBuiltinFunction("log2", [newArg("x", [T_RESULT_NUMBER])], (_result, _step, val) => {
+        assert(val?.t === T_RESULT_NUMBER);
+        return newNumberResult(Math.log2(val.val));
+    })
     newBuiltinFunction("max", [newArg("a", [T_RESULT_NUMBER]), newArg("b", [T_RESULT_NUMBER])], (_result, _step, a, b) => {
         assert(a?.t === T_RESULT_NUMBER);
         assert(b?.t === T_RESULT_NUMBER);
