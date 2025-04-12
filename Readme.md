@@ -45,8 +45,16 @@ imCodeEditor() {
 - Faster prototying, and a lot of builtin primitives like text inputs and text rendering in general
 - The deployment is easier to access and distribute. People are ok with clicking links to random sites, but not downloading and running random exe files.
 
-Web still has a lot of low-hanging fruit that no one is grabbing, because for some reason the entire ecosystem has
-moved towards observability/signals, or reactivity + complier to infer dependencies. 
+Web still has a lot of low-hanging fruit that no one is grabbing, because the entire ecosystem has
+decided to moved towards observability/signals, or functional programming.
+I like the simplicity of React's memoization approach, and I reckon it can be very good if it's executed properly, i.e
+inside of `requestAnimationFrame` with as close to zero GC pressure as possible.
+This is not the current state of React.
+Observability is also good in theory, but in practice, it just leads to a lot of large implicit computation graphs
+where querying + mutating a datastructure in a loop can cripple performance in ways that are very hard to fix
+without rearchitecting everything, or collecting all the computations into an array, and then looping over them later in a second pass, 
+neither of which are a good solution. It is mostly a dead end. 
+
 I might use a compiler to infer `imBeginList()` and `nextListRoot()` if I figure out an easy way to do this.
 An initial thought was to use the line number that the component was defined to assign each component a unique ID.
 This can be done by implementing my immediate mode UI lowest level core primitive like this:
