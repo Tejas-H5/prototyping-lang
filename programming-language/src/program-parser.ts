@@ -1,4 +1,4 @@
-import { assert } from "./utils/im-dom-utils";
+import { assert, nextListRoot } from "./utils/im-dom-utils";
 import { isWhitespace } from "./utils/text-utils";
 
 ////////////////////////
@@ -190,6 +190,12 @@ export function binOpToString(op: BinaryOperatorType): string {
 export type ProgramExpressionBase = {
     start: TextPosition;
     end: TextPosition;
+
+    // These are computed after everything has been parsed, so that each function 
+    // doesn't have to correctly set the parent and child nodes every time.
+    // C-style struct unions would have helped a lot here.
+    parent: ProgramExpression | null;
+    children: ProgramExpression[];
 };
 
 export function expressionToString(text: string, expr: ProgramExpression): string {
@@ -419,6 +425,8 @@ function parseTernaryIf(ctx: ParserContext, query: ProgramExpression): ProgramEx
     }
 
     const res: ProgramExpressionTernaryIf = {
+        parent: null,
+        children: [],
         t: T_TERNARY_IF,
         start,
         end: getParserPosition(ctx),
@@ -481,6 +489,8 @@ function parseStringLiteral(ctx: ParserContext): ProgramExpressionStringLiteral 
     }
 
     const result: ProgramExpressionStringLiteral = {
+        parent: null,
+        children: [],
         t: T_STRING_LITERAL,
         start: startPos,
         end: getParserPosition(ctx),
@@ -548,10 +558,10 @@ function computeStringForStringLiteral(fullText: string): [string | undefined, s
 
 
 function parseBlock(ctx: ParserContext): ProgramExpressionBlock | undefined {
+    const start = getParserPosition(ctx);
+
     assert(currentChar(ctx) === "{");
     advance(ctx);
-
-    const start = getParserPosition(ctx);
 
     const statements: ProgramExpression[] = [];
     parseStatements(ctx, statements, "}");
@@ -569,6 +579,8 @@ function parseBlock(ctx: ParserContext): ProgramExpressionBlock | undefined {
     advance(ctx);
 
     return {
+        parent: null,
+        children: [],
         t: T_BLOCK,
         start,
         end: getParserPosition(ctx),
@@ -626,6 +638,8 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
     }
 
     const result: ProgramExpressionRangedFor = {
+        parent: null,
+        children: [],
         t: T_RANGE_FOR,
         start,
         end: getParserPosition(ctx),
@@ -750,6 +764,8 @@ function parseMapLiteral(ctx: ParserContext, pos: TextPosition): ProgramExpressi
     }
 
     return {
+        parent: null,
+        children: [],
         t: T_MAP_LITERAL,
         start: pos,
         end: getParserPosition(ctx),
@@ -774,6 +790,8 @@ function parseListLiteral(
     parseExpressionsDelimiterSeparated(ctx, items, ",", "]");
 
     return {
+        parent: null,
+        children: [],
         t: type,
         start: pos,
         end: getParserPosition(ctx),
@@ -799,6 +817,8 @@ function parseNumberLiteral(ctx: ParserContext): ProgramExpressionNumberLiteral 
     const integerPart = ctx.text.slice(intStart, ctx.pos.i);
 
     const result: ProgramExpressionNumberLiteral = {
+        parent: null,
+        children: [],
         t: T_NUMBER_LITERAL,
         integerPart,
         start,
@@ -877,15 +897,17 @@ function computeNumberForNumberExpression(expr: ProgramExpressionNumberLiteral):
 // bunch of code everywhere checking that it was only happening as a 'block level' statement. also makes the
 // stack frame stuff easier to implement when we make it it's own thing like this
 function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boolean): ProgramExpression | undefined {
+    const start = getParserPosition(ctx);
+
     let result: ProgramExpression = parseIdentifierOrPreviousResultOp(ctx);
 
     parseWhitespace(ctx);
 
-    const start = getParserPosition(ctx);
-
     if (currentChar(ctx) === "[") {
         // TODO: move this to be for any expression
         result = {
+            parent: null,
+            children: [],
             t: T_DATA_INDEX_OP,
             start,
             end: getParserPosition(ctx),
@@ -918,6 +940,8 @@ function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boo
 
     if (result.t === T_IDENTIFIER && currentChar(ctx) === "(") {
         result = {
+            parent: null,
+            children: [],
             t: T_FN,
             start,
             end: getParserPosition(ctx),
@@ -984,6 +1008,8 @@ function parseIdentifierAndFollowOns(ctx: ParserContext, canParseAssignment: boo
 
         // TODO: move this to be for any expression
         result = {
+            parent: null,
+            children: [],
             t: T_ASSIGNMENT,
             start: start,
             end: getParserPosition(ctx),
@@ -1020,6 +1046,8 @@ function parseIdentifierOrPreviousResultOp(ctx: ParserContext): ProgramExpressio
     if (c === "^") {
         advance(ctx);
         return {
+            parent: null,
+            children: [],
             t: T_IDENTIFIER_THE_RESULT_FROM_ABOVE,
             start,
             end: getParserPosition(ctx),
@@ -1041,6 +1069,8 @@ function parseIdentifier(ctx: ParserContext): ProgramExpressionIdentifier {
     const name = ctx.text.slice(start.i, ctx.pos.i);
 
     return {
+        parent: null,
+        children: [],
         t: T_IDENTIFIER,
         start,
         end: getParserPosition(ctx),
@@ -1147,6 +1177,8 @@ function parseBinaryOperatorIncreasingPrecedence(ctx: ParserContext, lhs: Progra
     const rhs = parseExpression(ctx, false, prec);
 
     return {
+        parent: null,
+        children: [],
         t: T_BINARY_OP,
         op,
         lhs: lhs,
@@ -1245,11 +1277,15 @@ function parseExpression(ctx: ParserContext, canParseAssignment: boolean = false
             // Rewrite negatives to be like 0 - blah.
 
             res = {
+                parent: null,
+                children: [],
                 start,
                 end: getParserPosition(ctx),
                 t: T_BINARY_OP,
                 // virtual expression. Source? where the text live? I made it tf up
                 lhs: {
+                    parent: null,
+                    children: [],
                     t: T_NUMBER_LITERAL,
                     start: start,
                     end: start,
@@ -1273,6 +1309,8 @@ function parseExpression(ctx: ParserContext, canParseAssignment: boolean = false
             }
 
             res = {
+                parent: null,
+                children: [],
                 start: start,
                 end: getParserPosition(ctx),
                 t: T_UNARY_OP,
@@ -1414,6 +1452,97 @@ export function parse(text: string): ProgramParseResult {
 
     parseStatements(ctx, program.statements);
 
+    const computeParentAndChildren = (parent: ProgramExpression | null, expr: ProgramExpression) => {
+        expr.parent = parent;
+        if (parent) {
+            parent.children.push(expr);
+        }
+
+        switch (expr.t) {
+            case T_IDENTIFIER: 
+            case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: 
+            case T_STRING_LITERAL:
+            case T_NUMBER_LITERAL: 
+                break;
+            case T_BINARY_OP: {
+                computeParentAndChildren(expr, expr.lhs);
+                if (expr.rhs) {
+                    computeParentAndChildren(expr, expr.rhs);
+                }
+            } break;
+            case T_UNARY_OP: {
+                computeParentAndChildren(expr, expr.expr);
+            } break;
+            case T_LIST_LITERAL: {
+                for (const itemExpr of expr.items) {
+                    computeParentAndChildren(expr, itemExpr);
+                }
+            } break;
+            case T_VECTOR_LITERAL: {
+                for (const itemExpr of expr.items) {
+                    computeParentAndChildren(expr, itemExpr);
+                }
+            }; break;
+            case T_TERNARY_IF: {
+                computeParentAndChildren(expr, expr.query);
+                computeParentAndChildren(expr, expr.trueBranch);
+                if (expr.falseBranch) {
+                    computeParentAndChildren(expr, expr.falseBranch);
+                }
+            } break;
+            case T_BLOCK: {
+                for (const statement of expr.statements) {
+                    computeParentAndChildren(expr, statement);
+                }
+            } break;
+            case T_FN: {
+                computeParentAndChildren(expr, expr.fnName);
+
+                for (const argExpr of expr.arguments) {
+                    computeParentAndChildren(expr, argExpr);
+                }
+
+                if (expr.body) {
+                    computeParentAndChildren(expr, expr.body);
+                }
+            } break;
+            case T_DATA_INDEX_OP: {
+                for (const idxExpr of expr.indexes) {
+                    computeParentAndChildren(expr, idxExpr);
+                }
+            } break;
+            case T_RANGE_FOR: {
+                computeParentAndChildren(expr, expr.loopVar);
+                computeParentAndChildren(expr, expr.rangeExpr);
+                computeParentAndChildren(expr, expr.body);
+            } break;
+            case T_ASSIGNMENT: {
+                computeParentAndChildren(expr, expr.lhs);
+                if (expr.rhs) {
+                    computeParentAndChildren(expr, expr.rhs);
+                }
+            } break;
+            case T_MAP_LITERAL: {
+                for (const [k, v] of expr.kvPairs) {
+                    computeParentAndChildren(expr, k);
+                    computeParentAndChildren(expr, v);
+                }
+            } break;
+            default:
+                typeGuard(expr);
+        }
+
+        if (expr.children.length > 0) {
+            // The children in an AST must always start at or after the parent.
+            // If this is hit, then there is a bug in the parser somewhere.
+            assert(expr.start.i <= expr.children[0].start.i);
+        }
+    }
+
+    for (const expr of program.statements) {
+        computeParentAndChildren(null, expr);
+    }
+
     // dont bother popping the global stack frame
 
     if (program.errors) {
@@ -1423,3 +1552,102 @@ export function parse(text: string): ProgramParseResult {
     return program;
 }
 
+function typeGuard(s: never) {
+    assert(false);
+}
+
+export type ResumeableAstTraverser = {
+    stack: [idx: number, expr: ProgramExpression][];
+    statementIdx: 0,
+};
+
+export function resetAstTraversal(t: ResumeableAstTraverser, parseResult: ProgramParseResult) {
+    t.stack.length = 0;
+    t.statementIdx = 0;
+    if (parseResult.statements.length > 0) {
+        t.stack.push([
+            0,
+            parseResult.statements[0]
+        ]);
+    }
+}
+
+export function newResumeableAstTraverser(parseResult: ProgramParseResult) {
+    const traversalStart: ResumeableAstTraverser = { 
+        stack: [],  
+        statementIdx: 0,
+    };
+    resetAstTraversal(traversalStart, parseResult);
+    return traversalStart;
+}
+
+let safety = 0;
+export function getAstNodeForTextPos(
+    traversalStart: ResumeableAstTraverser, 
+    parseResult: ProgramParseResult,
+    textPos: number
+): ProgramExpression | undefined {
+    safety = 0;
+
+    const stack = traversalStart.stack;
+    while (stack.length > 0) {
+        if (safety++ > 100000) {
+            throw new Error("Bruh");
+        }
+
+        const frame = stack[stack.length - 1];;
+        const expr = frame[1];
+
+        let i = frame[0];
+        let found = false;
+        while (i < expr.children.length) {
+            if (safety++ > 100000) {
+                throw new Error("Bruh");
+            }
+
+            const child = expr.children[i];
+
+            if (textPos < child.start.i) {
+                // yield the recursion here, don't increment the frame index
+                break;
+            }
+
+            if (textPos < child.end.i) {
+                stack.push([0, child]);
+                found = true;
+                break;
+            }
+
+            i++;
+        }
+        frame[0] = i;
+
+        if (found) {
+            continue;
+        }
+
+        const result = frame[1];
+
+        assert(i <= expr.children.length);
+        if (i === expr.children.length) {
+            stack.pop();
+            if (stack.length === 0) {
+                traversalStart.statementIdx++;
+                if (traversalStart.statementIdx < parseResult.statements.length) {
+                    stack.push([
+                        0,
+                        parseResult.statements[traversalStart.statementIdx]
+                    ]);
+                }
+            }
+        }
+
+        if (result.start.i <= textPos && textPos <= result.end.i) {
+            return result;
+        }
+
+        break;
+    }
+
+    return;
+}

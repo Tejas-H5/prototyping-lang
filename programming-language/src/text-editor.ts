@@ -1,7 +1,7 @@
 import "./styling.ts";
 import { copyToClipboard, readFromClipboard } from "./utils/clipboard.ts";
 
-import { assert, elementHasMouseClick, elementHasMouseDown, imBeginEl, imBeginMemo, imEnd, imEndMemo, imInit, imOn, setStyle } from './utils/im-dom-utils.ts';
+import { assert, elementHasMouseClick, elementHasMouseDown, getMouse, imBeginEl, imBeginMemo, imEnd, imEndMemo, imInit, imOn, setStyle } from './utils/im-dom-utils.ts';
 import { clamp, max, min } from "./utils/math-utils.ts";
 import { getCol } from "./utils/matrix-math.ts";
 import { isWhitespace } from "./utils/text-utils.ts";
@@ -42,8 +42,22 @@ function eof(s: TextEditorState) {
 }
 
 function getLastNewlinePos(s: TextEditorState, pos: number) {
+    if (pos < 0) return 0;
+
     while (pos > 0 && s.buffer[pos] !== "\n") {
         pos--;
+    }
+
+    return pos;
+}
+
+function getNextNewlinePos(s: TextEditorState, pos: number) {
+    if (pos >= s.buffer.length) {
+
+    }
+
+    while (pos < s.buffer.length && s.buffer[pos] !== "\n") {
+        pos++;
     }
 
     return pos;
@@ -220,14 +234,14 @@ export type TextEditorState = {
     modifiedAt: number;
 
     cursor: number;
+    cursorLine: number;
 
     // inferred by the cursor.
-    viewCursor: number;
-    viewCursorLine: number;
+    viewCursor: LineCursor;
+    viewEndCursor: LineCursor;
 
     // slightly different - it starts at -1 and increments to the current index.
-    renderCursor: number;
-    renderCursorLine: number;
+    renderCursor: LineCursor;
 
     lastSelectCursor: number;
     hasFocus: boolean;
@@ -244,6 +258,11 @@ export type TextEditorState = {
     hasClick: boolean;
 
     inCommandMode: boolean;
+}
+
+type LineCursor = {
+    pos: number;
+    line: number
 }
 
 type Range = {
@@ -284,6 +303,19 @@ function handleTextEditorEvents(
     keyDownEvent: HTMLElementEventMap["keydown"] | null,
     keyUpEvent: HTMLElementEventMap["keyup"] | null,
 ) {
+    const mouse = getMouse();
+    if (!mouse.leftMouseButton) {
+        s.hasClick = false;
+    }
+
+    if (mouse.scrollY !== 0) {
+        if (mouse.scrollY < 0) {
+            decrementViewCursors(s);
+        } else {
+            incrementViewCursors(s);
+        }
+    } 
+
     if (keyUpEvent) {
         const key = keyUpEvent.key;
         if (key === "Shift") {
@@ -307,7 +339,13 @@ function handleTextEditorEvents(
         }
     }
 
+    // need to check up here, because they are invalidated after we edit the buffer
+    let viewCursorAtStart = s.viewCursor.pos === 0;
+    let viewCursorAtEnd = s.viewEndCursor.pos === s.buffer.length;
+
     if (keyDownEvent) {
+
+        const initialCursor = s.cursor;
 
         // do our text editor command instead of the browser shortcut
         keyDownEvent.preventDefault();
@@ -397,19 +435,18 @@ function handleTextEditorEvents(
             } else if (s.inCommandMode) {
                 if (s.cursor > 0) {
                     s.cursor--;
-                }
 
-                const cursor = s.cursor;
-                moveToStartOfLastWord(s);
-                s.selectionStart = s.cursor;
-                s.selectionEnd = cursor;
-                deleteSelectedAndMoveCursorToStart(s);
+                    const cursor = s.cursor;
+                    moveToStartOfLastWord(s);
+                    s.selectionStart = s.cursor;
+                    s.selectionEnd = cursor;
+                    deleteSelectedAndMoveCursorToStart(s);
+                }
             } else {
                 if (s.cursor > 0) {
                     s.cursor--;
+                    remove(s, s.cursor, 1);
                 }
-
-                remove(s, s.cursor, 1);
             }
         } else if (key === "ArrowLeft") {
             if (s.inCommandMode) {
@@ -437,7 +474,7 @@ function handleTextEditorEvents(
             }
         } else if (key === "End") {
             if (s.inCommandMode) {
-                s.cursor = s.buffer.length - 1;
+                s.cursor = s.buffer.length;
             } else {
                 moveToNextNewline(s);
             }
@@ -474,6 +511,13 @@ function handleTextEditorEvents(
         }
 
         s.cursor = clamp(s.cursor, 0, s.buffer.length);
+
+        if (s.cursor !== initialCursor) {
+            // we only want to autoscroll when we've pressed a key. If we don't do this, then we can easily end up in
+            // an infinite loop, where we scroll up one line, but that line is so tall that it brings the cursor so far down the screen
+            // that we then have to scroll down one line, and so on and so forth
+            autoScroll(s, viewCursorAtStart, viewCursorAtEnd);
+        }
     }
 
     // Mouse events can move the cursor too!
@@ -502,6 +546,46 @@ function handleTextEditorEvents(
     }
 }
 
+function autoScroll(s: TextEditorState, viewCursorWasAtStart: boolean, viewCursorWasAtEnd: boolean) {
+    if (s.viewCursor.pos <= s.cursor && s.cursor <= s.viewEndCursor.pos) {
+        const distanceToStartLine = s.cursorLine - s.viewCursor.line;
+        const distanceToEndLine = s.viewEndCursor.line - s.cursorLine;
+        const ratio = distanceToStartLine / (distanceToStartLine + distanceToEndLine);
+
+        if (distanceToStartLine + distanceToEndLine !== 0) {
+            if (ratio < 0.25 && !viewCursorWasAtStart) {
+                decrementViewCursors(s);
+            } else if (ratio > 0.75 && !viewCursorWasAtEnd) {
+                incrementViewCursors(s);
+            }
+        }
+    } else {
+        // NOTE: these could have been in a while loop if we wanted it to be faster.
+
+        const scrollSpeed = Math.max(Math.abs(s.viewCursor.pos - s.cursor) / 50, 5);
+
+        for (let i = 0; i < scrollSpeed; i++) {
+            if (!viewCursorWasAtStart && s.cursor < s.viewCursor.pos) {
+                decrementViewCursors(s);
+            } else {
+                break;
+            }
+        }
+
+        for (let i = 0; i < scrollSpeed; i++) {
+            if (!viewCursorWasAtEnd && s.cursor > s.viewEndCursor.pos) {
+                // a trick we can use to check if two indices are on the same line
+                incrementViewCursors(s);
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+function newLineCursor(): LineCursor {
+    return { pos: 0, line: 0 };
+}
 
 export function newTextEditorState(): TextEditorState {
     // fields with _ cannot be JSON-serialized
@@ -515,10 +599,10 @@ export function newTextEditorState(): TextEditorState {
         currentKeyDown: "",
         modifiedAt: 0,
         cursor: 0,
-        renderCursor: -1,
-        renderCursorLine: 0,
-        viewCursor: 0,
-        viewCursorLine: 0,
+        cursorLine: 0,
+        renderCursor: newLineCursor(),
+        viewCursor: newLineCursor(),
+        viewEndCursor: newLineCursor(),
         lastSelectCursor: 0,
 
         selectionStart: -1,
@@ -566,10 +650,12 @@ function resetTextEditorState(s: TextEditorState) {
 
     clearSelection(s);
 
-    s.viewCursorLine = 0;
-    s.viewCursor = 0;
-    s.renderCursor = -1;
-    s.renderCursorLine = 0;
+    s.viewCursor.line = 0;
+    s.viewCursor.pos = 0;
+    s.viewEndCursor.line = 0;
+    s.viewEndCursor.pos = 0;
+    s.renderCursor.line = 0;
+    s.renderCursor.pos = 0;
 }
 
 export function loadText(s: TextEditorState, text: string) {
@@ -590,43 +676,15 @@ function setCanSelect(s: TextEditorState) {
     }
 }
 
-export function setTextEditorViewCursor(s: TextEditorState, pos: number) {
-    let i = s.viewCursor;
-    let line = s.viewCursorLine;
-
-    if (pos < 0) pos = 0;
-    if (pos > s.buffer.length) pos = s.buffer.length;
-
-    pos = getLastNewlinePos(s, pos);
-
-    while (i < pos) {
-        const c = s.buffer[i];
-        assert(c !== undefined);
-        if (c === "\n") {
-            line++;
-        }
-        i++;
-    }
-
-    while (i > pos) {
-        i--;
-        const c = s.buffer[i];
-        assert(c !== undefined);
-        if (c === "\n") {
-            line--;
-        }
-    }
-
-    s.viewCursor = i;
-    s.viewCursorLine = line;
-}
-
+// NOTE: this needs to be inside a container
+// with position: relative to correctly position the fake text-area.
 export function imBeginTextEditor(s: TextEditorState) {
     s._beingControlledBy = null;
     s._cursorSpan = null;
-    s.renderCursor = s.viewCursor - 1;
-    s.renderCursorLine = s.viewCursorLine;
+    s.renderCursor.pos = s.viewCursor.pos - 1;
+    s.renderCursor.line = s.viewCursor.line;
 }
+
 
 export function setCurrentSpan(s: TextEditorState, span: HTMLElement) {
     // We need to know where to position the fake text area.
@@ -636,19 +694,17 @@ export function setCurrentSpan(s: TextEditorState, span: HTMLElement) {
 export function handleTextEditorClickEventForChar(s: TextEditorState, charIdx: number) {
     if (elementHasMouseClick()) {
         s.hasClick = true;
+
+        // single click, clear selection
+        clearSelection(s);
     }
 
-    if (elementHasMouseDown(false)) {
+    if (s.hasClick && elementHasMouseDown(false)) {
         // move cursor to current token
         s.cursor = charIdx;
         setCanSelect(s);
 
         s.shouldFocusTextArea = true;
-
-        if (elementHasMouseClick()) {
-            // single click, clear selection
-            clearSelection(s);
-        }
     }
 }
 
@@ -659,24 +715,30 @@ export function imEndTextEditor(s: TextEditorState) {
 
         if (imInit()) {
             setStyle("all", "unset");
-            setStyle("width", "10px");
-            setStyle("height", "1px");
+            setStyle("width", "1px");
             setStyle("position", "absolute");
             setStyle("color", "transparent");
             setStyle("textShadow", "0px 0px 0px tomato"); // hahaha tomato. lmao. https://stackoverflow.com/questions/44845792/hide-caret-in-textarea
+            // debugging
+            // setStyle("border", "1px solid red");
         }
 
-        if (imBeginMemo()
-            .val(s._cursorSpan)
-            .changed()
-        ) {
-            if (s._cursorSpan) {
-                setStyle("top", s._cursorSpan.offsetTop + "px")
-                setStyle("left", s._cursorSpan.offsetLeft + "px")
-            }
-        } imEndMemo();
+        if (s._cursorSpan) {
+            setStyle("top", s._cursorSpan.offsetTop + "px")
+            setStyle("left", s._cursorSpan.offsetLeft + "px")
+            setStyle("height", s._cursorSpan.clientHeight + "px");
+        }
 
-        // Handle events
+        s.hasFocus = document.activeElement === s._textAreaElement;
+        if (s._beingControlledBy && s.hasFocus) {
+            s._beingControlledBy.focus();
+        } else if (s.shouldFocusTextArea && s._textAreaElement) {
+            s.shouldFocusTextArea = false;
+            s._textAreaElement.focus();
+        }
+
+
+        // Handle events after we do scrolling - it is sensitive to inserts/removes
         const keyDownEvent = imOn("keydown");
         const keyUpEvent = imOn("keyup");
 
@@ -684,30 +746,65 @@ export function imEndTextEditor(s: TextEditorState) {
             handleTextEditorEvents(s, keyDownEvent, keyUpEvent);
         }
     } imEnd();
+}
 
-    s.hasFocus = document.activeElement === s._textAreaElement;
-    if (s._beingControlledBy && s.hasFocus) {
-        s._beingControlledBy.focus();
-    } else if (s.shouldFocusTextArea && s._textAreaElement) {
-        s.shouldFocusTextArea = false;
-        s._textAreaElement.focus();
+function incrementViewCursors(s: TextEditorState) {
+    if (incrementCursor(s, s.viewEndCursor)) {
+        incrementCursor(s, s.viewCursor);
     }
+}
+
+function decrementViewCursors(s: TextEditorState) {
+    if (decrementCursor(s, s.viewEndCursor)) {
+        decrementCursor(s, s.viewCursor);
+    }
+}
+
+export function decrementCursor(s: TextEditorState, cursor: LineCursor) {
+    const newViewCursorPos = getLastNewlinePos(s, cursor.pos - 1);
+    if (cursor.pos !== newViewCursorPos) {
+        cursor.pos = newViewCursorPos;
+        cursor.line--;
+        return true;
+    }
+    return false;
+}
+
+export function incrementCursor(s: TextEditorState, cursor: LineCursor): boolean {
+    const newViewCursorPos = getNextNewlinePos(s, cursor.pos + 1);
+    if (cursor.pos !== newViewCursorPos) {
+        cursor.pos = newViewCursorPos;
+        cursor.line++;
+        return true;
+    }
+    return false;
+}
+
+// You'll need to do this to get scrolling behaviour.
+// You can do it multiple times to extend the view as needed.
+export function textEditorMarkViewEnd(s: TextEditorState) {
+    s.viewEndCursor.pos = s.renderCursor.pos;
+    s.viewEndCursor.line = s.renderCursor.line;
 }
 
 export function textEditorHasChars(s: TextEditorState): boolean {
-    return s.renderCursor < s.buffer.length;
+    return s.renderCursor.pos < s.buffer.length;
 }
 
 export function textEditorNextChar(s: TextEditorState): string {
-    if (s.renderCursor < s.buffer.length) {
-        s.renderCursor++;
-        if (s.buffer[s.renderCursor] === "\n") {
-            s.renderCursorLine++;
+    if (s.renderCursor.pos < s.buffer.length) {
+        s.renderCursor.pos++;
+        if (s.buffer[s.renderCursor.pos] === "\n") {
+            s.renderCursor.line++;
         }
     }
 
-    if (s.renderCursor < s.buffer.length) {
-        return s.buffer[s.renderCursor];
+    if (s.renderCursor.pos === s.cursor) {
+        s.cursorLine = s.renderCursor.line;
+    }
+
+    if (s.renderCursor.pos < s.buffer.length) {
+        return s.buffer[s.renderCursor.pos];
     }
 
     return '\n';

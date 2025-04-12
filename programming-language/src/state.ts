@@ -23,8 +23,13 @@ export type GlobalContext = {
 
     // This stuff is actually saved and persisted between runs
     state: GlobalState;
+}
 
-    reinterpretSignal: boolean;
+export function rerun(ctx: GlobalContext) {
+    ctx.lastParseResult = parse(ctx.state.text);
+    if (ctx.state.autoRun) {
+        ctx.lastInterpreterResult = interpret(ctx.lastParseResult, ctx.lastInterpreterResult);
+    }
 }
 
 export function startDebugging(ctx: GlobalContext): string {
@@ -78,7 +83,6 @@ export function newGlobalContext(): GlobalContext {
 
         lastParseResult: undefined, 
         lastInterpreterResult: undefined,
-        reinterpretSignal: true,
     };
 }
 export function newGlobalState(): GlobalState {

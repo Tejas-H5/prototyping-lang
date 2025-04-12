@@ -28,17 +28,21 @@ import {
     TRANSPARENT,
     W100
 } from './layout.ts';
-import { BuiltinFunction, evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getBuiltinFunctionsMap, getCurrentCallstack, interpret, newNumberResult, ProgramExecutionStep, ProgramGraphOutput, ProgramImageOutput, ProgramInterpretResult, ProgramOutputs, ProgramPlotOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, programResultTypeStringFromType, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MAP, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING, UI_INPUT_SLIDER } from './program-interpreter.ts';
+import { BuiltinFunction, evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getBuiltinFunctionsMap, getCurrentCallstack, interpret, newNumberResult, ProgramExecutionStep, ProgramGraphOutput, ProgramImageOutput, ProgramInterpretResult, ProgramOutputs, ProgramPlotOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, programResultTypeStringFromType, startInterpreting, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MAP, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING, UI_INPUT_SLIDER } from './program-interpreter.ts';
 import {
     binOpToString,
     binOpToOpString as binOpToSymbolString,
     DiagnosticInfo,
     expressionToString,
     expressionTypeToString,
+    getAstNodeForTextPos,
+    newResumeableAstTraverser,
     parse,
     parseIdentifierBackwardsFromPoint,
     ProgramExpression,
     ProgramParseResult,
+    resetAstTraversal,
+    ResumeableAstTraverser,
     T_ASSIGNMENT,
     T_BINARY_OP,
     T_BLOCK,
@@ -57,13 +61,13 @@ import {
     unaryOpToOpString,
     unaryOpToString
 } from './program-parser.ts';
-import { GlobalContext, newGlobalContext, saveState, startDebugging } from './state.ts';
+import { GlobalContext, newGlobalContext, rerun, saveState, startDebugging, startDebuggingFunction } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars, getCurrentTheme } from './styling.ts';
-import { handleTextEditorClickEventForChar, imBeginTextEditor, imEndTextEditor, loadText, newTextEditorState, textEditorCursorIsSelected, textEditorHasChars, textEditorNextChar, TextEditorState } from './text-editor.ts';
-import { abortListAndRewindUiStack, assert, cn, deferClickEventToParent, deltaTimeSeconds, disableIm, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, enableIm, getCurrentRoot, getKeys, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, newCssBuilder, nextListRoot, scrollIntoViewRect, scrollIntoViewVH, setAttributes, setClass, setInnerText, setStyle, SizeState, UIRoot } from './utils/im-dom-utils.ts';
+import { handleTextEditorClickEventForChar, imBeginTextEditor, imEndTextEditor, incrementCursor, loadText, newTextEditorState, textEditorCursorIsSelected, textEditorHasChars, textEditorMarkViewEnd, textEditorNextChar, TextEditorState } from './text-editor.ts';
+import { abortListAndRewindUiStack, assert, cn, deferClickEventToParent, deltaTimeSeconds, disableIm, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, enableIm, getCurrentRoot, getKeys, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, newCssBuilder, nextListRoot, scrollIntoViewVH, setAttributes, setClass, setInnerText, setStyle, SizeState, UIRoot } from './utils/im-dom-utils.ts';
 import { clamp, gridSnap, inverseLerp, lerp, max, min } from './utils/math-utils.ts';
-import { getSliceValue, rotationMatrix2D } from './utils/matrix-math.ts';
+import { getSliceValue } from './utils/matrix-math.ts';
 import { isWhitespace } from './utils/text-utils.ts';
 
 
@@ -478,6 +482,9 @@ function renderAppCodeOutput(ctx: GlobalContext) {
 
             if (elementHasMouseClick()) {
                 ctx.state.autoRun = !ctx.state.autoRun
+                if (ctx.state.autoRun) {
+                    rerun(ctx);
+                }
             }
         } imEnd();
 
@@ -690,7 +697,7 @@ const renderDiagnostics = (diagnostics: DiagnosticInfo[], col: string, line: num
     imEndList();
 }
 
-function imAutocomplete(ctx: GlobalContext, lastIdentifier: string) {
+function imAutocomplete(lastIdentifier: string) {
     // we do a little autocomplete
 
     // autocomplete
@@ -773,13 +780,22 @@ function imAutocomplete(ctx: GlobalContext, lastIdentifier: string) {
     imEndList();
 }
 
+function isPartiallyOffscreen(rect: ClientRect) {
+    return (
+        rect.x < 0 || rect.x + rect.width > window.innerWidth ||
+        rect.y < 0 || rect.y + rect.height > window.innerHeight
+    );
+}
+
 let loaded = false;
 function renderAppCodeEditor(ctx: GlobalContext) {
     const { state, lastInterpreterResult, lastParseResult } = ctx;
 
     const s = imState(newCodeEditorState);
 
-    const container = imBeginScrollContainer(H100 | CODE | COL).root; {
+    let hasSelection = false;
+
+    imBeginScrollContainer(H100 | CODE | COL |  RELATIVE, true).root; {
         if (imInit()) {
             setInset("10px");
             setClass(cnApp.bgFocus);
@@ -792,25 +808,33 @@ function renderAppCodeEditor(ctx: GlobalContext) {
             loaded = true;
             loadText(editorState, state.text);
         }
-        if (imBeginMemo()
-            .val(editorState.modifiedAt)
-            .changed()
-        ) {
-            state.text = editorState.buffer.join("");
-        } imEndMemo();
 
         ctx.astStart = 1;
         ctx.astEnd = 5;
+        hasSelection = editorState.selectionStart !== -1;
 
         ctx.textCursorIdx = editorState.cursor;
+
+        const astTraverserRef = imRef<ResumeableAstTraverser | null>();
+        if (imBeginMemo().val(lastParseResult).changed()) {
+            if (lastParseResult) {
+                astTraverserRef.val = newResumeableAstTraverser(lastParseResult);
+            } else {
+                astTraverserRef.val = null;
+            }
+        } imEndMemo();
+
+        if (astTraverserRef.val && lastParseResult) {
+            resetAstTraversal(astTraverserRef.val, lastParseResult);
+        }
 
         // TODO: only render the stuff that is onscreen
         imBeginTextEditor(editorState);
         imBeginList();
         while (textEditorHasChars(editorState)) {
             nextListRoot();
-            imBeginLayout(COL); {
-                const lineIdx = editorState.renderCursorLine;
+            const line = imBeginLayout(COL); {
+                const lineIdx = editorState.renderCursor.line;
 
                 imBeginLayout(COL); {
                     imBeginLayout(ROW | FLEX); {
@@ -842,6 +866,16 @@ function renderAppCodeEditor(ctx: GlobalContext) {
                                     nextListRoot();
 
                                     const actualC = textEditorNextChar(editorState);
+
+                                    let astNode: ProgramExpression | undefined;
+                                    if (astTraverserRef.val && lastParseResult) {
+                                        astNode = getAstNodeForTextPos(
+                                            astTraverserRef.val, 
+                                            lastParseResult, 
+                                            editorState.renderCursor.pos,
+                                        );
+                                    } 
+
                                     const ws = isWhitespace(actualC);
                                     const isTab = actualC === "\t";
                                     let c;
@@ -859,10 +893,10 @@ function renderAppCodeEditor(ctx: GlobalContext) {
 
                                     const textSpan = imBeginSpan(); {
                                         setInnerText(c);
-                                        handleTextEditorClickEventForChar(editorState, editorState.renderCursor);
+                                        handleTextEditorClickEventForChar(editorState, editorState.renderCursor.pos);
 
-                                        const isSelected = textEditorCursorIsSelected(editorState, editorState.renderCursor);
-                                        const isCursor = editorState.renderCursor === editorState.cursor;
+                                        const isSelected = textEditorCursorIsSelected(editorState, editorState.renderCursor.pos);
+                                        const isCursor = editorState.renderCursor.pos === editorState.cursor && editorState.hasFocus;
                                         if (isCursor) {
                                             editorState._cursorSpan = textSpan.root;
                                             ctx.textCursorLine = lineIdx;
@@ -877,10 +911,35 @@ function renderAppCodeEditor(ctx: GlobalContext) {
 
                                         if (imBeginMemo()
                                             .val(ws)
+                                            .val(astNode)
                                             .changed()
                                         ) {
-                                            const color = ws ? "#0000" : "";
+                                            let italic = false;
+                                            let bold = false;
+                                            let color = "";
+                                            if (ws) {
+                                                color = "#0000";
+                                            } else if (astNode) {
+                                                if (astNode.t === T_IDENTIFIER) {
+                                                    if (astNode.parent !== null && astNode.parent.t === T_FN) {
+                                                        // Funny, because now we don't know if it was the function name, or an argument passed into the function.
+                                                        // TODO: identifier types
+                                                        bold = true;
+                                                    }  else {
+                                                        italic = true;
+                                                    }
+                                                } else if (
+                                                    astNode.t === T_FN ||
+                                                    astNode.t === T_BLOCK ||
+                                                    astNode.t === T_LIST_LITERAL ||
+                                                    astNode.t === T_VECTOR_LITERAL 
+                                                ) {
+                                                    bold = true;
+                                                }
+                                            }
                                             setStyle("color", color);
+                                            setStyle("fontStyle", italic ? "italic" : "");
+                                            setStyle("fontWeight", bold ? "bold" : "");
                                         } imEndMemo();
                                     } imEnd();
 
@@ -892,7 +951,7 @@ function renderAppCodeEditor(ctx: GlobalContext) {
 
                                 // flex element handles events for the entire newline
                                 imBeginLayout(FLEX); {
-                                    handleTextEditorClickEventForChar(editorState, editorState.renderCursor);
+                                    handleTextEditorClickEventForChar(editorState, editorState.renderCursor.pos);
                                 } imEnd();
                             } imEnd();
 
@@ -910,21 +969,21 @@ function renderAppCodeEditor(ctx: GlobalContext) {
                                     numErrors += lastParseResult.warnings.length;
                                 }
 
-                                if (nextListRoot() && numErrors === 0 && lineIdx === ctx.textCursorLine) {
+                                if (nextListRoot() && 
+                                    // if this is true, Error: identifier isnt set will prevent this from opening, which is bad.
+                                    // we should reconsider even showing that error.
+                                    // numErrors === 0 && 
+                                    lineIdx === ctx.textCursorLine &&
+                                    !hasSelection
+                                ) {
                                     const pos = ctx.textCursorIdx;
-                                    const lastIdentifier = parseIdentifierBackwardsFromPoint(
-                                        state.text,
-                                        pos - 1
-                                    );
-
-                                    imAutocomplete(ctx, lastIdentifier);
+                                    const lastIdentifier = parseIdentifierBackwardsFromPoint(state.text, pos - 1);
+                                    imAutocomplete(lastIdentifier);
                                 }
                                 imEndList();
                             }
                         } imEnd();
                     } imEnd();
-
-                    handleTextEditorClickEventForChar(editorState, editorState.renderCursor);
                 } imEnd();
 
                 // figures
@@ -963,7 +1022,7 @@ function renderAppCodeEditor(ctx: GlobalContext) {
                                             const s = renderSliderBody(ui.start, ui.end, ui.step, ui.value);
                                             if (imBeginMemo().val(s.value).changed()) {
                                                 ui.value = s.value;
-                                                ctx.reinterpretSignal = true;
+                                                rerun(ctx);
                                             } imEndMemo();
                                         } imEnd();
                                     } break;
@@ -992,22 +1051,25 @@ function renderAppCodeEditor(ctx: GlobalContext) {
                     imEndList();
                 } imEnd();
             } imEnd();
+
+            const rect = line.root.getBoundingClientRect();
+            if (isPartiallyOffscreen(rect)) {
+                break;
+            } else {
+                textEditorMarkViewEnd(editorState);
+            }
         } 
         imEndList();
-        s.lastMaxLine = editorState.renderCursorLine;
+        s.lastMaxLine = editorState.renderCursor.line;
         imEndTextEditor(editorState);
 
-        handleTextEditorClickEventForChar(editorState, editorState.renderCursor);
-
         if (imBeginMemo()
-            .val(editorState._cursorSpan)
+            .val(editorState.modifiedAt)
             .changed()
         ) {
-            const viewExtentFraction = 0.3;
-
-            if (editorState._cursorSpan) {
-                scrollIntoViewRect(container, editorState._cursorSpan, 
-                    viewExtentFraction, viewExtentFraction, 1 - viewExtentFraction, 1 - viewExtentFraction);
+            state.text = editorState.buffer.join("");
+            if (state.autoRun) {
+                rerun(ctx);
             }
         } imEndMemo();
     } imEnd();
@@ -1049,7 +1111,7 @@ function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretRes
                     imTextSpan("Reset");
                     if (elementHasMouseClick()) {
                         assert(ctx.lastParseResult);
-                        ctx.reinterpretSignal = true;
+                        startDebugging(ctx);
                         message.val = "";
                     }
                 } imEnd();
@@ -2411,6 +2473,10 @@ type CodeExample = {
 // right now, I'm just using this mechanism to save and load various scenarios.
 const codeExamples: CodeExample[] = [
     {
+        name: "Lots of text",
+        code:`// alskdlasdjlkjf;alsjf;lskfla;ldskf\n`.repeat(1024),
+    },
+    {
         name: "Plotting",
         code:
             `
@@ -2438,6 +2504,10 @@ for size in range(1, 6) {
         plot_lines(1, sine_wave, col)
     }
 }
+
+// try this
+output_here()
+
 `
     },
     {
@@ -2556,8 +2626,39 @@ yAngle = slider("y", 0, 2 * PI)
 zAngle = slider("z", 0, 2 * PI)
 
 X = rot3d_x(xAngle)
-Y = rot3d_y(yAngle) // rot3d_y is probably wrong lmao
-Z = rot3d_z(zAngle) // rot3d_z is probably wrong too lmao
+Y = rot3d_y(yAngle)
+Z = rot3d_z(zAngle)
+
+// Alternatively, you can do this:
+
+// sinX = sin(xAngle)
+// sinY = sin(yAngle)
+// sinZ = sin(zAngle)
+//
+// cosX = cos(xAngle)
+// cosY = cos(yAngle)
+// cosZ = cos(zAngle)
+//
+// X =  [
+//     [1,  0,  0, 0],
+//     [0, cosX, -sinX, 0],
+//     [0, sinX, cosX,  0],
+//     [0,  0,  0, 1],
+// ]
+//
+// Y = [
+//     [cosY,  0,  -sinY, 0],
+//     [0,    1, 0, 0],
+//     [sinY, 0, cosY,  0],
+//     [0,  0,  0, 1],
+// ]
+//
+// Z = [
+//     [cosZ, -sinZ, 0, 0],
+//     [sinZ, cosZ,  0, 0],
+//     [0,  0,  1, 0],
+//     [0,  0,  0, 1],
+// ]
 
 T = mul(Z, mul(Y, mul(Z, X)))
 
@@ -2605,20 +2706,12 @@ export function renderApp() {
 
                 const { state } = ctx;
 
+
                 if (imBeginMemo()
                     .val(state.text)
                     .val(state.autoRun)
-                    .changed() ||
-                    (ctx.reinterpretSignal && !ctx.isDebugging)
+                    .changed()
                 ) {
-                    ctx.reinterpretSignal = false;
-
-                    const text = state.text;
-                    ctx.lastParseResult = parse(text);
-                    if (state.autoRun) {
-                        ctx.lastInterpreterResult = interpret(ctx.lastParseResult, ctx.lastInterpreterResult);
-                    }
-
                     saveStateDebounced(ctx);
                 } imEndMemo();
 

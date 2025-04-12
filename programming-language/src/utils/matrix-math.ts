@@ -663,8 +663,8 @@ export function scaleMatrix2D(x: number, y: number): Matrix {
 // 3d stuff is a bit complicated, because we need quaternions.
 
 export function rotationMatrix3DZ(angle: number): Matrix {
-    const sin = Math.cos(angle);
-    const cos = Math.sin(angle);
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
 
     const number: number[] = [
         cos, -sin, 0, 0,
@@ -680,8 +680,8 @@ export function rotationMatrix3DZ(angle: number): Matrix {
 }
 
 export function rotationMatrix3DX(angle: number): Matrix {
-    const sin = Math.cos(angle);
-    const cos = Math.sin(angle);
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
 
     const number: number[] = [
         1,  0,  0, 0,
@@ -697,8 +697,8 @@ export function rotationMatrix3DX(angle: number): Matrix {
 }
 
 export function rotationMatrix3DY(angle: number): Matrix {
-    const sin = Math.cos(angle);
-    const cos = Math.sin(angle);
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
 
     const number: number[] = [
         cos,  0,  -sin, 0,

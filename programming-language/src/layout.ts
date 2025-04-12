@@ -126,10 +126,18 @@ export function imBeginAbsoluteLayout(flags: number = 0, top: number, left: numb
     return root;
 }
 
-export function imBeginScrollContainer(flags: number = 0) {
+export function imBeginScrollContainer(flags: number = 0, noScroll: boolean = false) {
     const root = imBeginLayout(flags);
-    if (imInit()) {
-        setClass(cn.overflowYAuto);
+
+    const lastNoScroll = imRef();
+    if (lastNoScroll.val !== noScroll) {
+        lastNoScroll.val = noScroll;
+        if (noScroll) {
+            setStyle("overflow", "hidden");
+            setClass(cn.overflowYAuto, false);
+        } else {
+            setClass(cn.overflowYAuto, true);
+        }
     }
     return root;
 }

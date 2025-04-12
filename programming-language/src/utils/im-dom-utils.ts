@@ -443,17 +443,14 @@ export function resetDomAppender(domAppender: DomAppender, idx = -1) {
 }
 
 export function appendToDomRoot(domAppender: DomAppender, child: ValidElement) {
-    domAppender.idx++;
-    setChildAtEl(domAppender.root, domAppender.idx, child);
-}
+    const i = ++domAppender.idx;
 
-export function setChildAtEl(root: Element, i: number, child: Element) {
+    const root = domAppender.root;
     const children = root.children;
 
     if (i === children.length) {
         root.appendChild(child);
     } else if (children[i] !== child) {
-        // TODO: compare insertBefore performance with replaceChild. I reckon insertBefore is faster in most cases
         root.insertBefore(child, children[i]);
     }
 }
@@ -641,11 +638,12 @@ export class UIRoot<E extends ValidElement = ValidElement> {
 
         this.assertNotDerived();
 
-        if (this.root.childNodes.length === 0) {
-            this.root.appendChild(document.createTextNode(value));
-        } else {
-            if (this.lastText !== value) {
-                this.lastText = value;
+        if (this.lastText !== value) {
+            this.lastText = value;
+
+            if (this.root.childNodes.length === 0) {
+                this.root.appendChild(document.createTextNode(value));
+            } else {
                 const textNode = this.root.childNodes[0];
                 textNode.nodeValue = value;
             }
@@ -1688,14 +1686,24 @@ export function deltaTimeSeconds(): number {
 
 let doRender = () => {};
 
+let isRendering = false;
+
 export function initializeDomRootAnimiationLoop(renderFn: () => void, renderRoot?: UIRoot) {
     doRender = () => {
+        if (isRendering) {
+            return;
+        }
+
+        isRendering = true;
+
         startRendering(renderRoot);
         renderFn();
 
         // If this throws, then you've forgotten to pop some elements off the stack.
         // inspect currentStack in the debugger for more info
         assert(currentStack.length === 1);
+
+        isRendering = false;
     }
 
     const animation = (t: number) => {
