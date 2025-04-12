@@ -1,6 +1,6 @@
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
-import { imBeginMemoComputation, cn, deferClickEventToParent, imBeginDiv, imEnd, imEndMemo, imInit, imRef, setClass, setStyle, imBeginSpan, setAttributes } from './utils/im-dom-utils.ts';
+import { imBeginMemo, cn, deferClickEventToParent, imBeginDiv, imEnd, imEndMemo, imInit, imRef, setClass, setStyle, imBeginSpan, setAttributes } from './utils/im-dom-utils.ts';
 
 
 // NOTE: you only get 32 of these. use them wisely.
@@ -113,7 +113,7 @@ export const NONE = 9999999;
 export function imBeginAbsoluteLayout(flags: number = 0, top: number, left: number, bottom: number, right: number) {
     const root = imBeginLayout(flags | ABSOLUTE);
 
-    if (imBeginMemoComputation()
+    if (imBeginMemo()
         .val(top).val(left).val(bottom).val(right)
         .changed()
     ) {
@@ -155,7 +155,7 @@ export function imBeginAspectRatio(w: number, h: number, flags: number = 0) {
 export function imVerticalBar() {
     imBeginDiv(); {
         imInit() && setAttributes({
-            style: `width: 5px; background-color: ${cssVars.fg};`
+            style: `width: 5px; background-color: ${cssVars.fg}; margin: 0px 5px;`
         });
     } imEnd();
 }

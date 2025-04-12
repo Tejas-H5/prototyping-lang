@@ -1,6 +1,6 @@
 import { cssVars } from "src/styling";
 import { execCommand } from "src/utils/depracated-dom-api-wrappers";
-import { cn, imBeginDiv, imBeginEl, imEnd, imState, imInit, newCssBuilder, newDomElement, Ref, setAttributes, setClass, setInputValue, imBeginSpan, setInnerText, imBeginList, nextListRoot, isEditingTextSomewhereInDocument, imEndList, imBeginMemoComputation, imEndMemo, } from "src/utils/im-dom-utils";
+import { cn, imBeginDiv, imBeginEl, imEnd, imState, imInit, newCssBuilder, newDomElement, Ref, setAttributes, setClass, setInputValue, imBeginSpan, setInnerText, imBeginList, nextListRoot, isEditingTextSomewhereInDocument, imEndList, imBeginMemo, imEndMemo, } from "src/utils/im-dom-utils";
 import { getLineBeforePos } from "src/utils/text-utils";
 
 const CSSVARS_FOCUS = cssVars.bg;
@@ -121,7 +121,7 @@ export function beginTextArea({
             // This is a facade that gives the text area the illusion of auto-sizing!
             // but it only works if the text doesn't end in whitespace....
             imBeginSpan(); {
-                if (imBeginMemoComputation().val(text).changed()) {
+                if (imBeginMemo().val(text).changed()) {
                     setInnerText(text);
                 } imEndMemo();
             } imEnd();

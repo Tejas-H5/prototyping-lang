@@ -629,7 +629,9 @@ export type ProgramOutputs = {
     images: ProgramImageOutput[];
     graphs: Map<number, ProgramGraphOutput>;
     plots: Map<number, ProgramPlotOutput>;
-    uiInputs: Map<string, ProgramUiInput>;
+    uiInputsCache: Map<string, ProgramUiInput>;
+    // Unlike the cahce, these are actually in the right order
+    uiInputs: ProgramUiInput[];
     uiInputsPerLine: Map<number, ProgramUiInput[]>;
     heatmapSubdivisions: number;
 };
@@ -1005,7 +1007,8 @@ function newEmptyProgramOutputs(): ProgramOutputs {
         images: [],
         graphs: new Map(),
         plots: new Map(),
-        uiInputs: new Map(),
+        uiInputsCache: new Map(),
+        uiInputs: [],
         uiInputsPerLine: new Map(),
         heatmapSubdivisions: 20,
     };
@@ -1018,8 +1021,8 @@ export function startInterpreting(
 ): ProgramInterpretResult {
     const outputs = newEmptyProgramOutputs();
     if (previousProgramResult) {
-        for (const input of previousProgramResult.outputs.uiInputs.values()) {
-            outputs.uiInputs.set(input.name, { ...input, fromThisRun: false });
+        for (const input of previousProgramResult.outputs.uiInputsCache.values()) {
+            outputs.uiInputsCache.set(input.name, { ...input, fromThisRun: false });
         }
     }
 
@@ -1622,7 +1625,7 @@ export function getBuiltinFunctionsMap() {
                 assert(sliderStep.t === T_RESULT_NUMBER);
             }
 
-            let input = result.outputs.uiInputs.get(name.val);
+            let input = result.outputs.uiInputsCache.get(name.val);
             if (!input || input.t !== UI_INPUT_SLIDER) {
                 input = { 
                     t: UI_INPUT_SLIDER, 
@@ -1634,7 +1637,7 @@ export function getBuiltinFunctionsMap() {
                     step: null, 
                     expr: step.expr,
                 }
-                result.outputs.uiInputs.set(input.name, input);
+                result.outputs.uiInputsCache.set(input.name, input);
             }
 
             input.start = start.val;
@@ -1643,6 +1646,8 @@ export function getBuiltinFunctionsMap() {
             input.step = sliderStep ? sliderStep.val : null;
             input.fromThisRun = true;
             input.expr = step.expr;
+
+            result.outputs.uiInputs.push(input);
 
             return newNumberResult(input.value);
         }
@@ -2050,9 +2055,9 @@ export function getBuiltinFunctionsMap() {
         // clear out our outputs, make the UI attribute them all to this function call instead of their actual position
         const outputs = result.outputs;
         result.outputs = newEmptyProgramOutputs();
-        result.outputs.uiInputs = outputs.uiInputs;  // can't flush these, they are important.
+        // Don't want to clear out the ui inputs
+        result.outputs.uiInputsCache = outputs.uiInputsCache;  
         result.outputs.heatmapSubdivisions = outputs.heatmapSubdivisions;
-        outputs.uiInputs = new Map();
         result.flushedOutputs.set(step.expr.start.line, outputs);
 
         for (const o of outputs.prints) {
@@ -2798,9 +2803,9 @@ export function interpret(
 
     // Let's clean up the inputs
     {
-        for (const input of result.outputs.uiInputs.values()) {
+        for (const input of result.outputs.uiInputsCache.values()) {
             if (!input.fromThisRun) {
-                result.outputs.uiInputs.delete(input.name);
+                result.outputs.uiInputsCache.delete(input.name);
             }
         }
 

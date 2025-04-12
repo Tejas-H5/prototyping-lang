@@ -1433,12 +1433,8 @@ export function getCurrentMemoizer(): Memoizer {
 /**
  * Use memoizers to gate expensive computations.
  * This memoizer will also disable immedate mode, unlike
- * {@link imBeginMemo}, so that you don't accidentally 
- * include immediate mode components in there (but sometimes 
- *  you do want those !)
- *
- * // TODO: consider just removing this, now that 
- * // beginMemo and endMemo actually work with immediate mode components.
+ * {@link imBeginMemoizedRenderingOfImmediateModeComponents}, so that you don't accidentally 
+ * include immediate mode components in there.
  *
  * ```ts
  * if (beginMemo()
@@ -1455,7 +1451,7 @@ export function getCurrentMemoizer(): Memoizer {
  * This is because memoized logic tends to grow quite long, and becomes prone to conditional 
  * and out-of-order imState bugs. 
  */
-export function imBeginMemoComputation() {
+export function imBeginMemo() {
     return beginMemoInternal(newMemoizerNormal);
 }
 
@@ -1474,8 +1470,14 @@ function newMemoizerNormal() {
 }
 
 /**
- * Similar to {@link imBeginMemoComputation}, but allows immediate mode state.
- * Useful to avoid rendering a large number of components over and over again. 
+ * Similar to {@link imBeginMemo}, but allows immediate mode state.
+ *
+ * The long API name discourages use, but it is needed in some very specific scenarios.
+ *
+ * WARNING: While this is useful to avoid rendering a large number of components over and over again,
+ * none of those components will be able to animate, or respond to immediate mode events. 
+ * You should only be reaching for this to memoize the rendering of hundreds/thousands of 'leaf' components.
+ * Use this high up in your component tree is almost always a mistake.
  *
  * Do note that things inside are no longer updating at 60 fps, so only use if absolutely 
  * necessary.
@@ -1486,7 +1488,7 @@ function newMemoizerNormal() {
  *  } endMemo();
  * ```
  */
-export function imBeginMemo() {
+export function imBeginMemoizedRenderingOfImmediateModeComponents() {
     return beginMemoInternal(newMemoizerImmediateMode);
 }
 

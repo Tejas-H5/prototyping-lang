@@ -2,7 +2,7 @@ import { renderApp, } from './app.ts';
 import { imTextSpan } from './layout.ts';
 import "./styling.ts";
 import { cssVars } from './styling.ts';
-import { beginFrame, deltaTimeSeconds, elementHasMouseClick, endFrame, imBeginDiv, imBeginMemoComputation, imBeginSpan, imEnd, imEndMemo, imInit, initializeDomRootAnimiationLoop, initializeDomUtils, initializeImEvents, setInnerText, setStyle } from './utils/im-dom-utils.ts';
+import { beginFrame, deltaTimeSeconds, elementHasMouseClick, endFrame, imBeginDiv, imBeginMemo, imBeginSpan, imEnd, imEndMemo, imInit, initializeDomRootAnimiationLoop, initializeDomUtils, initializeImEvents, setInnerText, setStyle } from './utils/im-dom-utils.ts';
 
 initializeDomUtils();
 initializeImEvents();
@@ -90,7 +90,7 @@ function renderRoot() {
         imTextSpan(frameMs + "ms frame, ");
 
         imBeginSpan(); {
-            if (imBeginMemoComputation().val(renderMs).changed()) {
+            if (imBeginMemo().val(renderMs).changed()) {
                 setStyle("color", renderMs / baselineFrameMs > 0.5 ? "red" : "");
             } imEndMemo();
             setInnerText(renderMs + "ms render");

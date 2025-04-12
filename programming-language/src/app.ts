@@ -1,9 +1,6 @@
 import {
     ABSOLUTE,
     ALIGN_CENTER,
-    imBeginAbsoluteLayout,
-    imBeginAspectRatio,
-    imBeginScrollContainer,
     BOLD,
     CODE,
     COL,
@@ -12,22 +9,24 @@ import {
     GAP,
     H100,
     H3,
+    imBeginAbsoluteLayout,
+    imBeginAspectRatio,
     imBeginLayout,
+    imBeginScrollContainer,
+    imTextSpan,
+    imVerticalBar,
     JUSTIFY_CENTER,
     NONE,
     NORMAL,
     OPAQUE,
     PADDED,
     PRE,
+    PREWRAP,
     RELATIVE,
     ROW,
-    imTextSpan,
     TRANSLUCENT,
-    imVerticalBar,
-    W100,
-    setStyleFlags,
     TRANSPARENT,
-    PREWRAP
+    W100
 } from './layout.ts';
 import { BuiltinFunction, evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getBuiltinFunctionsMap, getCurrentCallstack, interpret, newNumberResult, ProgramExecutionStep, ProgramGraphOutput, ProgramImageOutput, ProgramInterpretResult, ProgramOutputs, ProgramPlotOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, programResultTypeStringFromType, stepProgram, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MAP, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING, UI_INPUT_SLIDER } from './program-interpreter.ts';
 import {
@@ -58,14 +57,14 @@ import {
     unaryOpToOpString,
     unaryOpToString
 } from './program-parser.ts';
-import { GlobalContext, GlobalState, newGlobalContext, saveState, startDebugging } from './state.ts';
+import { GlobalContext, newGlobalContext, saveState, startDebugging } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars, getCurrentTheme } from './styling.ts';
-import { imTextEditor, loadText, newTextEditorState, UNANIMOUSLY_DECIDED_TAB_SIZE } from './text-editor.ts';
-import { abortListAndRewindUiStack, assert, cn, deferClickEventToParent, deltaTimeSeconds, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, endFrame, getCurrentRoot, getElementExtentNormalized, getKeys, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, newCssBuilder, nextListRoot, Ref, scrollIntoViewRect, scrollIntoViewVH, setAttributes, setClass, setInnerText, setStyle, SizeState, UIRoot } from './utils/im-dom-utils.ts';
+import { handleTextEditorClickEventForChar, imBeginTextEditor, imEndTextEditor, loadText, newTextEditorState, textEditorCursorIsSelected, textEditorHasChars, textEditorNextChar, TextEditorState } from './text-editor.ts';
+import { abortListAndRewindUiStack, assert, cn, deferClickEventToParent, deltaTimeSeconds, disableIm, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, enableIm, getCurrentRoot, getKeys, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, newCssBuilder, nextListRoot, scrollIntoViewRect, scrollIntoViewVH, setAttributes, setClass, setInnerText, setStyle, SizeState, UIRoot } from './utils/im-dom-utils.ts';
 import { clamp, gridSnap, inverseLerp, lerp, max, min } from './utils/math-utils.ts';
-import { getSliceValue } from './utils/matrix-math.ts';
-import { getLineBeforePos, getLineEndPos, getLineStartPos } from './utils/text-utils.ts';
+import { getSliceValue, rotationMatrix2D } from './utils/matrix-math.ts';
+import { isWhitespace } from './utils/text-utils.ts';
 
 
 function newH3() {
@@ -454,7 +453,7 @@ function imBeginButton(toggled: boolean = false) {
 function imFunctionName(fn: ProgramResultFunction | null) {
     const sb = imSb();
 
-    if (imBeginMemoComputation().val(fn).changed()) {
+    if (imBeginMemo().val(fn).changed()) {
         sb.clear();
         if (!fn) {
             sb.s("Entry point");
@@ -492,7 +491,7 @@ function renderAppCodeOutput(ctx: GlobalContext) {
         imBeginButton(ctx.state.showParserOutput); {
             imTextSpan("Show AST");
             if (elementHasMouseClick()) {
-                ctx.state.showParserOutput = ctx.state.showParserOutput;
+                ctx.state.showParserOutput = !ctx.state.showParserOutput;
             }
         } imEnd();
 
@@ -623,14 +622,169 @@ function renderAppCodeOutput(ctx: GlobalContext) {
     } imEnd();
 }
 
+
+const UNANIMOUSLY_DECIDED_TAB_SIZE = 4;
+
+function newCodeEditorState() {
+    return  {
+        lastMaxLine: 0,
+    };
+}
+
+function lPad(str: string, num: number): string {
+    if (str.length > num) {
+        return str;
+    }
+
+    return "0".repeat(num - str.length) + str;
+}
+
+function isEqual(buffer: string[], query: string[], pos: number): boolean {
+    if (query.length === 0) {
+        // this is a hot take.
+        return false;
+    }
+
+    if (buffer.length < pos + query.length) {
+        return false;
+    }
+
+    for (let i = 0; i < query.length; i++) {
+        if (buffer[i + pos] !== query[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+
+const renderDiagnostics = (diagnostics: DiagnosticInfo[], col: string, line: number) => {
+    // NOTE: we're currently looping over this for every line.
+    // if it becomes too slow, may need to do something about it.
+    imBeginList();
+    for (const err of diagnostics) {
+        if (err.pos.line !== line) {
+            continue
+        }
+
+        nextListRoot();
+
+        // transparent span
+        imBeginLayout(); {
+            imBeginSpan(); {
+                imInit() && setAttributes({ style: "color: transparent" });
+                setInnerText("0".repeat(max(0, err.pos.col + err.pos.tabs * UNANIMOUSLY_DECIDED_TAB_SIZE)));
+            } imEnd();
+
+            imBeginSpan(); {
+                if (imInit()) {
+                    setStyle("color", col);
+                }
+
+                imTextSpan("^ ");
+                imTextSpan(err.problem);
+            } imEnd();
+        } imEnd();
+    }
+    imEndList();
+}
+
+function imAutocomplete(ctx: GlobalContext, lastIdentifier: string) {
+    // we do a little autocomplete
+
+    // autocomplete
+    // right now you can't interact with it - it is more so that I actually remember all the crap I've put into here
+
+    const results = imStateInline<BuiltinFunction[]>(() => []);
+    if (imBeginMemo().val(lastIdentifier).changed()) {
+        results.length = 0;
+        if (lastIdentifier.length > 0) {
+            const funcs = getBuiltinFunctionsMap();
+            for (const [k, v] of funcs) {
+                if (!filterString(k, lastIdentifier)) {
+                    continue;
+                }
+                results.push(v);
+            }
+        }
+    } imEndMemo();
+
+    imBeginList();
+    if (nextListRoot() && results.length > 0) {
+        // TODO: when we do the AST editor, this will completely change, or be ripped out.
+
+        imBeginLayout(PREWRAP | CODE | TRANSPARENT); {
+            if (imInit()) {
+                setClass(cn.pointerEventsNone);
+            }
+
+            setStyle("border", "1px solid black");
+
+            imBeginList();
+            let i = 0;
+            for (const v of results) {
+                i++;
+                if (i > 5) {
+                    break;
+                }
+                nextListRoot();
+
+                imBeginLayout(CODE); {
+                    setStyle("border", "1px solid black");
+                    imTextSpan(v.name);
+                    imTextSpan("(");
+                    imBeginList();
+                    for (let i = 0; i < v.args.length; i++) {
+                        const arg = v.args[i];
+                        nextListRoot();
+                        imTextSpan(arg.name);
+
+                        imBeginList();
+                        if (nextListRoot() && arg.optional) {
+                            imTextSpan("?");
+                        }
+                        imEndList();
+
+                        imTextSpan(":");
+
+                        let type;
+                        if (arg.type.length === 0) {
+                            type = "any"
+                        } else {
+                            type = arg.type.map(programResultTypeStringFromType)
+                                .join("|");
+                        }
+                        imTextSpan(type);
+
+                        imBeginList();
+                        if (nextListRoot() && i < v.args.length - 1) {
+                            imTextSpan(", ");
+                        }
+                        imEndList();
+                    }
+                    imEndList();
+                    imTextSpan(")");
+                } imEnd();
+            }
+            imEndList();
+        } imEnd();
+    }
+    imEndList();
+}
+
 let loaded = false;
 function renderAppCodeEditor(ctx: GlobalContext) {
     const { state, lastInterpreterResult, lastParseResult } = ctx;
+
+    const s = imState(newCodeEditorState);
 
     const container = imBeginScrollContainer(H100 | CODE | COL).root; {
         if (imInit()) {
             setInset("10px");
             setClass(cnApp.bgFocus);
+            setStyle("userSelect", "none");
+            setStyle("cursor", "text");
         }
 
         const editorState = imState(newTextEditorState);
@@ -638,220 +792,222 @@ function renderAppCodeEditor(ctx: GlobalContext) {
             loaded = true;
             loadText(editorState, state.text);
         }
-
-        if (imBeginMemoComputation()
+        if (imBeginMemo()
             .val(editorState.modifiedAt)
             .changed()
         ) {
             state.text = editorState.buffer.join("");
         } imEndMemo();
 
-        ctx.cursorPos = editorState.cursor;
-        ctx.cursorLine = editorState.cursorLine;
+        ctx.astStart = 1;
+        ctx.astEnd = 5;
 
-        const renderDiagnostics = (diagnostics: DiagnosticInfo[], col: string, line: number) => {
-            // NOTE: we're currently looping over this for every line.
-            // if it becomes too slow, may need to do something about it.
-            imBeginList();
-            for (const err of diagnostics) {
-                if (err.pos.line !== line) {
-                    continue
-                }
+        ctx.textCursorIdx = editorState.cursor;
 
-                nextListRoot();
+        // TODO: only render the stuff that is onscreen
+        imBeginTextEditor(editorState);
+        imBeginList();
+        while (textEditorHasChars(editorState)) {
+            nextListRoot();
+            imBeginLayout(COL); {
+                const lineIdx = editorState.renderCursorLine;
 
-                // transparent span
-                imBeginLayout(); {
-                    imBeginSpan(); {
-                        imInit() && setAttributes({ style: "color: transparent" });
-                        setInnerText("0".repeat(max(0, err.pos.col + err.pos.tabs * UNANIMOUSLY_DECIDED_TAB_SIZE)));
-                    } imEnd();
-
-                    imBeginSpan(); {
-                        if (imInit()) {
-                            setStyle("color", col);
-                        }
-
-                        imTextSpan("^ ");
-                        imTextSpan(err.problem);
-                    } imEnd();
-                } imEnd();
-            }
-            imEndList();
-        }
-
-        imTextEditor(editorState, {
-            figures: (line) => {
-
-                const outputs = lastInterpreterResult?.outputs;
-
-                const inputs = outputs?.uiInputsPerLine?.get(line);
-                imBeginList();
-                if (nextListRoot() && inputs) {
-                    imBeginList();
-
-                    for (const ui of inputs) {
-                        nextListRoot();
-
-                        imBeginLayout(COL | GAP | NORMAL | PADDED); {
-                            imBeginList();
-                            nextListRoot(ui.t);
-                            switch (ui.t) {
-                                case UI_INPUT_SLIDER: {
-                                    imBeginLayout(ROW | GAP); {
-                                        imBeginLayout(); {
-                                            imTextSpan(ui.name);
-                                        } imEnd();
-
-                                        imBeginLayout(CODE); {
-                                            imTextSpan(ui.value + "");
-                                        } imEnd();
-                                    } imEnd();
-                                    imBeginLayout(ROW); {
-                                        if (imInit()) {
-                                            setStyle("height", "1em");
-                                        }
-                                        const s = renderSliderBody(ui.start, ui.end, ui.step, ui.value);
-                                        if (imBeginMemoComputation().val(s.value).changed()) {
-                                            ui.value = s.value;
-                                            ctx.reinterpretSignal = true;
-                                        } imEndMemo();
-                                    } imEnd();
-                                } break;
-                                default: {
-                                    throw new Error("Unhandled UI input type");
-                                }
-                            }
-                            imEndList();
-                        } imEnd();
-                    }
-                    imEndList();
-                }
-                imEndList();
-
-                const thisLineOutputs = lastInterpreterResult?.flushedOutputs?.get(line);
-                imBeginList(); 
-                if (nextListRoot() && thisLineOutputs && lastInterpreterResult) {
-                    imBeginLayout(NORMAL | PADDED); {
-                        if (imInit()) {
-                            setStyle("maxWidth", "60vw");
-                        }
-
-                        imProgramOutputs(ctx, lastInterpreterResult, thisLineOutputs);
-                    } imEnd();
-                }
-                imEndList();
-            },
-            annotations: (line) => {
-                imBeginList();
-                if (nextListRoot() && lastInterpreterResult?.errors) {
-                    renderDiagnostics(lastInterpreterResult.errors, "#F00", line);
-                }
-
-                if (nextListRoot() && lastParseResult?.warnings) {
-                    renderDiagnostics(lastParseResult?.warnings, "#F00", line);
-                }
-
-                if (nextListRoot() && line === ctx.cursorLine) {
-                    // we do a little autocomplete
-
-                    // autocomplete
-                    // right now you can't interact with it - it is more so that I actually remember all the crap I've put into here
-                    {
-                        const pos = ctx.cursorPos;
-                        const lastIdentifier = parseIdentifierBackwardsFromPoint(
-                            state.text,
-                            pos - 1
-                        );
-
-                        const results = imStateInline<BuiltinFunction[]>(() => []);
-                        if (imBeginMemoComputation().val(lastIdentifier).changed()) {
-                            results.length = 0;
-                            if (lastIdentifier.length > 0) {
-                                const funcs = getBuiltinFunctionsMap();
-                                for (const [k, v] of funcs) {
-                                    if (!filterString(k, lastIdentifier)) {
-                                        continue;
-                                    }
-                                    results.push(v);
-                                }
-                            }
+                imBeginLayout(COL); {
+                    imBeginLayout(ROW | FLEX); {
+                        const lineSb = imSb();
+                        if (imBeginMemo()
+                            .val(lineIdx)
+                            .val(s.lastMaxLine)
+                            .changed()
+                        ) {
+                            lineSb.clear();
+                            const numDigits = Math.ceil(Math.log10(s.lastMaxLine + 1));
+                            lineSb
+                                .s(lPad("" + lineIdx, numDigits))
+                                .s(" ");
                         } imEndMemo();
 
-                        imBeginList();
-                        if (nextListRoot() && results.length > 0) {
-                            // TODO: when we do the AST editor, this will completely change, or be ripped out.
+                        const lineStr = lineSb.toString();
+                        imBeginLayout(ROW | ALIGN_CENTER | JUSTIFY_CENTER); {
+                            setInnerText(lineStr);
+                        } imEnd();
 
-                            imBeginLayout(PREWRAP |  CODE | TRANSPARENT); {
-                                if (imInit()) {
-                                    setClass(cn.pointerEventsNone);
-                                }
+                        imVerticalBar();
 
-                                setStyle("border", "1px solid black");
-
+                        imBeginLayout(COL | FLEX); {
+                            // Actual text line
+                            imBeginLayout(ROW); {
                                 imBeginList();
-                                let i = 0;
-                                for (const v of results) {
-                                    i++;
-                                    if (i > 5) {
-                                        break;
-                                    }
+                                while (textEditorHasChars(editorState)) {
                                     nextListRoot();
 
-                                    imBeginLayout(CODE); {
-                                        setStyle("border", "1px solid black");
-                                        imTextSpan(v.name);
-                                        imTextSpan("(");
-                                        imBeginList();
-                                        for (let i = 0; i < v.args.length; i++) {
-                                            const arg = v.args[i];
-                                            nextListRoot();
-                                            imTextSpan(arg.name);
-
-                                            imBeginList();
-                                            if (nextListRoot() && arg.optional) {
-                                                imTextSpan("?");
-                                            }
-                                            imEndList();
-
-                                            imTextSpan(":");
-
-                                            let type;
-                                            if (arg.type.length === 0) {
-                                                type = "any"
-                                            } else {
-                                                type = arg.type.map(programResultTypeStringFromType)
-                                                    .join("|");
-                                            }
-                                            imTextSpan(type);
-
-                                            imBeginList();
-                                            if (nextListRoot() && i < v.args.length - 1) {
-                                                imTextSpan(", ");
-                                            }
-                                            imEndList();
+                                    const actualC = textEditorNextChar(editorState);
+                                    const ws = isWhitespace(actualC);
+                                    const isTab = actualC === "\t";
+                                    let c;
+                                    disableIm();
+                                    if (ws) {
+                                        if (isTab) {
+                                            c = "0".repeat(UNANIMOUSLY_DECIDED_TAB_SIZE);
+                                        } else {
+                                            c = "0";
                                         }
-                                        imEndList();
-                                        imTextSpan(")");
+                                    } else {
+                                        c = actualC;
+                                    }
+                                    enableIm();
+
+                                    const textSpan = imBeginSpan(); {
+                                        setInnerText(c);
+                                        handleTextEditorClickEventForChar(editorState, editorState.renderCursor);
+
+                                        const isSelected = textEditorCursorIsSelected(editorState, editorState.renderCursor);
+                                        const isCursor = editorState.renderCursor === editorState.cursor;
+                                        if (isCursor) {
+                                            editorState._cursorSpan = textSpan.root;
+                                            ctx.textCursorLine = lineIdx;
+                                        }
+                                        if (imBeginMemo()
+                                            .val(isSelected)
+                                            .val(isCursor)
+                                            .changed()
+                                        ) {
+                                            setClass(cnApp.inverted, isSelected || isCursor);
+                                        } imEndMemo();
+
+                                        if (imBeginMemo()
+                                            .val(ws)
+                                            .changed()
+                                        ) {
+                                            const color = ws ? "#0000" : "";
+                                            setStyle("color", color);
+                                        } imEndMemo();
                                     } imEnd();
+
+                                    if (actualC === "\n") {
+                                        break;
+                                    }
+                                }
+                                imEndList();
+
+                                // flex element handles events for the entire newline
+                                imBeginLayout(FLEX); {
+                                    handleTextEditorClickEventForChar(editorState, editorState.renderCursor);
+                                } imEnd();
+                            } imEnd();
+
+                            // other stuff just below text
+                            {
+                                let numErrors = 0;
+                                imBeginList();
+                                if (nextListRoot() && lastInterpreterResult?.errors) {
+                                    renderDiagnostics(lastInterpreterResult.errors, "#F00", lineIdx);
+                                    numErrors += lastInterpreterResult.errors.length;
+                                }
+
+                                if (nextListRoot() && lastParseResult?.warnings) {
+                                    renderDiagnostics(lastParseResult.warnings, "#F00", lineIdx);
+                                    numErrors += lastParseResult.warnings.length;
+                                }
+
+                                if (nextListRoot() && numErrors === 0 && lineIdx === ctx.textCursorLine) {
+                                    const pos = ctx.textCursorIdx;
+                                    const lastIdentifier = parseIdentifierBackwardsFromPoint(
+                                        state.text,
+                                        pos - 1
+                                    );
+
+                                    imAutocomplete(ctx, lastIdentifier);
+                                }
+                                imEndList();
+                            }
+                        } imEnd();
+                    } imEnd();
+
+                    handleTextEditorClickEventForChar(editorState, editorState.renderCursor);
+                } imEnd();
+
+                // figures
+                imBeginLayout(COL | NORMAL); {
+                    if (imInit()) {
+                        setStyle("borderRadius", "10px");
+                        setStyle("overflow", "clip");
+                    }
+
+                    const outputs = lastInterpreterResult?.outputs;
+                    const inputs = outputs?.uiInputsPerLine?.get(lineIdx);
+                    imBeginList();
+                    if (nextListRoot() && inputs) {
+                        imBeginList();
+                        for (const ui of inputs) {
+                            nextListRoot();
+
+                            imBeginLayout(COL | GAP | NORMAL | PADDED); {
+                                imBeginList();
+                                nextListRoot(ui.t);
+                                switch (ui.t) {
+                                    case UI_INPUT_SLIDER: {
+                                        imBeginLayout(ROW | GAP); {
+                                            imBeginLayout(); {
+                                                imTextSpan(ui.name);
+                                            } imEnd();
+
+                                            imBeginLayout(CODE); {
+                                                imTextSpan(ui.value + "");
+                                            } imEnd();
+                                        } imEnd();
+                                        imBeginLayout(ROW); {
+                                            if (imInit()) {
+                                                setStyle("height", "1em");
+                                            }
+                                            const s = renderSliderBody(ui.start, ui.end, ui.step, ui.value);
+                                            if (imBeginMemo().val(s.value).changed()) {
+                                                ui.value = s.value;
+                                                ctx.reinterpretSignal = true;
+                                            } imEndMemo();
+                                        } imEnd();
+                                    } break;
+                                    default: {
+                                        throw new Error("Unhandled UI input type");
+                                    }
                                 }
                                 imEndList();
                             } imEnd();
                         }
                         imEndList();
                     }
-                }
-                imEndList();
-            }
-        });
+                    imEndList();
 
-        if (imBeginMemoComputation()
+                    const thisLineOutputs = lastInterpreterResult?.flushedOutputs?.get(lineIdx);
+                    imBeginList();
+                    if (nextListRoot() && thisLineOutputs && lastInterpreterResult) {
+                        imBeginLayout(NORMAL | PADDED); {
+                            if (imInit()) {
+                                setStyle("maxWidth", "60vw");
+                            }
+
+                            imProgramOutputs(ctx, lastInterpreterResult, thisLineOutputs);
+                        } imEnd();
+                    }
+                    imEndList();
+                } imEnd();
+            } imEnd();
+        } 
+        imEndList();
+        s.lastMaxLine = editorState.renderCursorLine;
+        imEndTextEditor(editorState);
+
+        handleTextEditorClickEventForChar(editorState, editorState.renderCursor);
+
+        if (imBeginMemo()
             .val(editorState._cursorSpan)
             .changed()
         ) {
+            const viewExtentFraction = 0.3;
+
             if (editorState._cursorSpan) {
                 scrollIntoViewRect(container, editorState._cursorSpan, 
-                    0.25, 0.25, 0.75, 0.75);
+                    viewExtentFraction, viewExtentFraction, 1 - viewExtentFraction, 1 - viewExtentFraction);
             }
         } imEndMemo();
     } imEnd();
@@ -1082,7 +1238,7 @@ function renderSliderBody(
         }
         s.step = step;
 
-        if (imBeginMemoComputation().val(value).changed()) {
+        if (imBeginMemo().val(value).changed()) {
             s.value = value;
         } imEndMemo();
 
@@ -1131,7 +1287,7 @@ function renderSliderBody(
                 setStyle("cursor", "ew-resize");
             }
 
-            if (imBeginMemoComputation().objectVals(s).changed()) {
+            if (imBeginMemo().objectVals(s).changed()) {
                 const t = inverseLerp(s.start, s.end, s.value);
                 const sliderPos = lerp(0, rect.width - sliderHandleSize, t);
                 setStyle("left", sliderPos + "px");
@@ -1183,7 +1339,7 @@ function renderImageOutput(image: ProgramImageOutput) {
                         const { width, height } = rect;
                         const pixelSize = 10;
 
-                        if (imBeginMemoComputation().val(image).changed()) {
+                        if (imBeginMemo().val(image).changed()) {
                             const minX = 0,
                                 minY = 0,
                                 maxX = image.width * pixelSize,
@@ -1192,7 +1348,7 @@ function renderImageOutput(image: ProgramImageOutput) {
                             recomputePlotExtent(plotState, minX, maxX, minY, maxY);
                         } imEndMemo();
 
-                        if (imBeginMemoComputation().val(image).objectVals(plotState).changed()) {
+                        if (imBeginMemo().val(image).objectVals(plotState).changed()) {
                             canvas.width = width;
                             canvas.height = width * 9 / 16;
 
@@ -1329,7 +1485,7 @@ function renderGraph(graph: ProgramGraphOutput) {
         };
     });
 
-    if (imBeginMemoComputation().val(graph).changed()) {
+    if (imBeginMemo().val(graph).changed()) {
         let minX = Number.MAX_SAFE_INTEGER;
         let maxX = Number.MIN_SAFE_INTEGER;
         let minY = Number.MAX_SAFE_INTEGER;
@@ -1355,7 +1511,7 @@ function renderGraph(graph: ProgramGraphOutput) {
         const canvas = canvasRoot.root; {
             imPlotZoomingAndPanning(plotState, rect);
 
-            if (imBeginMemoComputation().val(width).val(height).val(graph).objectVals(plotState).changed()) {
+            if (imBeginMemo().val(width).val(height).val(graph).objectVals(plotState).changed()) {
                 canvas.width = width;
                 canvas.height = height;
 
@@ -1436,7 +1592,7 @@ function programOutputsState(): ProgramOutputState {
 
 function canScrollToThing(ctx: GlobalContext, s: ProgramOutputState, expr: ProgramExpression) {
     return !s.currentThingToScrollTo &&
-        expr.start.i <= ctx.cursorPos && ctx.cursorPos <= expr.end.i;
+        expr.start.i <= ctx.textCursorIdx && ctx.textCursorIdx <= expr.end.i;
 }
 
 function imProgramOutputs(
@@ -1568,7 +1724,7 @@ function imProgramOutputs(
 
                 const exprFrequencies = imStateInline(() => new Map<ProgramExpression, number>());
 
-                if (!imBeginMemoComputation().val(outputs).changed()) {
+                if (!imBeginMemo().val(outputs).changed()) {
                     exprFrequencies.clear();
                     for (const line of plot.lines) {
                         const count = exprFrequencies.get(line.expr) ?? 0;
@@ -1853,7 +2009,7 @@ function beginMaximizeableContainer(item: object) {
     }
 
     imBeginLayout(rootLayoutFlags).root; {
-        if (imBeginMemoComputation().val(isMaximized).changed()) {
+        if (imBeginMemo().val(isMaximized).changed()) {
             if (isMaximized) {
                 setInset("10px");
             } else {
@@ -1930,7 +2086,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
 
                     const { width, height } = rect;
 
-                    if (imBeginMemoComputation()
+                    if (imBeginMemo()
                         .val(program.parseResult.text)
                         .val(width)
                         .val(height)
@@ -1969,7 +2125,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                         rows.val = [];
                     }
 
-                    if (imBeginMemoComputation().val(plot).objectVals(plotState).changed()) {
+                    if (imBeginMemo().val(plot).objectVals(plotState).changed()) {
                         problems.val.length = 0;
 
                         const { width, height } = plotState;
@@ -2449,7 +2605,7 @@ export function renderApp() {
 
                 const { state } = ctx;
 
-                if (imBeginMemoComputation()
+                if (imBeginMemo()
                     .val(state.text)
                     .val(state.autoRun)
                     .changed() ||

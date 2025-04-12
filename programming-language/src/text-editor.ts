@@ -1,13 +1,11 @@
-import { ALIGN_CENTER, ALIGN_STRETCH, CODE, COL, FLEX, GAP, imBeginLayout, JUSTIFY_CENTER, PRE, RELATIVE, ROW, imTextSpan } from "./layout.ts";
 import "./styling.ts";
-import { cnApp, cssVars } from "./styling.ts";
 import { copyToClipboard, readFromClipboard } from "./utils/clipboard.ts";
 
-import { elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, getCurrentRoot, getHoveredElement, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imBeginMemoComputation, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imOn, imSb, imState, nextListRoot, setClass, setInnerText, setStyle } from './utils/im-dom-utils.ts';
+import { assert, elementHasMouseClick, elementHasMouseDown, imBeginEl, imBeginMemo, imEnd, imEndMemo, imInit, imOn, setStyle } from './utils/im-dom-utils.ts';
 import { clamp, max, min } from "./utils/math-utils.ts";
+import { getCol } from "./utils/matrix-math.ts";
 import { isWhitespace } from "./utils/text-utils.ts";
 
-export const UNANIMOUSLY_DECIDED_TAB_SIZE = 4;
 
 
 function hasSelection(s: TextEditorState) {
@@ -19,7 +17,7 @@ function deleteSelectedAndMoveCursorToStart(s: TextEditorState) {
     }
 
     remove(s, s.selectionStart, s.selectionEnd - s.selectionStart + 1);
-    s.cursor = s.selectionStart;
+    setCursor(s, s.selectionStart);
     clearSelection(s);
 }
 
@@ -32,7 +30,7 @@ function insertAtCursor(s: TextEditorState, char: string) {
 
 function currentChar(s: TextEditorState, offset = 0): string {
     const idx = s.cursor + offset;
-    if (idx>= 0 && idx < s.buffer.length) {
+    if (idx >= 0 && idx < s.buffer.length) {
         return s.buffer[s.cursor + offset];
     }
 
@@ -43,14 +41,19 @@ function eof(s: TextEditorState) {
     return s.buffer.length === s.cursor;
 }
 
-function moveToLastNewline(s: TextEditorState): number {
-    let num = 0;
-    while (s.cursor > 0 && currentChar(s) !== "\n") {
-        s.cursor--;
-        num++;
+function getLastNewlinePos(s: TextEditorState, pos: number) {
+    while (pos > 0 && s.buffer[pos] !== "\n") {
+        pos--;
     }
 
-    return num;
+    return pos;
+}
+
+function moveToLastNewline(s: TextEditorState): number {
+    const nextCursorPos = getLastNewlinePos(s, s.cursor);
+    const delta = s.cursor - nextCursorPos;
+    setCursor(s, nextCursorPos);
+    return delta;
 }
 
 function moveDown(s: TextEditorState) {
@@ -69,7 +72,7 @@ function moveDown(s: TextEditorState) {
         i--;
     }
 
-    s.cursor = cursor;
+    setCursor(s, cursor);
 
     moveToNextNewline(s);
     s.cursor++;
@@ -97,7 +100,7 @@ function moveUp(s: TextEditorState) {
 
     if (s.cursor !== 0 && currentLineOffset > 0) {
         s.cursor++;
-    } 
+    }
     for (let i = 1; i < currentLineOffset && currentChar(s) !== "\n"; i++) {
         s.cursor++;
     }
@@ -165,6 +168,11 @@ function moveToNextNewline(s: TextEditorState) {
     }
 }
 
+// TODO: remove, or add incCursor and decCursor
+function setCursor(s: TextEditorState, pos: number) {
+    s.cursor = pos;
+}
+
 type TextEdit = {
     time: number;
     pos: number;
@@ -173,13 +181,13 @@ type TextEdit = {
 };
 
 function applyStep(s: TextEditorState, step: TextEdit, apply: boolean = true) {
-    s.isUndoing = true; 
+    s.isUndoing = true;
     if (step.insert === apply) {
         insert(s, step.pos, step.chars);
-        s.cursor = step.pos + step.chars.length;
+        setCursor(s, step.pos + step.chars.length);
     } else {
         remove(s, step.pos, step.chars.length);
-        s.cursor = step.pos;
+        setCursor(s, step.pos);
     }
     clearSelection(s);
     s.isUndoing = false;
@@ -195,18 +203,32 @@ interface Focusable {
 
 export type TextEditorState = {
     _textAreaElement: HTMLTextAreaElement | null;
-    _cursorSpan: HTMLSpanElement | null;
+    _cursorSpan: HTMLElement | null;
     // Automatically shifts focus to this element if this one were focused for some reason.
+    // TODO: consider if we still need this
     _beingControlledBy: Focusable | null;
+
+    shouldFocusTextArea: boolean;
     undoBuffer: TextEdit[];
     undoBufferIdx: number;
     isUndoing: boolean;
 
+    // TODO: 
+    // // array of lines. each line is a string[]. (unicode chars may be longer than 1, so can't just use string as the line)
     buffer: string[];
     numLines: number;
     modifiedAt: number;
+
     cursor: number;
-    cursorLine: number;
+
+    // inferred by the cursor.
+    viewCursor: number;
+    viewCursorLine: number;
+
+    // slightly different - it starts at -1 and increments to the current index.
+    renderCursor: number;
+    renderCursorLine: number;
+
     lastSelectCursor: number;
     hasFocus: boolean;
 
@@ -222,12 +244,6 @@ export type TextEditorState = {
     hasClick: boolean;
 
     inCommandMode: boolean;
-    wasFinding: boolean;
-    isFinding: boolean;
-    finderTextEditorState: TextEditorState | null;
-    allFindResults: Range[];
-    currentFindResultIdx: number;
-    cursorBeforeFind: number;
 }
 
 type Range = {
@@ -265,12 +281,9 @@ function remove(s: TextEditorState, pos: number, count: number) {
 
 function handleTextEditorEvents(
     s: TextEditorState,
-    canFind: boolean,
     keyDownEvent: HTMLElementEventMap["keydown"] | null,
     keyUpEvent: HTMLElementEventMap["keyup"] | null,
 ) {
-    s.wasFinding = s.isFinding;
-
     if (keyUpEvent) {
         const key = keyUpEvent.key;
         if (key === "Shift") {
@@ -294,48 +307,6 @@ function handleTextEditorEvents(
         }
     }
 
-    // We need to handle infinitely recursive find ops.
-    // ok, we don't 'need' to, but I did want to see if I could do it. Apparently, I can. 
-    if (s.finderTextEditorState && s.wasFinding && s.isFinding) {
-        let handled = false;
-
-        if (!s.finderTextEditorState.isFinding) {
-            if (keyDownEvent) {
-                const key = keyDownEvent.key;
-                if (key === "Enter") {
-                    handled = true;
-
-                    if (s.isShifting) {
-                        s.canStartSelecting = false;
-                        if (s.currentFindResultIdx > 0) {
-                            s.currentFindResultIdx--;
-                        }
-                    } else {
-                        if (s.currentFindResultIdx < s.allFindResults.length - 1) {
-                            s.currentFindResultIdx++;
-                        }
-                    }
-
-                    if (s.currentFindResultIdx < s.allFindResults.length) {
-                        s.cursor = s.allFindResults[s.currentFindResultIdx].start;
-                    }
-                } else if (key === "Escape") {
-                    handled = true;
-
-                    if (s.finderTextEditorState) {
-                        s.isFinding = false;
-                        resetTextEditorState(s.finderTextEditorState);
-                    }
-                }
-            }
-        }
-
-        if (!handled) {
-            handleTextEditorEvents(s.finderTextEditorState, canFind, keyDownEvent, keyUpEvent);
-        }
-        return;
-    }
-
     if (keyDownEvent) {
 
         // do our text editor command instead of the browser shortcut
@@ -354,11 +325,7 @@ function handleTextEditorEvents(
                 insertAtCursor(s, c);
                 s.cursor++;
             } else {
-                if (keyLower === "f") {
-                    if (canFind) {
-                        s.isFinding = true;
-                    }
-                } else if (keyLower === "z" || keyLower === "y") {
+                if (keyLower === "z" || keyLower === "y") {
                     let shouldUndo = false;
                     let shouldRedo = false;
 
@@ -428,6 +395,10 @@ function handleTextEditorEvents(
             if (hasSelection(s)) {
                 deleteSelectedAndMoveCursorToStart(s);
             } else if (s.inCommandMode) {
+                if (s.cursor > 0) {
+                    s.cursor--;
+                }
+
                 const cursor = s.cursor;
                 moveToStartOfLastWord(s);
                 s.selectionStart = s.cursor;
@@ -493,11 +464,11 @@ function handleTextEditorEvents(
         } else if (key === "Escape") {
             if (hasSelection(s)) {
                 clearSelection(s);
-            } 
+            }
         }
 
         const modified = lastModified !== s.modifiedAt;
-        if (modified) { 
+        if (modified) {
             // Typing a capital letter with Shift + key shouldn't start selecting words...
             s.canStartSelecting = false;
         }
@@ -536,6 +507,7 @@ export function newTextEditorState(): TextEditorState {
     // fields with _ cannot be JSON-serialized
     return {
         _textAreaElement: null,
+        shouldFocusTextArea: false,
         _cursorSpan: null,
         _beingControlledBy: null,
         hasFocus: false,
@@ -543,7 +515,10 @@ export function newTextEditorState(): TextEditorState {
         currentKeyDown: "",
         modifiedAt: 0,
         cursor: 0,
-        cursorLine: 0,
+        renderCursor: -1,
+        renderCursorLine: 0,
+        viewCursor: 0,
+        viewCursorLine: 0,
         lastSelectCursor: 0,
 
         selectionStart: -1,
@@ -556,13 +531,6 @@ export function newTextEditorState(): TextEditorState {
 
         isShifting: false,
         inCommandMode: false,
-
-        isFinding: false,
-        wasFinding: false,
-        finderTextEditorState: null,
-        allFindResults: [],
-        currentFindResultIdx: 0,
-        cursorBeforeFind: -1,
 
         undoBuffer: [],
         // quite important for this to start at -1 actually.
@@ -589,39 +557,19 @@ function getChar(e: KeyboardEvent) {
     return char;
 }
 
-function lPad(str: string, num: number): string {
-    if (str.length > num) {
-        return str;
-    }
-
-    return " ".repeat(num - str.length) + str;
-}
-
-function isEqual(buffer: string[], query: string[], pos: number): boolean {
-    if (query.length === 0) {
-        // this is a hot take.
-        return false;
-    }
-
-    if (buffer.length < pos + query.length) {
-        return false;
-    }
-
-    for (let i = 0; i < query.length; i++) {
-        if (buffer[i + pos] !== query[i]) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
 function resetTextEditorState(s: TextEditorState) {
     s.buffer.length = 0;
     s.undoBuffer.length = 0;
     s.undoBufferIdx = -1;
     s.cursor = 0;
     s.modifiedAt = 0;
+
+    clearSelection(s);
+
+    s.viewCursorLine = 0;
+    s.viewCursor = 0;
+    s.renderCursor = -1;
+    s.renderCursorLine = 0;
 }
 
 export function loadText(s: TextEditorState, text: string) {
@@ -642,404 +590,292 @@ function setCanSelect(s: TextEditorState) {
     }
 }
 
-// This ting is no neovim, and it chokes on any reasonably large files.
-// Still, it lets us add custom inline hints and annotations on a per-line basis.
-// Also, we actually know where the cursor is, and can query the cursor's on-screen position, 
-// making stuff like autocomplete easier to implement.
-// TODO: mouse selection support.
-export function imTextEditor(s: TextEditorState, {
-    isSingleLine = false,
-    canFind = true,
-    annotations,
-    inlineHints,
-    figures,
-}: {
-    isSingleLine?: boolean;
-    canFind?: boolean;
+export function setTextEditorViewCursor(s: TextEditorState, pos: number) {
+    let i = s.viewCursor;
+    let line = s.viewCursorLine;
 
-    // Currently can't think of a way to do this without callbacks. sad.
-        
-    // rendered at the end of a particular line
-    inlineHints?: (line: number) => void;   
-    // rendered just below a line, still next to the line number
-    annotations?: (line: number) => void;
-    // rendered below the line and the line number
-    figures?: (line: number) => void;   
-}) {
+    if (pos < 0) pos = 0;
+    if (pos > s.buffer.length) pos = s.buffer.length;
 
-    const mouse = getMouse();
-    if (!mouse.leftMouseButton) {
-        s.hasClick = false;
+    pos = getLastNewlinePos(s, pos);
+
+    while (i < pos) {
+        const c = s.buffer[i];
+        assert(c !== undefined);
+        if (c === "\n") {
+            line++;
+        }
+        i++;
     }
 
-    // Only want to initialize this state if we've actually started
-    // finding.
-    imBeginList();
-    if (nextListRoot() && s.isFinding && s.finderTextEditorState === null) {
-        s.finderTextEditorState = imState(newTextEditorState);
-    } imEndList();
-
-    if (imBeginMemoComputation().val(s.isFinding).changed()) {
-        if (s.isFinding && s.finderTextEditorState) {
-            s.cursorBeforeFind = s.cursor;
-            resetTextEditorState(s.finderTextEditorState);
-            s.finderTextEditorState._beingControlledBy = s._textAreaElement;
+    while (i > pos) {
+        i--;
+        const c = s.buffer[i];
+        assert(c !== undefined);
+        if (c === "\n") {
+            line--;
         }
-    } imEndMemo();
+    }
 
-    let textArea: HTMLTextAreaElement | undefined;
-    let shouldFocusTextArea = false;
-    let findResultIdx = 0;
-
-    if (imBeginMemoComputation()
-        .val(s.finderTextEditorState?.modifiedAt)
-        .changed()
-    ) {
-        let numResults = 0;
-        const queryBuffer = s.finderTextEditorState?.buffer;
-        if (queryBuffer && queryBuffer.length > 0) {
-            for (let i = 0; i < s.buffer.length; i++) {
-                if (isEqual(s.buffer, queryBuffer, i)) {
-                    if (numResults === s.allFindResults.length) {
-                        s.allFindResults.push({ start: 0, end: 0 });
-                    }
-
-                    s.allFindResults[numResults].start = i;
-                    s.allFindResults[numResults].end = i + queryBuffer.length - 1;   // inclusive range
-                    numResults++;
-                }
-            }
-        }
-        // we do a little object pooling
-        s.allFindResults.length = numResults;
-        if (numResults > 0) {
-            // move cursor to the result that is closest to it
-
-            let minIdx = 0;
-            let minDistance = Math.abs(s.allFindResults[0].start - s.cursorBeforeFind);
-            for (let i = 1; i < s.allFindResults.length; i++) {
-                const res = s.allFindResults[i];
-                const dist = Math.abs(res.start - s.cursorBeforeFind);
-                if (dist < minDistance) {
-                    minDistance = dist;
-                    minIdx = i;
-                }
-            }
-
-            s.currentFindResultIdx = minIdx;
-            s.cursor = s.allFindResults[minIdx].start;
-        }
-    } imEndMemo();
-
-    let keyDownEvent: HTMLElementEventMap["keydown"] | null = null;
-    let keyUpEvent: HTMLElementEventMap["keyup"] | null = null;
-    let wasFinding = s.isFinding;
-
-    imBeginLayout(COL | FLEX); {
-        imBeginLayout(CODE | RELATIVE | FLEX); {
-            let rerenderedTextEditor = false;
-            let renderedCursor = false;
-            let currentSpan: HTMLSpanElement | undefined;
-
-            let i = 0;
-            let lineIdx = 0;
-
-            const numDigits = Math.ceil(Math.log10(s.numLines));
-
-            const mouse = getMouse();
-            if (
-                imBeginMemo()
-                    .objectVals(s)
-                    .val(getHoveredElement())
-                    .val(s.finderTextEditorState?.modifiedAt)
-                    .objectVals(mouse)
-                    .changed()
-            ) {
-                rerenderedTextEditor = true;
-
-                // Render lines
-                imBeginList();
-                while (i <= s.buffer.length) {
-                    nextListRoot();
-
-                    let lineHasCursor = false;
-
-                    imBeginLayout(CODE | PRE | ROW); {
-                        if (imInit()) {
-                            setStyle("alignItems", "flex-start");
-                        }
-
-                        imBeginList();
-                        if (nextListRoot() && !isSingleLine) {
-                            const lineSb = imSb();
-                            if (imBeginMemoComputation().val(lineIdx).val(numDigits).changed()) {
-                                lineSb.clear();
-                                if (!isSingleLine) {
-                                    lineSb
-                                        .s(lPad("" + lineIdx, numDigits))
-                                        .s(" ");
-                                }
-                            } imEndMemo();
-
-                            const lineStr = lineSb.toString();
-                            imBeginLayout(ROW | ALIGN_CENTER | JUSTIFY_CENTER); {
-                                setInnerText(lineStr);
-                            } imEnd();
-
-                            imBeginDiv(); {
-                                if (imInit()) {
-                                    setStyle("paddingLeft", "5px");
-                                    setStyle("paddingRight", "5px");
-                                }
-
-                                imBeginDiv(); {
-                                    if (imInit()) {
-                                        setStyle("width", "2px");
-                                        setStyle("height", "100%");
-                                        setStyle("backgroundColor", cssVars.fg);
-                                    }
-                                } imEnd();
-                            } imEnd();
-                        }
-                        imEndList();
-
-                        imBeginLayout(FLEX); {
-                            if (imInit()) {
-                                setStyle("cursor", "text");
-                            }
-
-                            imBeginLayout(); {
-                                let tokenIdx = 0;
-
-                                // Render individual tokens
-                                imBeginList();
-                                const ROOT_INLINE_HINT = 1;
-                                while (i <= s.buffer.length) {
-                                    const actualC = (i < s.buffer.length) ? s.buffer[i] : " ";
-                                    const ws = isWhitespace(actualC);
-                                    const isTab = actualC === "\t";
-                                    const c = ws ? (isTab ? "0".repeat(UNANIMOUSLY_DECIDED_TAB_SIZE) : ".") : actualC;
-
-                                    nextListRoot();
-
-                                    const root = imBeginSpan(); {
-                                        if (imInit()) {
-                                            setStyle("display", "inline-block");
-                                        }
-
-                                        let isEscapeSequence = false;
-                                        if (actualC == "\n" && isSingleLine) {
-                                            root.text("\\n");
-                                            isEscapeSequence = true;
-                                        } else {
-                                            root.text(c);
-                                        }
-
-                                        if (elementHasMouseClick()) {
-                                            s.hasClick = true;
-                                        }
-
-                                        if (s.hasClick && elementHasMouseDown(false)) {
-                                            // move cursor to current token
-                                            s.cursor = i;
-                                            setCanSelect(s);
-                                            shouldFocusTextArea = true;
-
-                                            if (elementHasMouseClick()) {
-                                                // single click, clear selection
-                                                clearSelection(s);
-                                            }
-                                        }
-
-                                        const isSelected = s.selectionStart <= i && i <= s.selectionEnd;
-                                        const isCursor = s.hasFocus && i === s.cursor;
-                                        if (isCursor) {
-                                            s._cursorSpan = root.root;
-                                            lineHasCursor = true;
-                                        } 
-                                        if (imBeginMemoComputation().val(isSelected).val(isCursor).changed()) {
-                                            setClass(cnApp.inverted, isSelected || isCursor);
-                                        } imEndMemo();
-
-                                        // Make sure we're always looking at the latest find result
-                                        let isAFindResultToken = false;
-                                        if (findResultIdx < s.allFindResults.length) {
-                                            let result = s.allFindResults[findResultIdx];
-                                            while (result.end < i) {
-                                                findResultIdx++;
-                                                if (findResultIdx < s.allFindResults.length) {
-                                                    result = s.allFindResults[findResultIdx];
-                                                } else {
-                                                    break;
-                                                }
-                                            }
-
-                                            if (result.start <= i && i <= result.end) {
-                                                isAFindResultToken = true;
-                                            }
-                                        }
-
-                                        if (imBeginMemoComputation()
-                                            .val(ws)
-                                            .val(isEscapeSequence)
-                                            .changed()
-                                        ) {
-                                            const color = isEscapeSequence ? "#FFA" :
-                                                ws ? "#0000" :
-                                                    "";
-                                            setStyle("color", color);
-                                        } imEndMemo();
-
-                                        if (imBeginMemoComputation()
-                                            .val(isAFindResultToken)
-                                            .val(isCursor)
-                                            .changed()
-                                        ) {
-                                            setStyle("backgroundColor", (!isCursor && isAFindResultToken) ? "#00F" : "");
-                                            s.cursorLine = lineIdx;
-                                        } imEndMemo();
-                                    } imEnd();
-
-                                    if (!renderedCursor && s.cursor === i) {
-                                        renderedCursor = true;
-                                        currentSpan = root.root;
-                                    }
-
-                                    i++;
-
-                                    let isEol = false;
-                                    if ((actualC === "\n" || i === s.buffer.length + 1) && !isSingleLine) {
-                                        lineIdx++;
-                                        tokenIdx = 0;
-                                        isEol = true;
-                                    }
-
-                                    if (isEol) {
-                                        nextListRoot(ROOT_INLINE_HINT);
-                                        inlineHints?.(lineIdx - 1);
-                                        break;
-                                    }
-                                }
-                                imEndList();
-
-                                if (elementHasMouseClick()) {
-                                    s.hasClick = true;
-                                }
-                                if (s.hasClick && elementHasMouseDown(false)) {
-                                    // Don't defer event for the line.
-
-                                    // move cursor to current line
-                                    s.cursor = i - 1;
-                                    shouldFocusTextArea = true;
-                                    setCanSelect(s);
-
-                                    if (elementHasMouseClick()) {
-                                        // single click, clear selection
-                                        clearSelection(s);
-                                    }
-                                }
-                            } imEnd();
-
-                            imBeginLayout(); {
-                                imBeginList();
-                                nextListRoot();
-                                annotations?.(lineIdx - 1);
-                                imEndList();
-                            } imEnd();
-                        } imEnd();
-                    } imEnd();
-
-                    // Annocations section
-                    {
-                        const hSeperator = () => {
-                            imBeginDiv(); {
-                                if (imInit()) {
-                                    setStyle("height", "2px");
-                                    setStyle("backgroundColor", cssVars.fg)
-                                }
-                            } imEnd();
-                        }
-
-                        // Just put the find modal directly under the cursor, so that it's always in view.
-                        imBeginList();
-                        if (nextListRoot() && lineHasCursor && s.isFinding && s.finderTextEditorState) {
-                            hSeperator();
-
-                            imBeginLayout(COL); {
-                                imBeginLayout(ROW | GAP); {
-                                    // NOTE: I am now thinking that this is better implemented at the user level...
-
-                                    imTextSpan("Find: ");
-                                    imTextEditor(s.finderTextEditorState, {
-                                        isSingleLine: true,
-                                        canFind: false,
-                                    });
-                                } imEnd();
-                            } imEnd();
-                        } imEndList();
-
-                        const r = getCurrentRoot();
-                        const idx = r.domAppender.idx;
-                        imBeginList();
-                        if (nextListRoot() && figures) {
-                            figures(lineIdx - 1);
-                        }
-                        // Only draw a seprarator if figures didn't render any DOM elements
-                        if (nextListRoot() && figures && idx !== r.domAppender.idx) {
-                            hSeperator();
-                        }
-                        imEndList();
-                    }
-                }
-                imEndList();
-
-                s.numLines = lineIdx;
-            } imEndMemo();
-
-            // using an input to allow hooking into the browser's existing focusing mechanisms.
-            const textAreaRoot = imBeginEl(newTextArea); {
-                textArea = textAreaRoot.root;
-                s._textAreaElement = textArea;
-
-                s.hasFocus = document.activeElement === textArea;
-                if (s._beingControlledBy && s.hasFocus) {
-                    s._beingControlledBy.focus();
-                }
-
-                if (imInit()) {
-                    setStyle("all", "unset");
-                    setStyle("width", "10px");
-                    setStyle("height", "1px");
-                    setStyle("position", "absolute");
-                    setStyle("color", "transparent");
-                    setStyle("textShadow", "0px 0px 0px tomato"); // hahaha tomato. lmao. https://stackoverflow.com/questions/44845792/hide-caret-in-textarea
-                }
-
-                if (
-                    imBeginMemoComputation().val(currentSpan).changed()
-                    && rerenderedTextEditor
-                    && currentSpan
-                ) {
-                    setStyle("top", currentSpan.offsetTop + "px")
-                    setStyle("left", currentSpan.offsetLeft + "px")
-                } imEndMemo();
-
-                // Handle events
-                keyDownEvent = imOn("keydown");
-                keyUpEvent = imOn("keyup");
-
-                if (s._beingControlledBy === null) {
-                    handleTextEditorEvents(s, canFind, keyDownEvent, keyUpEvent);
-                }
-            } imEnd();
-
-            if (elementHasMouseClick() || shouldFocusTextArea) {
-                textArea.focus();
-            }
-        } imEnd();
-
-        imBeginLayout(); {
-            imTextSpan(s.buffer.length + " chars | " + s.undoBuffer.length + " in undo buffer ");
-        } imEnd();
-    } imEnd();
+    s.viewCursor = i;
+    s.viewCursorLine = line;
 }
+
+export function imBeginTextEditor(s: TextEditorState) {
+    s._beingControlledBy = null;
+    s._cursorSpan = null;
+    s.renderCursor = s.viewCursor - 1;
+    s.renderCursorLine = s.viewCursorLine;
+}
+
+export function setCurrentSpan(s: TextEditorState, span: HTMLElement) {
+    // We need to know where to position the fake text area.
+    s._cursorSpan = span;
+}
+
+export function handleTextEditorClickEventForChar(s: TextEditorState, charIdx: number) {
+    if (elementHasMouseClick()) {
+        s.hasClick = true;
+    }
+
+    if (elementHasMouseDown(false)) {
+        // move cursor to current token
+        s.cursor = charIdx;
+        setCanSelect(s);
+
+        s.shouldFocusTextArea = true;
+
+        if (elementHasMouseClick()) {
+            // single click, clear selection
+            clearSelection(s);
+        }
+    }
+}
+
+export function imEndTextEditor(s: TextEditorState) {
+    // using an input to allow hooking into the browser's existing focusing mechanisms.
+    const textAreaRoot = imBeginEl(newTextArea); {
+        s._textAreaElement = textAreaRoot.root;
+
+        if (imInit()) {
+            setStyle("all", "unset");
+            setStyle("width", "10px");
+            setStyle("height", "1px");
+            setStyle("position", "absolute");
+            setStyle("color", "transparent");
+            setStyle("textShadow", "0px 0px 0px tomato"); // hahaha tomato. lmao. https://stackoverflow.com/questions/44845792/hide-caret-in-textarea
+        }
+
+        if (imBeginMemo()
+            .val(s._cursorSpan)
+            .changed()
+        ) {
+            if (s._cursorSpan) {
+                setStyle("top", s._cursorSpan.offsetTop + "px")
+                setStyle("left", s._cursorSpan.offsetLeft + "px")
+            }
+        } imEndMemo();
+
+        // Handle events
+        const keyDownEvent = imOn("keydown");
+        const keyUpEvent = imOn("keyup");
+
+        if (s._beingControlledBy === null) {
+            handleTextEditorEvents(s, keyDownEvent, keyUpEvent);
+        }
+    } imEnd();
+
+    s.hasFocus = document.activeElement === s._textAreaElement;
+    if (s._beingControlledBy && s.hasFocus) {
+        s._beingControlledBy.focus();
+    } else if (s.shouldFocusTextArea && s._textAreaElement) {
+        s.shouldFocusTextArea = false;
+        s._textAreaElement.focus();
+    }
+}
+
+export function textEditorHasChars(s: TextEditorState): boolean {
+    return s.renderCursor < s.buffer.length;
+}
+
+export function textEditorNextChar(s: TextEditorState): string {
+    if (s.renderCursor < s.buffer.length) {
+        s.renderCursor++;
+        if (s.buffer[s.renderCursor] === "\n") {
+            s.renderCursorLine++;
+        }
+    }
+
+    if (s.renderCursor < s.buffer.length) {
+        return s.buffer[s.renderCursor];
+    }
+
+    return '\n';
+}
+
+export function textEditorCursorIsSelected(s: TextEditorState, pos: number) {
+    return s.selectionStart <= pos && pos <= s.selectionEnd;
+}
+
+// There's a lot of user-code I used to have in here that is now only findable via git history:
+// - finder code
+// - line number code
+// - token rendering code
+
+
+
+
+// TODO: use this insert and remove implementation instead
+
+// function getCodePoints(str: string): string[] {
+//     const chars: string[] = [];
+//     for (const c of str) {
+//         chars.push(c);
+//     }
+//     return chars;
+// }
+//
+// function getLine(buff: string[][], line: number) {
+//     if (line < buff.length || line >= buff.length) return;
+//     return buff[line];
+// }
+//
+// function getLineChar(lineChars: string[], col: number) {
+//     if (col < lineChars.length || col >= lineChars.length) return;
+//     return lineChars[col];
+// }
+//
+// function insert(s: TextEditorState, line: number, col: number, chars: string) {
+//     if (chars.length === 0) {
+//         return;
+//     }
+//
+//     // NOTE: this is never undone
+//     s.modifiedAt = Date.now();
+//
+//     const buff = s.buffer;
+//     let lineChars = getLine(buff, line);
+//     if (!lineChars) {
+//         return;
+//     }
+//
+//     const char = getLineChar(lineChars, col);
+//     if (!char) {
+//         return;
+//     }
+//
+//     const startLine = line;
+//     const startCol = col;
+//     let endLine = startLine;
+//     let endCol = startCol;
+//
+//     const codePoints = getCodePoints(chars);
+//     const charsToInsert = [];
+//     for (let i = 0; i < codePoints.length; i++) {
+//         if (codePoints[i] !== "\n") {
+//             charsToInsert.push(codePoints[i]);
+//             endCol++;
+//         } else {
+//             if (col !== lineChars.length) {
+//                 const slice = lineChars.slice(col, lineChars.length);
+//                 buff.splice(line, 0, slice);
+//                 lineChars.length = col;
+//             }
+//             lineChars.splice(col, 0, ...charsToInsert);
+//
+//             lineChars = [];
+//             endCol = 0;
+//             endLine++;
+//             buff.splice(line, 0, lineChars);
+//             charsToInsert.length = 0;
+//         }
+//     }
+//
+//     // flush remaining chars.
+//     lineChars.splice(col, 0, ...charsToInsert);
+//     pushToUndoBuffer(s, {
+//         time: s.modifiedAt,
+//         insert: true,
+//         startLine, startCol,
+//         endLine, endCol,
+//         codePoints
+//     });
+// }
+//
+// // This was hard to implement ...
+// function remove(
+//     s: TextEditorState,
+//     startLine: number, startCol: number,
+//     endLine: number, endCol: number,
+// ) {
+//     if (startLine === endLine && startCol === endCol) {
+//         return;
+//     }
+//
+//     const buff = s.buffer;
+//     const startLineChars = getLine(buff, startLine);
+//     if (!startLineChars) {
+//         throw new Error("Invalid startLine");
+//     }
+//     if (startCol < 0 || startCol > startLineChars.length) {
+//         throw new Error("Invalid startCol");
+//     }
+//
+//     const endLineChars = getLine(buff, endLine);
+//     if (!endLineChars) {
+//         throw new Error("Invalid endLine");
+//     }
+//     if (endCol < 0 || endCol > endLineChars.length) {
+//         throw new Error("Invalid endCol");
+//     }
+//
+//     const removedChars: string[] = [];
+//
+//     // TODO: debug
+//     if (startLineChars === endLineChars && endCol < endLineChars.length) {
+//         // All removals occur within a single line
+//         const numToRemove = endCol - startCol + 1;
+//         const spliced = startLineChars.splice(startCol, numToRemove);
+//         for (const c of spliced) {
+//             removedChars.push(c);
+//         }
+//     } else {
+//         // Removals occuring across multiple lines.
+//         let spliced = startLineChars.splice(startCol, startLineChars.length - startCol - 1);
+//         for (const c of spliced) {
+//             removedChars.push(c);
+//         }
+//         removedChars.push("\n");
+//
+//         const linesToRemove = endLine - startLine;
+//         const splicedLines = buff.splice(startLine + 1, linesToRemove);
+//         for (let i = 0; i < splicedLines.length - 1; i++) {
+//             // ignore the last line, we deal with it later
+//             const spliced = splicedLines[i];
+//             for (const c of spliced) {
+//                 removedChars.push(c);
+//             }
+//             removedChars.push("\n");
+//         }
+//
+//         // remove from zer to end col. By this point, endLineChars has already been removed from buff.
+//         spliced = endLineChars.splice(0, endCol);
+//         for (const c of spliced) {
+//             removedChars.push(c);
+//         }
+//
+//         // we actually need to concat endLineChars onto the end of startLineChars.
+//         startLineChars.push(...endLineChars);
+//     }
+//
+//     pushToUndoBuffer(s, {
+//         time: s.modifiedAt,
+//         startLine,
+//         startCol,
+//         endLine,
+//         endCol,
+//         insert: false,
+//         codePoints: removedChars
+//     });
+// }
+//
