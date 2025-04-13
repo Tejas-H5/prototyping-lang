@@ -40,7 +40,7 @@ function renderRoot() {
 
     beginFrame();
 
-    const r = imBeginDiv(); {
+    imBeginDiv(); {
         if (imInit()) {
             setStyle("position", "absolute");
             setStyle("top", "5px");

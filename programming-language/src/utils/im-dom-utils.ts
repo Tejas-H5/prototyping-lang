@@ -3,8 +3,7 @@
 // Right now, this one seems better, but the other one has a 'proven' track record of actually working.
 // But in a matter of hours/days, I was able to implement features in this framework that I wasn't able to for months/years in the other one...
 
-import { imVerticalBar } from "src/layout";
-import { CssColor, newColorFromHexOrUndefined } from "./colour";
+import { CssColor } from "./colour";
 
 //////////
 // Assertion functions
@@ -1656,6 +1655,7 @@ export function setClass(val: string, enabled: boolean | number = true) {
     // NOTE: the effect of this method will persist accross renders
     const r = getCurrentRoot();
     r.setClass(val, enabled);
+    return !!enabled;
 }
 
 ///////// 
@@ -1911,7 +1911,7 @@ export function initializeImEvents() {
             keys.ctrlsDown--;
         }
     });
-    document.addEventListener("blur", (e) => {
+    document.addEventListener("blur", () => {
         mouse.leftMouseButton = false;
         mouse.middleMouseButton = false;
         mouse.rightMouseButton = false;

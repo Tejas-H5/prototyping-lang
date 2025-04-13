@@ -1,8 +1,18 @@
-import "./styling.ts";
-import { copyToClipboard, readFromClipboard } from "./utils/clipboard.ts";
-import { assert, elementHasMouseClick, elementHasMouseDown, getMouse, imBeginEl, imEnd, imInit, imOn, setStyle } from './utils/im-dom-utils.ts';
-import { clamp, max, min } from "./utils/math-utils.ts";
-import { isWhitespace } from "./utils/text-utils.ts";
+/**
+ * An immediate-mode core for building a text editor.
+ *
+ * ```ts
+ *
+ * ```
+ */
+
+import "src/styling";
+import { copyToClipboard, readFromClipboard } from "src/utils/clipboard";
+import { assert, elementHasMouseClick, elementHasMouseDown, getMouse, imBeginEl, imEnd, imInit, imOn, setStyle, UIRoot } from 'src/utils/im-dom-utils';
+import { clamp, max, min } from "src/utils/math-utils";
+import { isWhitespace } from "src/utils/text-utils";
+
+
 
 function hasSelection(s: TextEditorState) {
     return s.selectionStart !== -1 || s.selectionEnd !== -1;
@@ -128,18 +138,6 @@ function moveUp(s: TextEditorState) {
     }
 }
 
-function moveToNextWord(s: TextEditorState) {
-    // get off the current word, and onto some whitespace
-    while (s.cursor < s.buffer.length && !isWhitespace(currentChar(s))) {
-        s.cursor++;
-    }
-
-    // then get to the next word
-    while (s.cursor < s.buffer.length && isWhitespace(currentChar(s))) {
-        s.cursor++;
-    }
-}
-
 function moveToEndOfThisWord(s: TextEditorState) {
     // get off whitespace
     while (s.cursor < s.buffer.length && isWhitespace(currentChar(s))) {
@@ -149,19 +147,6 @@ function moveToEndOfThisWord(s: TextEditorState) {
     // get to the end of the word
     while (s.cursor < s.buffer.length && !isWhitespace(currentChar(s))) {
         s.cursor++;
-    }
-}
-
-
-function moveToEndOfLastWord(s: TextEditorState) {
-    // get off the current word, and onto some whitespace
-    while (s.cursor > 0 && !isWhitespace(currentChar(s))) {
-        s.cursor--;
-    }
-
-    // then get to the next word
-    while (s.cursor > 0 && isWhitespace(currentChar(s))) {
-        s.cursor--;
     }
 }
 
@@ -219,34 +204,30 @@ function revertStep(s: TextEditorState, step: TextEdit) {
     applyStep(s, step, false);
 }
 
-interface Focusable {
-    focus(): void;
-}
-
 export type TextEditorState = {
-    _textAreaElement: HTMLTextAreaElement | null;
+    _textAreaElement: UIRoot<HTMLTextAreaElement> | null;
     _cursorSpan: HTMLElement | null;
-    // Automatically shifts focus to this element if this one were focused for some reason.
-    // TODO: consider if we still need this
-    _beingControlledBy: Focusable | null;
+    _keyDownEvent: HTMLElementEventMap["keydown"] | null;
+    _keyUpEvent: HTMLElementEventMap["keyup"] | null;
+    _viewCursorAtStart: boolean;
+    _viewCursorAtEnd: boolean;
+
+    inCommandMode: boolean;
+    keyLower: string;
 
     shouldFocusTextArea: boolean;
+
     undoBuffer: TextEdit[];
     undoBufferIdx: number;
     isUndoing: boolean;
 
-    // TODO: 
-    // // array of lines. each line is a string[]. (unicode chars may be longer than 1, so can't just use string as the line)
     buffer: string[];
-    numLines: number;
     modifiedAt: number;
 
     cursor: number;
     cursorLine: number;
-
-    isAutoScrolling: boolean;
-
     viewCursor: LineCursor;
+    isAutoScrolling: boolean;
     // These two get recomputed
     _viewEndCursor: LineCursor;
     _renderCursor: LineCursor;
@@ -254,30 +235,21 @@ export type TextEditorState = {
     lastSelectCursor: number;
     hasFocus: boolean;
 
-    currentKeyDown: string;
-    canKeyboardSelect: boolean;
-    canMouseSelect: boolean;
-    isSelecting: boolean;
-    isShifting: boolean;
-
     selectionAnchor: number;
     selectionAnchorEnd: number;
     selectionStart: number;
     selectionEnd: number;
     hasClick: boolean;
-
-    inCommandMode: boolean;
+    canKeyboardSelect: boolean;
+    canMouseSelect: boolean;
+    isSelecting: boolean;
+    isShifting: boolean;
 }
 
-type LineCursor = {
+export type LineCursor = {
     pos: number;
     line: number
 }
-
-type Range = {
-    start: number;
-    end: number;
-};
 
 function pushToUndoBuffer(s: TextEditorState, edit: TextEdit) {
     if (s.isUndoing) {
@@ -334,12 +306,8 @@ function remove(s: TextEditorState, pos: number, count: number) {
     });
 }
 
-
-function handleTextEditorEvents(
-    s: TextEditorState,
-    keyDownEvent: HTMLElementEventMap["keydown"] | null,
-    keyUpEvent: HTMLElementEventMap["keyup"] | null,
-) {
+// events are only set to null if we handle them.
+export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
     const mouse = getMouse();
     if (!mouse.leftMouseButton) {
         s.hasClick = false;
@@ -359,32 +327,7 @@ function handleTextEditorEvents(
         }
     } 
 
-    if (keyUpEvent) {
-        const key = keyUpEvent.key;
-        if (key === "Shift") {
-            s.canKeyboardSelect = false;
-            s.isSelecting = false;
-            s.isShifting = false;
-        } else if (key === "Control") {
-            s.inCommandMode = false;
-        }
-    }
-
-    if (keyDownEvent) {
-        const key = keyDownEvent.key;
-
-        if (key === "Control") {
-            s.inCommandMode = true;
-        }
-
-        if (key === "Shift") {
-            s.isShifting = true;
-        }
-    }
-
-    let viewCursorAtStart = viewWindowIsAtStart(s);
-    let viewCursorAtEnd = viewWindowIsAtEnd(s);
-
+    const keyDownEvent = s._keyDownEvent;
     if (keyDownEvent) {
         // need to check up here, because they are invalidated after we edit the buffer
 
@@ -394,14 +337,17 @@ function handleTextEditorEvents(
         keyDownEvent.preventDefault();
 
         const key = keyDownEvent.key;
-        const keyLower = key.toLowerCase();
+        const keyLower = s.keyLower;
         const isRepeat = keyDownEvent.repeat;
         const c = getChar(keyDownEvent);
+
+        // Wherever we set this to false, we give the user an opportunity to handle this event
+        // _if_ we didn't handle it here.
+        let handled = true;
 
         const lastModified = s.modifiedAt;
 
         if (c) {
-
             if (!s.inCommandMode) {
                 insertAtCursor(s, c);
             } else {
@@ -424,6 +370,8 @@ function handleTextEditorEvents(
                             const step = s.undoBuffer[s.undoBufferIdx];
                             s.undoBufferIdx--;
                             revertStep(s, step);
+                        } else {
+                            handled = false;
                         }
                     } else if (shouldRedo) {
                         shouldRedo = true;
@@ -433,12 +381,16 @@ function handleTextEditorEvents(
                             const step = s.undoBuffer[s.undoBufferIdx];
 
                             applyStep(s, step);
+                        } else {
+                            handled = false;
                         }
                     }
                 } else if (key === ")") {
                     // TODO: expand our selection
+                    handled = false;
                 } else if (key === "(") {
                     // TODO: contract our selection
+                    handled = false;
                 } else if (keyLower === "x") {
                     if (hasSelection(s)) {
                         const text = s.buffer.slice(s.selectionStart, s.selectionEnd + 1).join("");
@@ -446,14 +398,14 @@ function handleTextEditorEvents(
                             deleteSelectedAndMoveCursorToStart(s);
                         });
                     }
-
-                    // TODO: cut
                 } else if (keyLower === "c") {
                     if (hasSelection(s)) {
                         const text = s.buffer.slice(s.selectionStart, s.selectionEnd + 1).join("");
                         copyToClipboard(text).then(() => {
                             clearSelection(s);
                         });
+                    } else {
+                        handled = false;
                     }
                 } else if (keyLower === "v") {
                     readFromClipboard().then(clipboardText => {
@@ -469,6 +421,8 @@ function handleTextEditorEvents(
                     s.selectionAnchorEnd = s.buffer.length - 1;
                     s.selectionStart = 0;
                     s.selectionEnd = s.selectionAnchorEnd;
+                } else {
+                    handled = false;
                 }
             }
         } else if (key === "Backspace") {
@@ -541,7 +495,11 @@ function handleTextEditorEvents(
         } else if (key === "Escape") {
             if (hasSelection(s)) {
                 clearSelection(s);
+            } else {
+                handled = false;
             }
+        } else {
+            handled = false;
         }
 
         const modified = lastModified !== s.modifiedAt;
@@ -558,33 +516,15 @@ function handleTextEditorEvents(
             // that we then have to scroll down one line, and so on and so forth
             s.isAutoScrolling = true;
         }
-    }
 
-    autoScroll(s, viewCursorAtStart, viewCursorAtEnd);
-
-    const canSelect = s.canKeyboardSelect || s.canMouseSelect;
-    if (!s.isSelecting && canSelect && s.cursor !== s.lastSelectCursor) {
-        if (s.buffer[s.lastSelectCursor] === "\n" && s.cursor < s.lastSelectCursor) {
-            // dont want to start on newlines when selecting backwards. This is always an accident
-            s.selectionAnchor = s.lastSelectCursor - 1;
-        } else {
-            s.selectionAnchor = s.lastSelectCursor;
+        if (handled) {
+            s._keyDownEvent = null;
         }
-        s.lastSelectCursor = s.cursor;
-        s.canKeyboardSelect = false;
-        s.isSelecting = true;
     }
 
-    if (s.isSelecting) {
-        s.selectionEnd = s.cursor;
-        s.selectionAnchorEnd = s.cursor;
-
-        const start = min(s.selectionAnchor, s.selectionAnchorEnd);
-        const end = max(s.selectionAnchor, s.selectionAnchorEnd);
-        s.selectionStart = start;
-        s.selectionEnd = end;
-
-        s.lastSelectCursor = s.cursor;
+    const keyUpEvent = s._keyUpEvent;
+    if (keyUpEvent) {
+        s._keyUpEvent =  null;
     }
 }
 
@@ -596,7 +536,7 @@ function viewWindowIsAtEnd(s: TextEditorState) {
     return s._viewEndCursor.pos >= s.buffer.length - 1;
 }
 
-function autoScroll(s: TextEditorState, viewCursorWasAtStart: boolean, viewCursorWasAtEnd: boolean) {
+function autoScroll(s: TextEditorState) {
     if (!s.isAutoScrolling) {
         return;
     }
@@ -607,9 +547,9 @@ function autoScroll(s: TextEditorState, viewCursorWasAtStart: boolean, viewCurso
         const ratio = distanceToStartLine / (distanceToStartLine + distanceToEndLine);
 
         if (distanceToStartLine + distanceToEndLine !== 0) {
-            if (ratio < 0.25 && !viewCursorWasAtStart) {
+            if (ratio < 0.25 && !s._viewCursorAtStart) {
                 decrementViewCursors(s);
-            } else if (ratio > 0.75 && !viewCursorWasAtEnd) {
+            } else if (ratio > 0.75 && !s._viewCursorAtEnd) {
                 incrementViewCursors(s);
             } else {
                 // we no longer need to autoscroll.
@@ -622,7 +562,7 @@ function autoScroll(s: TextEditorState, viewCursorWasAtStart: boolean, viewCurso
         const scrollSpeed = Math.max(Math.abs(s.viewCursor.pos - s.cursor) / 50, 5);
 
         for (let i = 0; i < scrollSpeed; i++) {
-            if (!viewCursorWasAtStart && s.cursor < s.viewCursor.pos) {
+            if (!s._viewCursorAtStart && s.cursor < s.viewCursor.pos) {
                 decrementViewCursors(s);
             } else {
                 break;
@@ -630,7 +570,7 @@ function autoScroll(s: TextEditorState, viewCursorWasAtStart: boolean, viewCurso
         }
 
         for (let i = 0; i < scrollSpeed; i++) {
-            if (!viewCursorWasAtEnd && s.cursor > s._viewEndCursor.pos) {
+            if (!s._viewCursorAtEnd && s.cursor > s._viewEndCursor.pos) {
                 // a trick we can use to check if two indices are on the same line
                 incrementViewCursors(s);
             } else {
@@ -644,16 +584,14 @@ function newLineCursor(): LineCursor {
     return { pos: 0, line: 0 };
 }
 
-export function newTextEditorState(): TextEditorState {
+export function newTextEditorState() {
     // fields with _ cannot be JSON-serialized
-    return {
+    const state: TextEditorState = {
         _textAreaElement: null,
         shouldFocusTextArea: false,
         _cursorSpan: null,
-        _beingControlledBy: null,
         hasFocus: false,
 
-        currentKeyDown: "",
         modifiedAt: 0,
         cursor: 0,
         cursorLine: 0,
@@ -675,15 +613,20 @@ export function newTextEditorState(): TextEditorState {
 
         isShifting: false,
         inCommandMode: false,
+        keyLower: "",
+        _keyUpEvent: null,
+        _keyDownEvent: null,
+        _viewCursorAtStart:  false,
+        _viewCursorAtEnd: false,
 
         undoBuffer: [],
-        // quite important for this to start at -1 actually.
         undoBufferIdx: -1,
         isUndoing: false,
 
         buffer: [],
-        numLines: 0,
-    }
+    };
+    resetTextEditorState(state);
+    return state;
 }
 
 function newTextArea() {
@@ -748,13 +691,111 @@ function setCanSelect(s: TextEditorState, keyboard: boolean) {
 // NOTE: this needs to be inside a container
 // with position: relative to correctly position the fake text-area.
 export function imBeginTextEditor(s: TextEditorState) {
-    s._beingControlledBy = null;
     s._cursorSpan = null;
     s._renderCursor.pos = s.viewCursor.pos;
     s._renderCursor.line = s.viewCursor.line;
     s.cursorLine = -1;
+
+    s._viewCursorAtStart = viewWindowIsAtStart(s);
+    s._viewCursorAtEnd = viewWindowIsAtEnd(s);
+
+    // using an input to allow hooking into the browser's existing focusing mechanisms.
+    const textAreaRoot = imBeginEl(newTextArea); {
+        s._textAreaElement = textAreaRoot;
+
+        s._keyDownEvent = imOn("keydown");
+        s._keyUpEvent = imOn("keyup");
+
+        // preprocess events
+        {
+            if (s._keyUpEvent) {
+                const key = s._keyUpEvent.key;
+                if (key === "Shift") {
+                    s.canKeyboardSelect = false;
+                    s.isSelecting = false;
+                    s.isShifting = false;
+                } else if (key === "Control") {
+                    s.inCommandMode = false;
+                }
+            }
+
+            if (s._keyDownEvent) {
+                const key = s._keyDownEvent.key;
+                s.keyLower = key.toLowerCase();
+
+                if (key === "Control") {
+                    s.inCommandMode = true;
+                }
+
+                if (key === "Shift") {
+                    s.isShifting = true;
+                }
+            }
+        }
+
+        if (imInit()) {
+            setStyle("all", "unset");
+            setStyle("width", "1px");
+            setStyle("position", "absolute");
+            setStyle("color", "transparent");
+            setStyle("textShadow", "0px 0px 0px tomato"); // hahaha tomato. lmao. https://stackoverflow.com/questions/44845792/hide-caret-in-textarea
+            // debugging
+            // setStyle("border", "1px solid red");
+        }
+
+        s.hasFocus = document.activeElement === s._textAreaElement.root;
+        if (s._textAreaElement && s.shouldFocusTextArea) {
+            s.shouldFocusTextArea = false;
+            if (!s.hasFocus) {
+                s._textAreaElement.root.focus();
+                s.hasFocus = true;
+                resetTextEditorState
+
+                s.isShifting = false;
+                s.inCommandMode = false;
+                s.canMouseSelect = false;
+                s.canKeyboardSelect = false;
+            }
+        }
+    } imEnd();
 }
 
+export function imEndTextEditor(s: TextEditorState) {
+    if (s._cursorSpan && s._textAreaElement) {
+        s._textAreaElement.setStyle("top", s._cursorSpan.offsetTop + "px")
+        s._textAreaElement.setStyle("left", s._cursorSpan.offsetLeft + "px")
+        s._textAreaElement.setStyle("height", s._cursorSpan.clientHeight + "px");
+    }
+
+    defaultTextEditorKeyboardEventHandler(s);
+
+    autoScroll(s);
+
+    const canSelect = s.canKeyboardSelect || s.canMouseSelect;
+    if (!s.isSelecting && canSelect && s.cursor !== s.lastSelectCursor) {
+        if (s.buffer[s.lastSelectCursor] === "\n" && s.cursor < s.lastSelectCursor) {
+            // dont want to start on newlines when selecting backwards. This is always an accident
+            s.selectionAnchor = s.lastSelectCursor - 1;
+        } else {
+            s.selectionAnchor = s.lastSelectCursor;
+        }
+        s.lastSelectCursor = s.cursor;
+        s.canKeyboardSelect = false;
+        s.isSelecting = true;
+    }
+
+    if (s.isSelecting) {
+        s.selectionEnd = s.cursor;
+        s.selectionAnchorEnd = s.cursor;
+
+        const start = min(s.selectionAnchor, s.selectionAnchorEnd);
+        const end = max(s.selectionAnchor, s.selectionAnchorEnd);
+        s.selectionStart = start;
+        s.selectionEnd = end;
+
+        s.lastSelectCursor = s.cursor;
+    }
+}
 
 export function setCurrentSpan(s: TextEditorState, span: HTMLElement) {
     // We need to know where to position the fake text area.
@@ -776,46 +817,6 @@ export function handleTextEditorClickEventForChar(s: TextEditorState, charIdx: n
 
         s.shouldFocusTextArea = true;
     }
-}
-
-export function imEndTextEditor(s: TextEditorState) {
-    // using an input to allow hooking into the browser's existing focusing mechanisms.
-    const textAreaRoot = imBeginEl(newTextArea); {
-        s._textAreaElement = textAreaRoot.root;
-
-        if (imInit()) {
-            setStyle("all", "unset");
-            setStyle("width", "1px");
-            setStyle("position", "absolute");
-            setStyle("color", "transparent");
-            setStyle("textShadow", "0px 0px 0px tomato"); // hahaha tomato. lmao. https://stackoverflow.com/questions/44845792/hide-caret-in-textarea
-            // debugging
-            // setStyle("border", "1px solid red");
-        }
-
-        if (s._cursorSpan) {
-            setStyle("top", s._cursorSpan.offsetTop + "px")
-            setStyle("left", s._cursorSpan.offsetLeft + "px")
-            setStyle("height", s._cursorSpan.clientHeight + "px");
-        }
-
-        s.hasFocus = document.activeElement === s._textAreaElement;
-        if (s._beingControlledBy && s.hasFocus) {
-            s._beingControlledBy.focus();
-        } else if (s.shouldFocusTextArea && s._textAreaElement) {
-            s.shouldFocusTextArea = false;
-            s._textAreaElement.focus();
-        }
-
-
-        // Handle events after we do scrolling - it is sensitive to inserts/removes
-        const keyDownEvent = imOn("keydown");
-        const keyUpEvent = imOn("keyup");
-
-        if (s._beingControlledBy === null) {
-            handleTextEditorEvents(s, keyDownEvent, keyUpEvent);
-        }
-    } imEnd();
 }
 
 function incrementViewCursors(s: TextEditorState) {
@@ -884,12 +885,6 @@ function incrementCursor(s: TextEditorState, c: LineCursor) {
     }
 }
 
-function decrementCursor(s: TextEditorState, c: LineCursor) {
-    if (s.buffer[c.pos] === "\n") {
-        c.line--;
-    }
-    c.pos--;
-}
 
 export function textEditorGetNextChar(s: TextEditorState): string {
     if (s._renderCursor.pos < s.buffer.length) {
@@ -911,165 +906,21 @@ export function textEditorCursorIsSelected(s: TextEditorState, pos: number) {
     return s.selectionStart <= pos && pos <= s.selectionEnd;
 }
 
-// There's a lot of user-code I used to have in here that is now only findable via git history:
-// - finder code
-// - line number code
-// - token rendering code
+export function isEqual(buffer: string[], query: string[], pos: number): boolean {
+    if (query.length === 0) {
+        // this is a hot take.
+        return false;
+    }
 
+    if (buffer.length < pos + query.length) {
+        return false;
+    }
 
+    for (let i = 0; i < query.length; i++) {
+        if (buffer[i + pos] !== query[i]) {
+            return false;
+        }
+    }
 
-
-// TODO: use this insert and remove implementation instead
-
-// function getCodePoints(str: string): string[] {
-//     const chars: string[] = [];
-//     for (const c of str) {
-//         chars.push(c);
-//     }
-//     return chars;
-// }
-//
-// function getLine(buff: string[][], line: number) {
-//     if (line < buff.length || line >= buff.length) return;
-//     return buff[line];
-// }
-//
-// function getLineChar(lineChars: string[], col: number) {
-//     if (col < lineChars.length || col >= lineChars.length) return;
-//     return lineChars[col];
-// }
-//
-// function insert(s: TextEditorState, line: number, col: number, chars: string) {
-//     if (chars.length === 0) {
-//         return;
-//     }
-//
-//     // NOTE: this is never undone
-//     s.modifiedAt = Date.now();
-//
-//     const buff = s.buffer;
-//     let lineChars = getLine(buff, line);
-//     if (!lineChars) {
-//         return;
-//     }
-//
-//     const char = getLineChar(lineChars, col);
-//     if (!char) {
-//         return;
-//     }
-//
-//     const startLine = line;
-//     const startCol = col;
-//     let endLine = startLine;
-//     let endCol = startCol;
-//
-//     const codePoints = getCodePoints(chars);
-//     const charsToInsert = [];
-//     for (let i = 0; i < codePoints.length; i++) {
-//         if (codePoints[i] !== "\n") {
-//             charsToInsert.push(codePoints[i]);
-//             endCol++;
-//         } else {
-//             if (col !== lineChars.length) {
-//                 const slice = lineChars.slice(col, lineChars.length);
-//                 buff.splice(line, 0, slice);
-//                 lineChars.length = col;
-//             }
-//             lineChars.splice(col, 0, ...charsToInsert);
-//
-//             lineChars = [];
-//             endCol = 0;
-//             endLine++;
-//             buff.splice(line, 0, lineChars);
-//             charsToInsert.length = 0;
-//         }
-//     }
-//
-//     // flush remaining chars.
-//     lineChars.splice(col, 0, ...charsToInsert);
-//     pushToUndoBuffer(s, {
-//         time: s.modifiedAt,
-//         insert: true,
-//         startLine, startCol,
-//         endLine, endCol,
-//         codePoints
-//     });
-// }
-//
-// // This was hard to implement ...
-// function remove(
-//     s: TextEditorState,
-//     startLine: number, startCol: number,
-//     endLine: number, endCol: number,
-// ) {
-//     if (startLine === endLine && startCol === endCol) {
-//         return;
-//     }
-//
-//     const buff = s.buffer;
-//     const startLineChars = getLine(buff, startLine);
-//     if (!startLineChars) {
-//         throw new Error("Invalid startLine");
-//     }
-//     if (startCol < 0 || startCol > startLineChars.length) {
-//         throw new Error("Invalid startCol");
-//     }
-//
-//     const endLineChars = getLine(buff, endLine);
-//     if (!endLineChars) {
-//         throw new Error("Invalid endLine");
-//     }
-//     if (endCol < 0 || endCol > endLineChars.length) {
-//         throw new Error("Invalid endCol");
-//     }
-//
-//     const removedChars: string[] = [];
-//
-//     // TODO: debug
-//     if (startLineChars === endLineChars && endCol < endLineChars.length) {
-//         // All removals occur within a single line
-//         const numToRemove = endCol - startCol + 1;
-//         const spliced = startLineChars.splice(startCol, numToRemove);
-//         for (const c of spliced) {
-//             removedChars.push(c);
-//         }
-//     } else {
-//         // Removals occuring across multiple lines.
-//         let spliced = startLineChars.splice(startCol, startLineChars.length - startCol - 1);
-//         for (const c of spliced) {
-//             removedChars.push(c);
-//         }
-//         removedChars.push("\n");
-//
-//         const linesToRemove = endLine - startLine;
-//         const splicedLines = buff.splice(startLine + 1, linesToRemove);
-//         for (let i = 0; i < splicedLines.length - 1; i++) {
-//             // ignore the last line, we deal with it later
-//             const spliced = splicedLines[i];
-//             for (const c of spliced) {
-//                 removedChars.push(c);
-//             }
-//             removedChars.push("\n");
-//         }
-//
-//         // remove from zer to end col. By this point, endLineChars has already been removed from buff.
-//         spliced = endLineChars.splice(0, endCol);
-//         for (const c of spliced) {
-//             removedChars.push(c);
-//         }
-//
-//         // we actually need to concat endLineChars onto the end of startLineChars.
-//         startLineChars.push(...endLineChars);
-//     }
-//
-//     pushToUndoBuffer(s, {
-//         time: s.modifiedAt,
-//         startLine,
-//         startCol,
-//         endLine,
-//         endCol,
-//         insert: false,
-//         codePoints: removedChars
-//     });
-// }
-//
+    return true;
+}

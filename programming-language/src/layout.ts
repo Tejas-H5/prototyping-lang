@@ -1,6 +1,6 @@
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
-import { imBeginMemo, cn, deferClickEventToParent, imBeginDiv, imEnd, imEndMemo, imInit, imRef, setClass, setStyle, imBeginSpan, setAttributes } from './utils/im-dom-utils.ts';
+import { imBeginMemo, cn, deferClickEventToParent, imBeginDiv, imEnd, imEndMemo, imInit, imRef, setClass, setStyle, imBeginSpan, setAttributes, newCssBuilder, imBeginEl } from './utils/im-dom-utils.ts';
 
 
 // NOTE: you only get 32 of these. use them wisely.
@@ -167,3 +167,63 @@ export function imVerticalBar() {
         });
     } imEnd();
 }
+
+
+const cssb = newCssBuilder();
+
+const cnButton = cssb.cn("button", [
+    ` { user-select: none; cursor: pointer; border: 2px solid ${cssVars.fg}; border: 2px solid currentColor; border-radius: 8px; 
+    padding: 2px 10px; box-sizing: border-box; }`,
+    `:hover { background-color: ${cssVars.bg2} }`,
+    `:active { background-color: ${cssVars.mg} }`,
+
+    `.${cnApp.inverted}:hover { background-color: ${cssVars.fg2} }`,
+]);
+
+
+export function imBeginButton(toggled: boolean = false) {
+    const root = imBeginLayout(ROW | ALIGN_CENTER | JUSTIFY_CENTER); {
+        if (imInit()) {
+            setClass(cnButton);
+        }
+
+        setClass(cnApp.inverted, toggled);
+    };
+
+    return root;
+}
+
+
+export function newH3() {
+    return document.createElement("h3");
+}
+
+// Don't forget to call end()
+export function beginCodeBlock(indent: number) {
+    const root = imBeginLayout(CODE); {
+        setStyle("paddingLeft", (4 * indent) + "ch");
+    }
+
+    return root;
+}
+
+
+export function beginHeading() {
+    const root = imBeginEl(newH3); {
+        if (imInit()) {
+            setStyle("padding", "10px 0");
+        }
+    }
+    return root;
+}
+
+export function setInset(amount: string) {
+    if (amount) {
+        setClass(cn.borderBox);
+        setStyle("padding", amount);
+    } else {
+        setClass(cn.borderBox, false);
+        setStyle("padding", "");
+    }
+}
+
