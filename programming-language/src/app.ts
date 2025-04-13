@@ -64,7 +64,7 @@ import {
 import { GlobalContext, newGlobalContext, rerun, saveState, startDebugging, startDebuggingFunction } from './state.ts';
 import "./styling.ts";
 import { cnApp, cssVars, getCurrentTheme } from './styling.ts';
-import { handleTextEditorClickEventForChar, imBeginTextEditor, imEndTextEditor, incrementCursor, loadText, newTextEditorState, textEditorCursorIsSelected, textEditorHasChars, textEditorMarkViewEnd, textEditorNextChar, TextEditorState } from './text-editor.ts';
+import { handleTextEditorClickEventForChar, imBeginTextEditor, imEndTextEditor, incrementCursorByLine, loadText, newTextEditorState, textEditorCursorIsSelected, textEditorHasChars, textEditorMarkViewEnd, textEditorGetNextChar, TextEditorState } from './text-editor.ts';
 import { abortListAndRewindUiStack, assert, cn, deferClickEventToParent, deltaTimeSeconds, disableIm, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, enableIm, getCurrentRoot, getKeys, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, newCssBuilder, nextListRoot, scrollIntoViewVH, setAttributes, setClass, setInnerText, setStyle, SizeState, UIRoot } from './utils/im-dom-utils.ts';
 import { clamp, gridSnap, inverseLerp, lerp, max, min } from './utils/math-utils.ts';
 import { getSliceValue } from './utils/matrix-math.ts';
@@ -834,7 +834,7 @@ function renderAppCodeEditor(ctx: GlobalContext) {
         while (textEditorHasChars(editorState)) {
             nextListRoot();
             const line = imBeginLayout(COL); {
-                const lineIdx = editorState.renderCursor.line;
+                const lineIdx = editorState._renderCursor.line + 1;
 
                 imBeginLayout(COL); {
                     imBeginLayout(ROW | FLEX); {
@@ -865,14 +865,14 @@ function renderAppCodeEditor(ctx: GlobalContext) {
                                 while (textEditorHasChars(editorState)) {
                                     nextListRoot();
 
-                                    const actualC = textEditorNextChar(editorState);
+                                    const actualC = textEditorGetNextChar(editorState);
 
                                     let astNode: ProgramExpression | undefined;
                                     if (astTraverserRef.val && lastParseResult) {
                                         astNode = getAstNodeForTextPos(
                                             astTraverserRef.val, 
                                             lastParseResult, 
-                                            editorState.renderCursor.pos,
+                                            editorState._renderCursor.pos,
                                         );
                                     } 
 
@@ -893,10 +893,10 @@ function renderAppCodeEditor(ctx: GlobalContext) {
 
                                     const textSpan = imBeginSpan(); {
                                         setInnerText(c);
-                                        handleTextEditorClickEventForChar(editorState, editorState.renderCursor.pos);
+                                        handleTextEditorClickEventForChar(editorState, editorState._renderCursor.pos);
 
-                                        const isSelected = textEditorCursorIsSelected(editorState, editorState.renderCursor.pos);
-                                        const isCursor = editorState.renderCursor.pos === editorState.cursor && editorState.hasFocus;
+                                        const isSelected = textEditorCursorIsSelected(editorState, editorState._renderCursor.pos);
+                                        const isCursor = editorState._renderCursor.pos === editorState.cursor && editorState.hasFocus;
                                         if (isCursor) {
                                             editorState._cursorSpan = textSpan.root;
                                             ctx.textCursorLine = lineIdx;
@@ -919,22 +919,31 @@ function renderAppCodeEditor(ctx: GlobalContext) {
                                             let color = "";
                                             if (ws) {
                                                 color = "#0000";
-                                            } else if (astNode) {
-                                                if (astNode.t === T_IDENTIFIER) {
-                                                    if (astNode.parent !== null && astNode.parent.t === T_FN) {
-                                                        // Funny, because now we don't know if it was the function name, or an argument passed into the function.
-                                                        // TODO: identifier types
+                                            } else  {
+                                                if (astNode) {
+                                                    if (astNode.t === T_IDENTIFIER) {
+                                                        if (astNode.parent !== null && astNode.parent.t === T_FN) {
+                                                            // Funny, because now we don't know if it was the function name, or an argument passed into the function.
+                                                            // TODO: identifier types
+                                                            bold = true;
+                                                        } else {
+                                                            italic = true;
+                                                        }
+                                                    } else if (
+                                                        astNode.t === T_FN ||
+                                                        astNode.t === T_BLOCK ||
+                                                        astNode.t === T_LIST_LITERAL ||
+                                                        astNode.t === T_VECTOR_LITERAL
+                                                    ) {
                                                         bold = true;
-                                                    }  else {
-                                                        italic = true;
+                                                    } else if (astNode.t === T_STRING_LITERAL) {
+                                                        color = "#F62";
+                                                    } else if (astNode.t === T_NUMBER_LITERAL) {
+                                                        color = "#00F";
                                                     }
-                                                } else if (
-                                                    astNode.t === T_FN ||
-                                                    astNode.t === T_BLOCK ||
-                                                    astNode.t === T_LIST_LITERAL ||
-                                                    astNode.t === T_VECTOR_LITERAL 
-                                                ) {
-                                                    bold = true;
+                                                } else {
+                                                    // whitespace/comment
+                                                    color = "#370";
                                                 }
                                             }
                                             setStyle("color", color);
@@ -951,7 +960,7 @@ function renderAppCodeEditor(ctx: GlobalContext) {
 
                                 // flex element handles events for the entire newline
                                 imBeginLayout(FLEX); {
-                                    handleTextEditorClickEventForChar(editorState, editorState.renderCursor.pos);
+                                    handleTextEditorClickEventForChar(editorState, editorState._renderCursor.pos);
                                 } imEnd();
                             } imEnd();
 
@@ -1060,7 +1069,7 @@ function renderAppCodeEditor(ctx: GlobalContext) {
             }
         } 
         imEndList();
-        s.lastMaxLine = editorState.renderCursor.line;
+        s.lastMaxLine = editorState._renderCursor.line + 1;
         imEndTextEditor(editorState);
 
         if (imBeginMemo()
@@ -1072,6 +1081,11 @@ function renderAppCodeEditor(ctx: GlobalContext) {
                 rerun(ctx);
             }
         } imEndMemo();
+
+        // Empty space below the lines should just handle click events for the end of the line
+        imBeginLayout(FLEX); {
+            handleTextEditorClickEventForChar(editorState, editorState._renderCursor.pos);
+        } imEnd();
     } imEnd();
 }
 
@@ -2473,8 +2487,9 @@ type CodeExample = {
 // right now, I'm just using this mechanism to save and load various scenarios.
 const codeExamples: CodeExample[] = [
     {
-        name: "Lots of text",
-        code:`// alskdlasdjlkjf;alsjf;lskfla;ldskf\n`.repeat(1024),
+        name: "Large text",
+        code: 
+        `as;f;askdf;lasdfkdjfajd;ak;jf\n`.repeat(40),
     },
     {
         name: "Plotting",

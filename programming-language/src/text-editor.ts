@@ -1,24 +1,36 @@
 import "./styling.ts";
 import { copyToClipboard, readFromClipboard } from "./utils/clipboard.ts";
-
-import { assert, elementHasMouseClick, elementHasMouseDown, getMouse, imBeginEl, imBeginMemo, imEnd, imEndMemo, imInit, imOn, setStyle } from './utils/im-dom-utils.ts';
+import { assert, elementHasMouseClick, elementHasMouseDown, getMouse, imBeginEl, imEnd, imInit, imOn, setStyle } from './utils/im-dom-utils.ts';
 import { clamp, max, min } from "./utils/math-utils.ts";
-import { getCol } from "./utils/matrix-math.ts";
 import { isWhitespace } from "./utils/text-utils.ts";
-
-
 
 function hasSelection(s: TextEditorState) {
     return s.selectionStart !== -1 || s.selectionEnd !== -1;
 }
+
 function deleteSelectedAndMoveCursorToStart(s: TextEditorState) {
     if (!hasSelection(s)) {
         return;
     }
 
     remove(s, s.selectionStart, s.selectionEnd - s.selectionStart + 1);
+
     setCursor(s, s.selectionStart);
     clearSelection(s);
+}
+
+function countLinesUpToPos(s: TextEditorState, pos: number): number {
+    if (pos === -1) {
+        return -1;
+    }
+
+    let numLines = 0;
+    for (let i = 0; i <= pos; i++) {
+        if (s.buffer[i] === "\n") {
+            numLines;
+        }
+    }
+    return numLines;
 }
 
 function insertAtCursor(s: TextEditorState, char: string) {
@@ -37,14 +49,10 @@ function currentChar(s: TextEditorState, offset = 0): string {
     return " ";
 }
 
-function eof(s: TextEditorState) {
-    return s.buffer.length === s.cursor;
-}
-
 function getLastNewlinePos(s: TextEditorState, pos: number) {
-    if (pos < 0) return 0;
+    if (pos < 0) return -1;
 
-    while (pos > 0 && s.buffer[pos] !== "\n") {
+    while (pos >= 0 && s.buffer[pos] !== "\n") {
         pos--;
     }
 
@@ -53,7 +61,7 @@ function getLastNewlinePos(s: TextEditorState, pos: number) {
 
 function getNextNewlinePos(s: TextEditorState, pos: number) {
     if (pos >= s.buffer.length) {
-
+        return s.buffer.length;
     }
 
     while (pos < s.buffer.length && s.buffer[pos] !== "\n") {
@@ -103,7 +111,7 @@ function clearSelection(s: TextEditorState) {
     s.selectionEnd = -1;
 
     s.isSelecting = false;
-    s.canStartSelecting = false;
+    s.canKeyboardSelect = false;
 }
 
 function moveUp(s: TextEditorState) {
@@ -236,18 +244,19 @@ export type TextEditorState = {
     cursor: number;
     cursorLine: number;
 
-    // inferred by the cursor.
-    viewCursor: LineCursor;
-    viewEndCursor: LineCursor;
+    isAutoScrolling: boolean;
 
-    // slightly different - it starts at -1 and increments to the current index.
-    renderCursor: LineCursor;
+    viewCursor: LineCursor;
+    // These two get recomputed
+    _viewEndCursor: LineCursor;
+    _renderCursor: LineCursor;
 
     lastSelectCursor: number;
     hasFocus: boolean;
 
     currentKeyDown: string;
-    canStartSelecting: boolean;
+    canKeyboardSelect: boolean;
+    canMouseSelect: boolean;
     isSelecting: boolean;
     isShifting: boolean;
 
@@ -288,15 +297,43 @@ function insert(s: TextEditorState, pos: number, chars: string[]) {
     s.buffer.splice(pos, 0, ...chars);
     s.modifiedAt = Date.now();
 
-    pushToUndoBuffer(s, { time: s.modifiedAt, pos: pos, insert: true, chars: chars });
+    s.cursor = pos + chars.length;
+    if (pos <= s.viewCursor.pos) {
+        recomputeViewCursorLines(s);
+    }
+
+    pushToUndoBuffer(s, { 
+        time: s.modifiedAt, 
+        pos: pos, 
+        insert: true, 
+        chars: chars 
+    });
+}
+
+function recomputeViewCursorLines(s: TextEditorState) {
+    s.viewCursor.pos = getLastNewlinePos(s, s.cursor);
+    s.viewCursor.line = countLinesUpToPos(s, s.viewCursor.pos);
+    s._viewEndCursor.pos = s.viewCursor.pos;
+    s._viewEndCursor.line = s.viewCursor.line;
 }
 
 function remove(s: TextEditorState, pos: number, count: number) {
     const removedChars = s.buffer.splice(pos, count);
     s.modifiedAt = Date.now();
 
-    pushToUndoBuffer(s, { time: s.modifiedAt, pos: pos, insert: false, chars: removedChars });
+    s.cursor = pos;
+    if (pos <= s.viewCursor.pos) {
+        recomputeViewCursorLines(s);
+    }
+
+    pushToUndoBuffer(s, { 
+        time: s.modifiedAt, 
+        pos: pos, 
+        insert: false,
+        chars: removedChars 
+    });
 }
+
 
 function handleTextEditorEvents(
     s: TextEditorState,
@@ -306,20 +343,26 @@ function handleTextEditorEvents(
     const mouse = getMouse();
     if (!mouse.leftMouseButton) {
         s.hasClick = false;
+        s.canMouseSelect = false;
     }
 
     if (mouse.scrollY !== 0) {
+        const n = Math.max(Math.abs(mouse.scrollY / 50));
         if (mouse.scrollY < 0) {
-            decrementViewCursors(s);
+            for (let i = 0; i < n; i++) {
+                decrementViewCursors(s);
+            }
         } else {
-            incrementViewCursors(s);
+            for (let i = 0; i < n; i++) {
+                incrementViewCursors(s);
+            }
         }
     } 
 
     if (keyUpEvent) {
         const key = keyUpEvent.key;
         if (key === "Shift") {
-            s.canStartSelecting = false;
+            s.canKeyboardSelect = false;
             s.isSelecting = false;
             s.isShifting = false;
         } else if (key === "Control") {
@@ -339,11 +382,11 @@ function handleTextEditorEvents(
         }
     }
 
-    // need to check up here, because they are invalidated after we edit the buffer
-    let viewCursorAtStart = s.viewCursor.pos === 0;
-    let viewCursorAtEnd = s.viewEndCursor.pos === s.buffer.length;
+    let viewCursorAtStart = viewWindowIsAtStart(s);
+    let viewCursorAtEnd = viewWindowIsAtEnd(s);
 
     if (keyDownEvent) {
+        // need to check up here, because they are invalidated after we edit the buffer
 
         const initialCursor = s.cursor;
 
@@ -361,7 +404,6 @@ function handleTextEditorEvents(
 
             if (!s.inCommandMode) {
                 insertAtCursor(s, c);
-                s.cursor++;
             } else {
                 if (keyLower === "z" || keyLower === "y") {
                     let shouldUndo = false;
@@ -490,13 +532,11 @@ function handleTextEditorEvents(
             }
         } else if (key === "Enter") {
             insertAtCursor(s, "\n");
-            s.cursor++;
         } else if (key === "Tab") {
             insertAtCursor(s, "\t");
-            s.cursor++;
         } else if (key === "Shift") {
             if (!isRepeat) {
-                setCanSelect(s);
+                setCanSelect(s, true);
             }
         } else if (key === "Escape") {
             if (hasSelection(s)) {
@@ -507,7 +547,7 @@ function handleTextEditorEvents(
         const modified = lastModified !== s.modifiedAt;
         if (modified) {
             // Typing a capital letter with Shift + key shouldn't start selecting words...
-            s.canStartSelecting = false;
+            s.canKeyboardSelect = false;
         }
 
         s.cursor = clamp(s.cursor, 0, s.buffer.length);
@@ -516,12 +556,14 @@ function handleTextEditorEvents(
             // we only want to autoscroll when we've pressed a key. If we don't do this, then we can easily end up in
             // an infinite loop, where we scroll up one line, but that line is so tall that it brings the cursor so far down the screen
             // that we then have to scroll down one line, and so on and so forth
-            autoScroll(s, viewCursorAtStart, viewCursorAtEnd);
+            s.isAutoScrolling = true;
         }
     }
 
-    // Mouse events can move the cursor too!
-    if (!s.isSelecting && s.canStartSelecting && s.cursor !== s.lastSelectCursor) {
+    autoScroll(s, viewCursorAtStart, viewCursorAtEnd);
+
+    const canSelect = s.canKeyboardSelect || s.canMouseSelect;
+    if (!s.isSelecting && canSelect && s.cursor !== s.lastSelectCursor) {
         if (s.buffer[s.lastSelectCursor] === "\n" && s.cursor < s.lastSelectCursor) {
             // dont want to start on newlines when selecting backwards. This is always an accident
             s.selectionAnchor = s.lastSelectCursor - 1;
@@ -529,7 +571,7 @@ function handleTextEditorEvents(
             s.selectionAnchor = s.lastSelectCursor;
         }
         s.lastSelectCursor = s.cursor;
-        s.canStartSelecting = false;
+        s.canKeyboardSelect = false;
         s.isSelecting = true;
     }
 
@@ -546,10 +588,22 @@ function handleTextEditorEvents(
     }
 }
 
+function viewWindowIsAtStart(s: TextEditorState) {
+    return s.viewCursor.pos === -1;
+}
+
+function viewWindowIsAtEnd(s: TextEditorState) {
+    return s._viewEndCursor.pos >= s.buffer.length - 1;
+}
+
 function autoScroll(s: TextEditorState, viewCursorWasAtStart: boolean, viewCursorWasAtEnd: boolean) {
-    if (s.viewCursor.pos <= s.cursor && s.cursor <= s.viewEndCursor.pos) {
+    if (!s.isAutoScrolling) {
+        return;
+    }
+
+    if (s.viewCursor.pos <= s.cursor && s.cursor <= s._viewEndCursor.pos) {
         const distanceToStartLine = s.cursorLine - s.viewCursor.line;
-        const distanceToEndLine = s.viewEndCursor.line - s.cursorLine;
+        const distanceToEndLine = s._viewEndCursor.line - s.cursorLine;
         const ratio = distanceToStartLine / (distanceToStartLine + distanceToEndLine);
 
         if (distanceToStartLine + distanceToEndLine !== 0) {
@@ -557,6 +611,9 @@ function autoScroll(s: TextEditorState, viewCursorWasAtStart: boolean, viewCurso
                 decrementViewCursors(s);
             } else if (ratio > 0.75 && !viewCursorWasAtEnd) {
                 incrementViewCursors(s);
+            } else {
+                // we no longer need to autoscroll.
+                s.isAutoScrolling = false;
             }
         }
     } else {
@@ -573,7 +630,7 @@ function autoScroll(s: TextEditorState, viewCursorWasAtStart: boolean, viewCurso
         }
 
         for (let i = 0; i < scrollSpeed; i++) {
-            if (!viewCursorWasAtEnd && s.cursor > s.viewEndCursor.pos) {
+            if (!viewCursorWasAtEnd && s.cursor > s._viewEndCursor.pos) {
                 // a trick we can use to check if two indices are on the same line
                 incrementViewCursors(s);
             } else {
@@ -600,17 +657,20 @@ export function newTextEditorState(): TextEditorState {
         modifiedAt: 0,
         cursor: 0,
         cursorLine: 0,
-        renderCursor: newLineCursor(),
+        _renderCursor: newLineCursor(),
         viewCursor: newLineCursor(),
-        viewEndCursor: newLineCursor(),
+        _viewEndCursor: newLineCursor(),
         lastSelectCursor: 0,
+
+        isAutoScrolling: true,
 
         selectionStart: -1,
         selectionEnd: -1,
         selectionAnchorEnd: -1,
         selectionAnchor: -1,
         hasClick: false,
-        canStartSelecting: false,
+        canKeyboardSelect: false,
+        canMouseSelect: false,
         isSelecting: false,
 
         isShifting: false,
@@ -650,12 +710,14 @@ function resetTextEditorState(s: TextEditorState) {
 
     clearSelection(s);
 
-    s.viewCursor.line = 0;
-    s.viewCursor.pos = 0;
-    s.viewEndCursor.line = 0;
-    s.viewEndCursor.pos = 0;
-    s.renderCursor.line = 0;
-    s.renderCursor.pos = 0;
+    resetCursor(s.viewCursor);
+    resetCursor(s._viewEndCursor);
+    resetCursor(s._renderCursor);
+}
+
+function resetCursor(c: LineCursor) {
+    c.pos = -1;
+    c.line = -1;
 }
 
 export function loadText(s: TextEditorState, text: string) {
@@ -669,10 +731,17 @@ export type TextEditorInlineHint = {
     component: (line: number) => void;
 }
 
-function setCanSelect(s: TextEditorState) {
-    if (!s.canStartSelecting) {
-        s.canStartSelecting = true;
-        s.lastSelectCursor = s.cursor;
+function setCanSelect(s: TextEditorState, keyboard: boolean) {
+    if (keyboard) {
+        if (!s.canKeyboardSelect) {
+            s.canKeyboardSelect = true;
+            s.lastSelectCursor = s.cursor;
+        }
+    } else {
+        if (!s.canMouseSelect) {
+            s.canMouseSelect = true;
+            s.lastSelectCursor = s.cursor;
+        }
     }
 }
 
@@ -681,8 +750,9 @@ function setCanSelect(s: TextEditorState) {
 export function imBeginTextEditor(s: TextEditorState) {
     s._beingControlledBy = null;
     s._cursorSpan = null;
-    s.renderCursor.pos = s.viewCursor.pos - 1;
-    s.renderCursor.line = s.viewCursor.line;
+    s._renderCursor.pos = s.viewCursor.pos;
+    s._renderCursor.line = s.viewCursor.line;
+    s.cursorLine = -1;
 }
 
 
@@ -702,7 +772,7 @@ export function handleTextEditorClickEventForChar(s: TextEditorState, charIdx: n
     if (s.hasClick && elementHasMouseDown(false)) {
         // move cursor to current token
         s.cursor = charIdx;
-        setCanSelect(s);
+        setCanSelect(s, false);
 
         s.shouldFocusTextArea = true;
     }
@@ -749,65 +819,92 @@ export function imEndTextEditor(s: TextEditorState) {
 }
 
 function incrementViewCursors(s: TextEditorState) {
-    if (incrementCursor(s, s.viewEndCursor)) {
-        incrementCursor(s, s.viewCursor);
+    if (incrementCursorByLine(s, s._viewEndCursor)) {
+        incrementCursorByLine(s, s.viewCursor);
     }
 }
 
 function decrementViewCursors(s: TextEditorState) {
-    if (decrementCursor(s, s.viewEndCursor)) {
-        decrementCursor(s, s.viewCursor);
+    if (decrementCursorByLine(s, s._viewEndCursor)) {
+        decrementCursorByLine(s, s.viewCursor);
     }
 }
 
-export function decrementCursor(s: TextEditorState, cursor: LineCursor) {
-    const newViewCursorPos = getLastNewlinePos(s, cursor.pos - 1);
-    if (cursor.pos !== newViewCursorPos) {
-        cursor.pos = newViewCursorPos;
-        cursor.line--;
-        return true;
+export function decrementCursorByLine(s: TextEditorState, cursor: LineCursor) {
+    if (cursor.pos === -1) {
+        assert(cursor.line === -1);
+        return false;
     }
-    return false;
+
+    let newViewCursorPos = getLastNewlinePos(s, cursor.pos - 1);
+    if (newViewCursorPos === -1) {
+        assert(cursor.line === 0);
+    } else {
+        assert(s.buffer[newViewCursorPos] === "\n");
+    }
+
+    cursor.pos = newViewCursorPos;
+    cursor.line--;
+    return true;
 }
 
-export function incrementCursor(s: TextEditorState, cursor: LineCursor): boolean {
+export function incrementCursorByLine(s: TextEditorState, cursor: LineCursor): boolean {
+    assert(cursor.pos <= s.buffer.length);
+
+    if (cursor.pos === s.buffer.length) {
+        return false;
+    }
+
     const newViewCursorPos = getNextNewlinePos(s, cursor.pos + 1);
-    if (cursor.pos !== newViewCursorPos) {
-        cursor.pos = newViewCursorPos;
-        cursor.line++;
-        return true;
-    }
-    return false;
+    assert(
+        newViewCursorPos === s.buffer.length ||
+        s.buffer[newViewCursorPos] === "\n"
+    );
+    cursor.pos = newViewCursorPos;
+    cursor.line++;
+
+    return true;
 }
 
 // You'll need to do this to get scrolling behaviour.
 // You can do it multiple times to extend the view as needed.
 export function textEditorMarkViewEnd(s: TextEditorState) {
-    s.viewEndCursor.pos = s.renderCursor.pos;
-    s.viewEndCursor.line = s.renderCursor.line;
+    s._viewEndCursor.pos = s._renderCursor.pos;
+    s._viewEndCursor.line = s._renderCursor.line;
 }
 
 export function textEditorHasChars(s: TextEditorState): boolean {
-    return s.renderCursor.pos < s.buffer.length;
+    return s._renderCursor.pos < s.buffer.length;
 }
 
-export function textEditorNextChar(s: TextEditorState): string {
-    if (s.renderCursor.pos < s.buffer.length) {
-        s.renderCursor.pos++;
-        if (s.buffer[s.renderCursor.pos] === "\n") {
-            s.renderCursor.line++;
+function incrementCursor(s: TextEditorState, c: LineCursor) {
+    c.pos++;
+    if (s.buffer[c.pos] === "\n") {
+        c.line++;
+    }
+}
+
+function decrementCursor(s: TextEditorState, c: LineCursor) {
+    if (s.buffer[c.pos] === "\n") {
+        c.line--;
+    }
+    c.pos--;
+}
+
+export function textEditorGetNextChar(s: TextEditorState): string {
+    if (s._renderCursor.pos < s.buffer.length) {
+        incrementCursor(s, s._renderCursor);
+
+        if (s._renderCursor.pos === s.cursor) {
+            s.cursorLine = s._renderCursor.line;
+        }
+
+        if (s._renderCursor.pos < s.buffer.length) {
+            return s.buffer[s._renderCursor.pos];
         }
     }
 
-    if (s.renderCursor.pos === s.cursor) {
-        s.cursorLine = s.renderCursor.line;
-    }
-
-    if (s.renderCursor.pos < s.buffer.length) {
-        return s.buffer[s.renderCursor.pos];
-    }
-
-    return '\n';
+    return "\n";
 }
 
 export function textEditorCursorIsSelected(s: TextEditorState, pos: number) {
