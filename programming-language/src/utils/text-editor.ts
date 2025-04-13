@@ -14,16 +14,16 @@ import { isWhitespace } from "src/utils/text-utils";
 
 
 
-function hasSelection(s: TextEditorState) {
+export function textEditorHasSelection(s: TextEditorState) {
     return s.selectionStart !== -1 || s.selectionEnd !== -1;
 }
 
-function deleteSelectedAndMoveCursorToStart(s: TextEditorState) {
-    if (!hasSelection(s)) {
+export function textEditorDeleteCurrentSelection(s: TextEditorState) {
+    if (!textEditorHasSelection(s)) {
         return;
     }
 
-    remove(s, s.selectionStart, s.selectionEnd - s.selectionStart + 1);
+    textEditorRemove(s, s.selectionStart, s.selectionEnd - s.selectionStart + 1);
 
     setCursor(s, s.selectionStart);
     clearSelection(s);
@@ -44,10 +44,10 @@ function countLinesUpToPos(s: TextEditorState, pos: number): number {
 }
 
 function insertAtCursor(s: TextEditorState, char: string) {
-    if (hasSelection(s)) {
-        deleteSelectedAndMoveCursorToStart(s);
+    if (textEditorHasSelection(s)) {
+        textEditorDeleteCurrentSelection(s);
     }
-    insert(s, s.cursor, [char]);
+    textEditorInsert(s, s.cursor, [char]);
 }
 
 function currentChar(s: TextEditorState, offset = 0): string {
@@ -59,7 +59,7 @@ function currentChar(s: TextEditorState, offset = 0): string {
     return " ";
 }
 
-function getLastNewlinePos(s: TextEditorState, pos: number) {
+export function getLastNewlinePos(s: TextEditorState, pos: number) {
     if (pos < 0) return -1;
 
     while (pos >= 0 && s.buffer[pos] !== "\n") {
@@ -69,7 +69,7 @@ function getLastNewlinePos(s: TextEditorState, pos: number) {
     return pos;
 }
 
-function getNextNewlinePos(s: TextEditorState, pos: number) {
+export function getNextNewlinePos(s: TextEditorState, pos: number) {
     if (pos >= s.buffer.length) {
         return s.buffer.length;
     }
@@ -190,10 +190,10 @@ type TextEdit = {
 function applyStep(s: TextEditorState, step: TextEdit, apply: boolean = true) {
     s.isUndoing = true;
     if (step.insert === apply) {
-        insert(s, step.pos, step.chars);
+        textEditorInsert(s, step.pos, step.chars);
         setCursor(s, step.pos + step.chars.length);
     } else {
-        remove(s, step.pos, step.chars.length);
+        textEditorRemove(s, step.pos, step.chars.length);
         setCursor(s, step.pos);
     }
     clearSelection(s);
@@ -265,7 +265,7 @@ function pushToUndoBuffer(s: TextEditorState, edit: TextEdit) {
     s.undoBuffer.push(edit);
 }
 
-function insert(s: TextEditorState, pos: number, chars: string[]) {
+export function textEditorInsert(s: TextEditorState, pos: number, chars: string[]) {
     s.buffer.splice(pos, 0, ...chars);
     s.modifiedAt = Date.now();
 
@@ -289,7 +289,7 @@ function recomputeViewCursorLines(s: TextEditorState) {
     s._viewEndCursor.line = s.viewCursor.line;
 }
 
-function remove(s: TextEditorState, pos: number, count: number) {
+export function textEditorRemove(s: TextEditorState, pos: number, count: number) {
     const removedChars = s.buffer.splice(pos, count);
     s.modifiedAt = Date.now();
 
@@ -304,6 +304,13 @@ function remove(s: TextEditorState, pos: number, count: number) {
         insert: false,
         chars: removedChars 
     });
+}
+
+export function textEditorSetSelection(s: TextEditorState, anchor: number, end: number) {
+    s.selectionAnchor = anchor;
+    s.selectionAnchorEnd = end;
+    s.selectionStart = min(anchor, end);
+    s.selectionEnd = max(anchor, end);
 }
 
 // events are only set to null if we handle them.
@@ -367,20 +374,36 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
 
                     if (shouldUndo) {
                         if (s.undoBufferIdx >= 0) {
-                            const step = s.undoBuffer[s.undoBufferIdx];
-                            s.undoBufferIdx--;
-                            revertStep(s, step);
+                            // coalesce multiple undo ops into one
+                            let time = s.undoBuffer[s.undoBufferIdx].time;
+                            while (s.undoBufferIdx >= 0) {
+                                const step = s.undoBuffer[s.undoBufferIdx];
+                                if (Math.abs(step.time - time) > 100) {
+                                    break;
+                                }
+
+                                s.undoBufferIdx--;
+                                revertStep(s, step);
+                            }
                         } else {
                             handled = false;
                         }
                     } else if (shouldRedo) {
                         shouldRedo = true;
                         if (s.undoBufferIdx < s.undoBuffer.length - 1) {
-                            // increment and get in the opposite order as above
-                            s.undoBufferIdx++;
-                            const step = s.undoBuffer[s.undoBufferIdx];
+                            // coalesce multiple undo ops into one
+                            let time = s.undoBuffer[s.undoBufferIdx].time;
+                            while (s.undoBufferIdx >= 0) {
+                                const step = s.undoBuffer[s.undoBufferIdx];
+                                if (Math.abs(step.time - time) > 100) {
+                                    break;
+                                }
 
-                            applyStep(s, step);
+                                // increment and get in the opposite order as above
+                                s.undoBufferIdx++;
+
+                                applyStep(s, step);
+                            }
                         } else {
                             handled = false;
                         }
@@ -392,14 +415,14 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
                     // TODO: contract our selection
                     handled = false;
                 } else if (keyLower === "x") {
-                    if (hasSelection(s)) {
+                    if (textEditorHasSelection(s)) {
                         const text = s.buffer.slice(s.selectionStart, s.selectionEnd + 1).join("");
                         copyToClipboard(text).then(() => {
-                            deleteSelectedAndMoveCursorToStart(s);
+                            textEditorDeleteCurrentSelection(s);
                         });
                     }
                 } else if (keyLower === "c") {
-                    if (hasSelection(s)) {
+                    if (textEditorHasSelection(s)) {
                         const text = s.buffer.slice(s.selectionStart, s.selectionEnd + 1).join("");
                         copyToClipboard(text).then(() => {
                             clearSelection(s);
@@ -409,25 +432,22 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
                     }
                 } else if (keyLower === "v") {
                     readFromClipboard().then(clipboardText => {
-                        if (hasSelection(s)) {
-                            deleteSelectedAndMoveCursorToStart(s);
-                            insert(s, s.cursor, clipboardText.split(""));
+                        if (textEditorHasSelection(s)) {
+                            textEditorDeleteCurrentSelection(s);
+                            textEditorInsert(s, s.cursor, clipboardText.split(""));
                         } else {
-                            insert(s, s.cursor, clipboardText.split(""));
+                            textEditorInsert(s, s.cursor, clipboardText.split(""));
                         }
                     });
                 } else if (keyLower === "a") {
-                    s.selectionAnchor = 0;
-                    s.selectionAnchorEnd = s.buffer.length - 1;
-                    s.selectionStart = 0;
-                    s.selectionEnd = s.selectionAnchorEnd;
+                    textEditorSetSelection(s, 0, s.buffer.length - 1);
                 } else {
                     handled = false;
                 }
             }
         } else if (key === "Backspace") {
-            if (hasSelection(s)) {
-                deleteSelectedAndMoveCursorToStart(s);
+            if (textEditorHasSelection(s)) {
+                textEditorDeleteCurrentSelection(s);
             } else if (s.inCommandMode) {
                 if (s.cursor > 0) {
                     s.cursor--;
@@ -436,12 +456,12 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
                     moveToStartOfLastWord(s);
                     s.selectionStart = s.cursor;
                     s.selectionEnd = cursor;
-                    deleteSelectedAndMoveCursorToStart(s);
+                    textEditorDeleteCurrentSelection(s);
                 }
             } else {
                 if (s.cursor > 0) {
                     s.cursor--;
-                    remove(s, s.cursor, 1);
+                    textEditorRemove(s, s.cursor, 1);
                 }
             }
         } else if (key === "ArrowLeft") {
@@ -493,7 +513,7 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
                 setCanSelect(s, true);
             }
         } else if (key === "Escape") {
-            if (hasSelection(s)) {
+            if (textEditorHasSelection(s)) {
                 clearSelection(s);
             } else {
                 handled = false;
@@ -536,7 +556,7 @@ function viewWindowIsAtEnd(s: TextEditorState) {
     return s._viewEndCursor.pos >= s.buffer.length - 1;
 }
 
-function autoScroll(s: TextEditorState) {
+function autoScrollTextEditor(s: TextEditorState) {
     if (!s.isAutoScrolling) {
         return;
     }
@@ -769,7 +789,7 @@ export function imEndTextEditor(s: TextEditorState) {
 
     defaultTextEditorKeyboardEventHandler(s);
 
-    autoScroll(s);
+    autoScrollTextEditor(s);
 
     const canSelect = s.canKeyboardSelect || s.canMouseSelect;
     if (!s.isSelecting && canSelect && s.cursor !== s.lastSelectCursor) {
@@ -906,7 +926,8 @@ export function textEditorCursorIsSelected(s: TextEditorState, pos: number) {
     return s.selectionStart <= pos && pos <= s.selectionEnd;
 }
 
-export function isEqual(buffer: string[], query: string[], pos: number): boolean {
+// TODO: more sane name
+export function textEditorQueryBufferAtPos(buffer: string[], query: string[], pos: number): boolean {
     if (query.length === 0) {
         // this is a hot take.
         return false;

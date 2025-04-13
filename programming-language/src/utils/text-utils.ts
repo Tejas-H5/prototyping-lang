@@ -50,7 +50,7 @@ export function getLineEndPos(text: string, pos: number): number {
 }
 
 // Thankyou Trevor https://stackoverflow.com/questions/1496826/check-if-a-single-character-is-a-whitespace
-export function isWhitespace(c: string) {
+export function isWhitespace(c: string): boolean {
     return (
         c === " " ||
         c === "\n" ||

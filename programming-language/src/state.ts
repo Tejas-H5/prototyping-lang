@@ -4,7 +4,6 @@ import { autoMigrate, recursiveCloneNonComputedFields } from "./utils/serializat
 
 export type GlobalState = {
     text: string;
-    lastLoaded: number;
     showParserOutput: boolean;
     showInterpreterOutput: boolean;
     autoRun: boolean;
@@ -21,6 +20,7 @@ export type GlobalContext = {
 
     lastParseResult: ProgramParseResult | undefined;
     lastInterpreterResult: ProgramInterpretResult | undefined;
+    lastLoaded: number;
 
     // This stuff is actually saved and persisted between runs
     state: GlobalState;
@@ -84,12 +84,12 @@ export function newGlobalContext(): GlobalContext {
 
         lastParseResult: undefined, 
         lastInterpreterResult: undefined,
+        lastLoaded: 0,
     };
 }
 export function newGlobalState(): GlobalState {
     return {
         text: "",
-        lastLoaded: 0,
         showParserOutput: false,
         showInterpreterOutput: false,
         autoRun: true,

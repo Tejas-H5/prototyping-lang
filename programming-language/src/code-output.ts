@@ -207,7 +207,7 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
 
                         if (elementHasMouseClick()) {
                             ctx.state.text = eg.code.trim();
-                            ctx.state.lastLoaded = Date.now();
+                            ctx.lastLoaded = Date.now();
                         }
                     } imEnd();
                 }

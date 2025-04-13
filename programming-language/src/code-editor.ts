@@ -1,4 +1,4 @@
-import { defaultTextEditorKeyboardEventHandler, handleTextEditorClickEventForChar, imBeginTextEditor, imEndTextEditor, isEqual, loadText, newTextEditorState, textEditorCursorIsSelected, textEditorGetNextChar, textEditorHasChars, textEditorMarkViewEnd, TextEditorState } from 'src/utils/text-editor';
+import { defaultTextEditorKeyboardEventHandler, getLastNewlinePos, getNextNewlinePos, handleTextEditorClickEventForChar, imBeginTextEditor, imEndTextEditor, textEditorQueryBufferAtPos, loadText, newTextEditorState, textEditorCursorIsSelected, textEditorDeleteCurrentSelection, textEditorGetNextChar, textEditorHasChars, textEditorHasSelection, textEditorInsert, textEditorMarkViewEnd, textEditorRemove, textEditorSetSelection, TextEditorState } from 'src/utils/text-editor';
 import { imProgramOutputs } from './code-output';
 import { renderSliderBody } from './components/slider';
 import {
@@ -200,7 +200,7 @@ function imAutocomplete(lastIdentifier: string) {
 
 function isPartiallyOffscreen(rect: DOMRect) {
     return (
-        rect.x < 0 || rect.x + rect.width > window.innerWidth ||
+        // rect.x < 0 || rect.x + rect.width > window.innerWidth ||
         rect.y < 0 || rect.y + rect.height > window.innerHeight
     );
 }
@@ -300,7 +300,7 @@ function imSimpleTextInputBody(s: SimpleTextEditorState) {
 function handleCodeEditorEvents(s: CodeEditorState, targetEditor: TextEditorState, eventSource: TextEditorState) {
     let handled = false;
 
-    if (s.isFinding ) {
+    if (s.isFinding) {
         if (eventSource._keyDownEvent) {
             if (eventSource.keyLower === "enter") {
                 if (eventSource.isShifting) {
@@ -317,8 +317,124 @@ function handleCodeEditorEvents(s: CodeEditorState, targetEditor: TextEditorStat
 
                 handled = true;
 
-                if (s.currentFindResultIdx < s.allFindResults.length) {
+                if (s.currentFindResultIdx >= 0 && s.currentFindResultIdx < s.allFindResults.length) {
                     targetEditor.cursor = s.allFindResults[s.currentFindResultIdx].start;
+                    targetEditor.isAutoScrolling = true;
+                }
+            }
+        }
+    } else {
+        if (eventSource._keyDownEvent) {
+            if (eventSource.inCommandMode && eventSource.keyLower === "\/") {
+                let start, end;
+                handled = true;
+                if (textEditorHasSelection(targetEditor)) {
+                    const { selectionStart, selectionEnd } = targetEditor;
+                    start = getLastNewlinePos(targetEditor, selectionStart) + 1;
+                    end = getNextNewlinePos(targetEditor, selectionEnd) - 1;
+                } else {
+                    start = getLastNewlinePos(targetEditor, targetEditor.cursor) + 1;
+                    end = getNextNewlinePos(targetEditor, targetEditor.cursor) - 1;
+                }
+
+                if (start < end) {
+                    const slice = targetEditor.buffer.slice(start, end);
+
+                    textEditorRemove(targetEditor, start, end - start);
+                    const updatedSlice = [];
+
+                    const comment: string[] = ["/", "/", " "];
+                    const comment2: string[] = ["/", "/",];
+
+                    let shouldCommentBlock = false;
+                    {
+                        let expectComment = true;
+
+                        for (let i = 0; i < slice.length; i++) {
+                            const c = slice[i];
+
+                            if (!expectComment) {
+                                if (c === "\n") {
+                                    expectComment = true;
+                                }
+                            } else {
+                                if (!isWhitespace(c)) {
+                                    if (textEditorQueryBufferAtPos(slice, comment2, i)) {
+                                        i += comment.length - 1;
+                                        expectComment = false;
+                                        continue;
+                                    }
+
+                                    shouldCommentBlock = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (shouldCommentBlock) {
+                        let expectComment = true;
+
+                        // for (let i = 0; i < slice.length; i++) {
+                        //     const c = slice[i];
+                        //
+                        //     if (!expectComment) {
+                        //         if (c === "\n") {
+                        //             expectComment = true;
+                        //         }
+                        //     } else {
+                        //         if (!isWhitespace(c) || c === "\n") {
+                        //             updatedSlice.push(...comment);
+                        //             expectComment = false;
+                        //         }
+                        //     }
+                        //
+                        //     updatedSlice.push(c);
+                        // }
+                        
+                        // Ideally, the code above should be updated to comment at the smallest indentation.
+                        // but it is just far simpler to insert the comment right after the new line.
+                        // We still get a similar effect in that all the // appear on the same line.
+                        updatedSlice.push(...comment);
+                        for (let i = 0; i < slice.length; i++) {
+                            const c = slice[i];
+
+                            updatedSlice.push(c);
+
+                            if (c === "\n") {
+                                updatedSlice.push(...comment);
+                            }
+                        }
+                    } else {
+                        let expectComment = true;
+
+                        for (let i = 0; i < slice.length; i++) {
+                            const c = slice[i];
+
+                            if (!expectComment) {
+                                if (c === "\n") {
+                                    expectComment = true;
+                                }
+                            } else {
+                                if (!isWhitespace(c)) {
+                                    if (textEditorQueryBufferAtPos(slice, comment, i)) {
+                                        i += comment.length - 1;
+                                        expectComment = false;
+                                        continue;
+                                    } else if (textEditorQueryBufferAtPos(slice, comment2, i)) {
+                                        i += comment2.length - 1;
+                                        expectComment = false;
+                                        continue;
+                                    }
+                                }
+                            }
+
+                            updatedSlice.push(c);
+                        }
+                    }
+
+                    textEditorInsert(targetEditor, start, updatedSlice);
+                    textEditorSetSelection(targetEditor, start, start + updatedSlice.length);
                 }
             }
         }
@@ -364,7 +480,6 @@ function filterString(text: string, query: string) {
 }
 
 
-let loaded = false;
 export function imAppCodeEditor(ctx: GlobalContext) {
     const { state, lastInterpreterResult, lastParseResult } = ctx;
 
@@ -387,7 +502,7 @@ export function imAppCodeEditor(ctx: GlobalContext) {
         const queryBuffer = finderState.editorState.buffer;
         if (queryBuffer && queryBuffer.length > 0) {
             for (let i = 0; i < editorState.buffer.length; i++) {
-                if (isEqual(editorState.buffer, queryBuffer, i)) {
+                if (textEditorQueryBufferAtPos(editorState.buffer, queryBuffer, i)) {
                     if (numResults === s.allFindResults.length) {
                         s.allFindResults.push({ start: 0, end: 0 });
                     }
@@ -416,6 +531,7 @@ export function imAppCodeEditor(ctx: GlobalContext) {
 
             s.currentFindResultIdx = minIdx;
             editorState.cursor = s.allFindResults[minIdx].start;
+            editorState.isAutoScrolling = true;
         }
     } imEndMemo();
 
@@ -427,10 +543,9 @@ export function imAppCodeEditor(ctx: GlobalContext) {
             setStyle("cursor", "text");
         }
 
-        if (!loaded) {
-            loaded = true;
+        if (imBeginMemo().val(ctx.lastLoaded).changed()) {
             loadText(editorState, state.text);
-        }
+        } imEndMemo();
 
         ctx.astStart = 1;
         ctx.astEnd = 5;
