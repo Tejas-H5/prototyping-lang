@@ -17,7 +17,8 @@ import {
 import { getCurrentCallstack, ProgramInterpretResult, stepProgram } from './program-interpreter';
 import { GlobalContext, startDebugging } from './state';
 import "./styling";
-import { assert, elementHasMouseClick, imBeginDiv, imBeginEl, imBeginList, imEnd, imEndList, imInit, imRef, imStateInline, nextListRoot, setAttributes } from './utils/im-dom-utils';
+import { assert } from './utils/assert';
+import { elementHasMouseClick, imBeginDiv, imBeginEl, imBeginList, imEnd, imEndList, imInit, imRef, imStateInline, nextListRoot, setAttributes } from './utils/im-dom-utils';
 
 
 export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretResult) {

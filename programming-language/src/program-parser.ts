@@ -1,4 +1,5 @@
-import { assert, nextListRoot } from "./utils/im-dom-utils";
+import { assert, typeGuard } from "./utils/assert";
+import { nextListRoot } from "./utils/im-dom-utils";
 import { isWhitespace } from "./utils/text-utils";
 
 ////////////////////////
@@ -1550,10 +1551,6 @@ export function parse(text: string): ProgramParseResult {
     }
 
     return program;
-}
-
-function typeGuard(s: never) {
-    assert(false);
 }
 
 export type ResumeableAstTraverser = {

@@ -8,7 +8,6 @@ import {
     FIXED,
     FLEX,
     GAP,
-    H1,
     H100,
     H3,
     imBeginAbsoluteLayout,
@@ -59,7 +58,8 @@ import {
 import { GlobalContext, rerun, startDebugging } from './state';
 import "./styling";
 import { cssVars, getCurrentTheme } from './styling';
-import { assert, deltaTimeSeconds, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, getCurrentRoot, getKeys, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, nextListRoot, scrollIntoViewVH, setInnerText, setStyle, SizeState, UIRoot } from './utils/im-dom-utils';
+import { assert } from './utils/assert';
+import { deltaTimeSeconds, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, getCurrentRoot, getKeys, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, nextListRoot, scrollIntoViewVH, setInnerText, setStyle, UIRoot } from './utils/im-dom-utils';
 import { clamp, gridSnap, inverseLerp, lerp, max, min } from './utils/math-utils';
 import { getSliceValue } from './utils/matrix-math';
 
@@ -667,7 +667,7 @@ export function imProgramOutputs(
                                 imMaximizeItemButton(graph);
                             } imEnd();
 
-                            imBeginAspectRatio(16, 9); {
+                            imBeginAspectRatio(window.innerWidth, window.innerHeight); {
                                 renderGraph(graph);
                             } imEnd();
                         } imEnd();
@@ -746,16 +746,13 @@ export function imProgramOutputs(
                 }
                 imEndList();
 
-                imBeginAspectRatio(16, 9).root; {
+                imBeginAspectRatio(window.innerWidth, window.innerHeight); {
                     renderPlot(plot, program);
                 } imEnd();
             } imEnd();
         }
         imEndList();
-    } else {
-        nextListRoot();
-        imTextSpan("No results yet");
-    }
+    } 
     imEndList();
 
     if (imBeginMemo()
@@ -786,64 +783,68 @@ function renderImageOutput(image: ProgramImageOutput) {
                 if (nextListRoot() && (image.width !== 0)) {
                     const plotState = imState(newPlotState);
 
-                    const [_, ctx, width, height] = imBeginCanvasRenderingContext2D(); {
-                        imPlotZoomingAndPanning(plotState, width, height);
+                    imBeginAspectRatio(window.innerWidth, window.innerHeight); {
+                        const [, ctx, width, height] = imBeginCanvasRenderingContext2D(); {
+                            imPlotZoomingAndPanning(plotState, width, height);
 
-                        const pixelSize = 10;
+                            const pixelSize = 10;
 
-                        if (imBeginMemo().val(image).changed()) {
-                            const minX = 0,
-                                minY = 0,
-                                maxX = image.width * pixelSize,
-                                maxY = image.height * pixelSize;
+                            if (imBeginMemo().val(image).changed()) {
+                                const minX = 0,
+                                    minY = 0,
+                                    maxX = image.width * pixelSize,
+                                    maxY = image.height * pixelSize;
 
-                            recomputePlotExtent(plotState, minX, maxX, minY, maxY);
-                        } imEndMemo();
+                                recomputePlotExtent(plotState, minX, maxX, minY, maxY);
+                            } imEndMemo();
 
-                        if (imBeginMemo().val(image).objectVals(plotState).changed()) {
-                            for (let i = 0; i < image.width; i++) {
-                                for (let j = 0; j < image.height; j++) {
-                                    const x0 = i * pixelSize;
-                                    const y0 = j * pixelSize;
-                                    let color;
-                                    if (image.rgb) {
-                                        const idx = (j * image.width + i) * 3;
-                                        assert(idx + 2 < image.pixels.length);
+                            if (imBeginMemo().val(image).objectVals(plotState).changed()) {
+                                ctx.clearRect(0, 0, width, height);
 
-                                        const r = image.pixels[idx];
-                                        const g = image.pixels[idx + 1];
-                                        const b = image.pixels[idx + 2];
+                                for (let i = 0; i < image.width; i++) {
+                                    for (let j = 0; j < image.height; j++) {
+                                        const x0 = i * pixelSize;
+                                        const y0 = j * pixelSize;
+                                        let color;
+                                        if (image.rgb) {
+                                            const idx = (j * image.width + i) * 3;
+                                            assert(idx + 2 < image.pixels.length);
 
-                                        color = `rgb(${r * 255}, ${g * 255}, ${b * 255})`;
-                                    } else {
-                                        const idx = (j * image.width + i);
-                                        assert(idx < image.pixels.length);
-                                        const v = image.pixels[idx];
-                                        color = `rgb(${v * 255}, ${v * 255}, ${v * 255})`;
+                                            const r = image.pixels[idx];
+                                            const g = image.pixels[idx + 1];
+                                            const b = image.pixels[idx + 2];
+
+                                            color = `rgb(${r * 255}, ${g * 255}, ${b * 255})`;
+                                        } else {
+                                            const idx = (j * image.width + i);
+                                            assert(idx < image.pixels.length);
+                                            const v = image.pixels[idx];
+                                            color = `rgb(${v * 255}, ${v * 255}, ${v * 255})`;
+                                        }
+
+                                        ctx.beginPath();
+                                        {
+                                            ctx.fillStyle = color;
+                                            const x0Canvas = getCanvasElementX(plotState, x0);
+                                            const y0Canvas = getCanvasElementY(plotState, y0);
+                                            const size = getCanvasElementLength(plotState, pixelSize);
+                                            drawRectSized(
+                                                ctx,
+                                                x0Canvas,
+                                                y0Canvas,
+                                                size,
+                                                size
+                                            );
+                                            ctx.fill();
+                                        }
+                                        ctx.closePath();
                                     }
-
-                                    ctx.beginPath();
-                                    {
-                                        ctx.fillStyle = color;
-                                        const x0Canvas = getCanvasElementX(plotState, x0);
-                                        const y0Canvas = getCanvasElementY(plotState, y0);
-                                        const size = getCanvasElementLength(plotState, pixelSize);
-                                        drawRectSized(
-                                            ctx,
-                                            x0Canvas,
-                                            y0Canvas,
-                                            size,
-                                            size
-                                        );
-                                        ctx.fill();
-                                    }
-                                    ctx.closePath();
                                 }
-                            }
 
-                            drawBoundary(ctx, width, height);
-                        } imEndMemo();
-                    } imEndCanvasRenderingContext2D();
+                                drawBoundary(ctx, width, height);
+                            } imEndMemo();
+                        } imEndCanvasRenderingContext2D();
+                    } imEnd();
                 } else {
                     nextListRoot();
                     imBeginLayout(COL | ALIGN_CENTER | JUSTIFY_CENTER); {
@@ -1036,7 +1037,7 @@ type PlotState = {
 
 function newPlotState(): PlotState {
     return {
-        overlay: false,
+        overlay: true,
         posX: 0,
         posY: 0,
         zoom: 1,
@@ -1551,7 +1552,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                         }
 
                         // Draw the grid
-                        if (true || plotState.overlay) { // TODO: gate
+                        if (plotState.overlay) { 
                             const xMin = getPlotX(plotState, 0);
                             const xMax = getPlotX(plotState, width);
                             const yMin = getPlotY(plotState, 0);
@@ -1695,7 +1696,7 @@ for size in range(1, 6) {
 }
 
 // try this
-output_here()
+// output_here()
 
 `
     },

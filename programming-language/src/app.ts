@@ -18,7 +18,8 @@ import {
 import { GlobalContext, newGlobalContext, rerun, saveState } from './state';
 import "./styling";
 import { cnApp } from './styling';
-import { abortListAndRewindUiStack, assert, cn, imBeginDiv, imBeginList, imBeginMemo, imEnd, imEndList, imEndMemo, imInit, imRef, imState, nextListRoot, setAttributes } from './utils/im-dom-utils';
+import { assert } from './utils/assert';
+import { abortListAndRewindUiStack, cn, imBeginDiv, imBeginList, imBeginMemo, imEnd, imEndList, imEndMemo, imInit, imRef, imState, nextListRoot, setClass, setStyle } from './utils/im-dom-utils';
 
 let saveTimeout = 0;
 function saveStateDebounced(ctx: GlobalContext) {
@@ -33,7 +34,10 @@ export function renderApp() {
     const error = imRef<any>();
 
     imBeginLayout(FIXED | NORMAL); {
-        imInit() && setAttributes({ class: [cnApp.normalFont, cn.absoluteFill] });
+        if (imInit()) {
+            setClass(cnApp.normalFont);
+            setClass(cn.absoluteFill);
+        }
 
         const l = imBeginList();
         try {
@@ -78,9 +82,12 @@ export function renderApp() {
                 } imEnd();
 
                 imBeginLayout(ROW | GAP | ALIGN_CENTER | ABSOLUTE | NORMAL); {
-                    imInit() && setAttributes({
-                        style: "right: 10px; bottom: 10px; border-radius: 10px; height: 2em",
-                    });
+                    if (imInit()) {
+                        setStyle("right", "10px");
+                        setStyle("bottom", "10px");
+                        setStyle("borderRight", "10px");
+                        setStyle("height", "2em");
+                    }
 
                     imTextSpan(saveTimeout ? "Saving..." : "Saved");
                 } imEnd();
