@@ -8,6 +8,7 @@ import {
     FIXED,
     FLEX,
     GAP,
+    H1,
     H100,
     H3,
     imBeginAbsoluteLayout,
@@ -781,17 +782,13 @@ function renderImageOutput(image: ProgramImageOutput) {
             } imEnd();
 
             imBeginLayout(FLEX | RELATIVE); {
-                const { rect } = imTrackSize();
-
                 imBeginList();
                 if (nextListRoot() && (image.width !== 0)) {
                     const plotState = imState(newPlotState);
 
-                    const [canvasRoot, ctx] = beginCanvasRenderingContext2D();
-                    const canvas = canvasRoot.root; {
-                        imPlotZoomingAndPanning(plotState, rect);
+                    const [_, ctx, width, height] = imBeginCanvasRenderingContext2D(); {
+                        imPlotZoomingAndPanning(plotState, width, height);
 
-                        const { width, height } = rect;
                         const pixelSize = 10;
 
                         if (imBeginMemo().val(image).changed()) {
@@ -804,9 +801,6 @@ function renderImageOutput(image: ProgramImageOutput) {
                         } imEndMemo();
 
                         if (imBeginMemo().val(image).objectVals(plotState).changed()) {
-                            canvas.width = width;
-                            canvas.height = width * 9 / 16;
-
                             for (let i = 0; i < image.width; i++) {
                                 for (let j = 0; j < image.height; j++) {
                                     const x0 = i * pixelSize;
@@ -849,7 +843,7 @@ function renderImageOutput(image: ProgramImageOutput) {
 
                             drawBoundary(ctx, width, height);
                         } imEndMemo();
-                    } imEnd();
+                    } imEndCanvasRenderingContext2D();
                 } else {
                     nextListRoot();
                     imBeginLayout(COL | ALIGN_CENTER | JUSTIFY_CENTER); {
@@ -863,10 +857,7 @@ function renderImageOutput(image: ProgramImageOutput) {
     } imEnd();
 }
 
-function imPlotZoomingAndPanning(
-    plotState: PlotState,
-    size: SizeState,
-) {
+function imPlotZoomingAndPanning(plotState: PlotState, width: number, height: number) {
     const isMaximized = plotState === currentMaximizedItem;
     const canZoom = elementHasMouseHover() && (isShiftPressed() || isMaximized);
     plotState.canZoom = canZoom;
@@ -875,8 +866,8 @@ function imPlotZoomingAndPanning(
         setStyle("cursor", "move");
     }
 
-    plotState.width = size.width;
-    plotState.height = size.height;
+    plotState.width = width;
+    plotState.height = height;
 
     const mouse = getMouse();
 
@@ -958,18 +949,10 @@ function renderGraph(graph: ProgramGraphOutput) {
     } imEndMemo();
 
     imBeginLayout(FLEX | RELATIVE | H100).root; {
-        const { rect } = imTrackSize();
-
-        const { width, height } = rect;
-
-        const [canvasRoot, ctx] = beginCanvasRenderingContext2D();
-        const canvas = canvasRoot.root; {
-            imPlotZoomingAndPanning(plotState, rect);
+        const [_, ctx, width, height] = imBeginCanvasRenderingContext2D(); {
+            imPlotZoomingAndPanning(plotState, width, height);
 
             if (imBeginMemo().val(width).val(height).val(graph).objectVals(plotState).changed()) {
-                canvas.width = width;
-                canvas.height = height;
-
                 ctx.clearRect(0, 0, width, height);
 
                 for (const [key] of s.nodeData) {
@@ -1032,7 +1015,7 @@ function renderGraph(graph: ProgramGraphOutput) {
 
                 drawBoundary(ctx, width, height);
             } imEndMemo();
-        } imEnd();
+        } imEndCanvasRenderingContext2D();
     } imEnd();
 }
 
@@ -1197,19 +1180,45 @@ function drawPointAt(ctx: CanvasRenderingContext2D, x: number, y: number, halfSi
     ctx.closePath();
 }
 
-function beginCanvasRenderingContext2D() {
+function imBeginCanvasRenderingContext2D() {
+    // When I set the canvas to the size of it's offset width, this in turn
+    // causes the parent to get larger, which causes the canvas to get larger, and so on.
+    // This relative -> absolute pattern is being used here to fix this.
+
+    imBeginLayout(RELATIVE | W100 | H100);
+
+    const { rect } = imTrackSize();
     const canvasRoot = imBeginEl(newCanvasElement);
+
     const canvas = canvasRoot.root;
-    let ctx = imVal<[UIRoot<HTMLCanvasElement>, CanvasRenderingContext2D] | null>(null);
+    let ctx = imVal<[UIRoot<HTMLCanvasElement>, CanvasRenderingContext2D, number, number] | null>(null);
     if (!ctx) {
         const context = canvas.getContext("2d");
         if (!context) {
             throw new Error("Canvas 2d isn't supported by your browser!!! I'd suggest _not_ plotting anything. Or updaing your browser");
         }
-        ctx = imSetVal([canvasRoot, context]);
+        ctx = imSetVal([canvasRoot, context, 0, 0]);
+
+        setStyle("position", "absolute");
+        setStyle("top", "0");
+        setStyle("left", "0");
     }
 
+    const w = rect.width;
+    const h = rect.height;
+    if (imBeginMemo().val(w).val(h).changed()) {
+        canvas.width = w;
+        canvas.height = h;
+        ctx[2] = w;
+        ctx[3] = h;
+    } imEndMemo();
+
     return ctx;
+}
+
+function imEndCanvasRenderingContext2D() {
+    imEnd();
+    imEnd();
 }
 
 function drawCircle(
@@ -1324,8 +1333,6 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
             } imEnd();
 
             imBeginLayout(FLEX | RELATIVE).root; {
-                const { rect } = imTrackSize();
-
                 const shiftScrollToZoomVal = imRef<number>();
 
                 const problems = imRef<string[]>();
@@ -1333,8 +1340,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                     problems.val = [];
                 }
 
-                const [canvasRoot, ctx] = beginCanvasRenderingContext2D();
-                const canvas = canvasRoot.root; {
+                const [_, ctx, width, height] = imBeginCanvasRenderingContext2D(); {
                     const mouse = getMouse();
 
                     // init canvas 
@@ -1343,9 +1349,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                         shiftScrollToZoomVal.val = 1;
                     }
 
-                    imPlotZoomingAndPanning(plotState, rect);
-
-                    const { width, height } = rect;
+                    imPlotZoomingAndPanning(plotState, width, height);
 
                     if (imBeginMemo()
                         .val(program.parseResult.text)
@@ -1353,12 +1357,6 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                         .val(height)
                         .changed()
                     ) {
-
-                        plotState.width = rect.width;
-                        plotState.height = rect.height;
-                        canvas.width = width;
-                        canvas.height = height;
-
                         let minX = Number.MAX_SAFE_INTEGER;
                         let maxX = Number.MIN_SAFE_INTEGER;
                         let minY = Number.MAX_SAFE_INTEGER;
@@ -1623,7 +1621,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
 
                         drawBoundary(ctx, width, height);
                     } imEndMemo();
-                } imEnd();
+                } imEndCanvasRenderingContext2D();
 
                 if (shiftScrollToZoomVal.val !== null) {
                     const dt = deltaTimeSeconds();

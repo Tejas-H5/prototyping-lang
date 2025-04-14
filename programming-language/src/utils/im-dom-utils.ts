@@ -1862,8 +1862,13 @@ export function initializeImEvents() {
         mouse.lastY = mouse.Y;
         mouse.X = e.pageX;
         mouse.Y = e.pageY;
-        mouse.dX = mouse.X - mouse.lastX;
-        mouse.dY = mouse.Y - mouse.lastY;
+
+        // Chromium can run two mousemove events in a single frame,
+        // so it is more correct to accumulate the delta like this and then
+        // zero it later.
+        mouse.dX += mouse.X - mouse.lastX;
+        mouse.dY += mouse.Y - mouse.lastY;
+
         mouse.hoverElement = e.target;
         mouse.hoverElementOriginal = e.target;
 
@@ -2033,11 +2038,9 @@ function newImGetSizeState(): {
 
     self.observer.observe(r.root);
     numResizeObservers++;
-    console.log(numResizeObservers);
     r.addDestructor(() => {
         numResizeObservers--;
         self.observer.disconnect()
-        console.log(numResizeObservers);
     });
 
     return self;
