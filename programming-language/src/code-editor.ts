@@ -45,6 +45,7 @@ import { cnApp } from './styling';
 import { cn, imBeginList, imBeginMemo, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imRef, imSb, imState, imStateInline, nextListRoot, setAttributes, setClass, setInnerText, setStyle } from './utils/im-dom-utils';
 import { max } from './utils/math-utils';
 import { isWhitespace } from './utils/text-utils';
+import { assert } from './utils/assert';
 
 
 const UNANIMOUSLY_DECIDED_TAB_SIZE = 4;
@@ -297,6 +298,195 @@ function imSimpleTextInputBody(s: SimpleTextEditorState) {
     return s;
 }
 
+function getSelectionRangeExtendedToLines(targetEditor: TextEditorState) {
+    let start, end;
+    if (textEditorHasSelection(targetEditor)) {
+        const { selectionStart, selectionEnd } = targetEditor;
+        start = getLastNewlinePos(targetEditor, selectionStart) + 1;
+        end = getNextNewlinePos(targetEditor, selectionEnd) - 1;
+    } else {
+        start = getLastNewlinePos(targetEditor, targetEditor.cursor) + 1;
+        end = getNextNewlinePos(targetEditor, targetEditor.cursor) - 1;
+    }
+    return [start, end] as const;
+}
+
+// toggles '//' on/off for the selected lines
+function toggleSelectionLineComment(targetEditor: TextEditorState) {
+    const [start, end] = getSelectionRangeExtendedToLines(targetEditor);
+
+    if (start >= end) {
+        return;
+    }
+
+    const slice = targetEditor.buffer.slice(start, end);
+
+    const updatedSlice = [];
+
+    const comment: string[] = ["/", "/", " "];
+    const comment2: string[] = ["/", "/",];
+
+    let shouldCommentBlock = false;
+    {
+        let expectComment = true;
+
+        for (let i = 0; i < slice.length; i++) {
+            const c = slice[i];
+
+            if (!expectComment) {
+                if (c === "\n") {
+                    expectComment = true;
+                }
+            } else {
+                if (!isWhitespace(c)) {
+                    if (textEditorQueryBufferAtPos(slice, comment2, i)) {
+                        i += comment.length - 1;
+                        expectComment = false;
+                        continue;
+                    }
+
+                    shouldCommentBlock = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (shouldCommentBlock) {
+        let expectComment = true;
+
+        // for (let i = 0; i < slice.length; i++) {
+        //     const c = slice[i];
+        //
+        //     if (!expectComment) {
+        //         if (c === "\n") {
+        //             expectComment = true;
+        //         }
+        //     } else {
+        //         if (!isWhitespace(c) || c === "\n") {
+        //             updatedSlice.push(...comment);
+        //             expectComment = false;
+        //         }
+        //     }
+        //
+        //     updatedSlice.push(c);
+        // }
+
+        // Ideally, the code above should be updated to comment at the smallest indentation.
+        // but it is just far simpler to insert the comment right after the new line.
+        // We still get a similar effect in that all the // appear on the same line.
+        updatedSlice.push(...comment);
+        for (let i = 0; i < slice.length; i++) {
+            const c = slice[i];
+
+            updatedSlice.push(c);
+
+            if (c === "\n") {
+                updatedSlice.push(...comment);
+            }
+        }
+    } else {
+        let expectComment = true;
+
+        for (let i = 0; i < slice.length; i++) {
+            const c = slice[i];
+
+            if (!expectComment) {
+                if (c === "\n") {
+                    expectComment = true;
+                }
+            } else {
+                if (!isWhitespace(c)) {
+                    if (textEditorQueryBufferAtPos(slice, comment, i)) {
+                        i += comment.length - 1;
+                        expectComment = false;
+                        continue;
+                    } else if (textEditorQueryBufferAtPos(slice, comment2, i)) {
+                        i += comment2.length - 1;
+                        expectComment = false;
+                        continue;
+                    }
+                }
+            }
+
+            updatedSlice.push(c);
+        }
+    }
+
+    textEditorRemove(targetEditor, start, end - start);
+    textEditorInsert(targetEditor, start, updatedSlice);
+    textEditorSetSelection(targetEditor, start, start + updatedSlice.length);
+}
+
+function indentSelection(targetEditor: TextEditorState) {
+    if (!textEditorHasSelection(targetEditor)) {
+        return;
+    }
+
+    const [start, end] = getSelectionRangeExtendedToLines(targetEditor);
+    if (end <= start) {
+        return;
+    }
+
+    const slice = targetEditor.buffer.slice(start, end);
+    const tab = ["\t"];
+
+    const updatedSlice = [...tab];
+    for (let i = 0; i < slice.length; i++) {
+        const c = slice[i];
+
+        updatedSlice.push(c);
+
+        if (c === "\n") {
+            updatedSlice.push(...tab);
+        }
+    }
+
+    textEditorRemove(targetEditor, start, end - start);
+    textEditorInsert(targetEditor, start, updatedSlice);
+    textEditorSetSelection(targetEditor, start, start + updatedSlice.length);
+}
+
+function deIndentSelection(targetEditor: TextEditorState) {
+    if (!textEditorHasSelection(targetEditor)) {
+        return;
+    }
+
+    const [start, end] = getSelectionRangeExtendedToLines(targetEditor);
+    if (end <= start) {
+        return;
+    }
+
+    const slice = targetEditor.buffer.slice(start, end);
+
+    const updatedSlice = [];
+    let whitespaceRemaining = UNANIMOUSLY_DECIDED_TAB_SIZE;
+    for (let i = 0; i < slice.length; i++) {
+        const c = slice[i];
+
+        if (c === "\n") {
+            whitespaceRemaining = UNANIMOUSLY_DECIDED_TAB_SIZE;
+        } else if (whitespaceRemaining) {
+            if (c === "\t") {
+                whitespaceRemaining = 0;
+                continue;
+            } else if (c === " ") {
+                whitespaceRemaining--;
+                continue;
+            } else {
+                whitespaceRemaining = 0;
+            }
+        }
+
+        updatedSlice.push(c);
+    }
+
+    textEditorRemove(targetEditor, start, end - start);
+    textEditorInsert(targetEditor, start, updatedSlice);
+    textEditorSetSelection(targetEditor, start, start + updatedSlice.length);
+}
+
+
 function handleCodeEditorEvents(s: CodeEditorState, targetEditor: TextEditorState, eventSource: TextEditorState) {
     let handled = false;
 
@@ -324,117 +514,26 @@ function handleCodeEditorEvents(s: CodeEditorState, targetEditor: TextEditorStat
             }
         }
     } else {
+        assert(eventSource === targetEditor);
+
         if (eventSource._keyDownEvent) {
-            if (eventSource.inCommandMode && eventSource.keyLower === "\/") {
-                let start, end;
-                handled = true;
+            if (eventSource.inCommandMode) {
+                if (eventSource.keyLower === "\/") {
+                    handled = true;
+                    toggleSelectionLineComment(targetEditor);
+                } 
+            }
+
+            if (!handled && eventSource.keyLower === "tab") {
                 if (textEditorHasSelection(targetEditor)) {
-                    const { selectionStart, selectionEnd } = targetEditor;
-                    start = getLastNewlinePos(targetEditor, selectionStart) + 1;
-                    end = getNextNewlinePos(targetEditor, selectionEnd) - 1;
-                } else {
-                    start = getLastNewlinePos(targetEditor, targetEditor.cursor) + 1;
-                    end = getNextNewlinePos(targetEditor, targetEditor.cursor) - 1;
-                }
+                    handled = true;
 
-                if (start < end) {
-                    const slice = targetEditor.buffer.slice(start, end);
-
-                    textEditorRemove(targetEditor, start, end - start);
-                    const updatedSlice = [];
-
-                    const comment: string[] = ["/", "/", " "];
-                    const comment2: string[] = ["/", "/",];
-
-                    let shouldCommentBlock = false;
-                    {
-                        let expectComment = true;
-
-                        for (let i = 0; i < slice.length; i++) {
-                            const c = slice[i];
-
-                            if (!expectComment) {
-                                if (c === "\n") {
-                                    expectComment = true;
-                                }
-                            } else {
-                                if (!isWhitespace(c)) {
-                                    if (textEditorQueryBufferAtPos(slice, comment2, i)) {
-                                        i += comment.length - 1;
-                                        expectComment = false;
-                                        continue;
-                                    }
-
-                                    shouldCommentBlock = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    if (shouldCommentBlock) {
-                        let expectComment = true;
-
-                        // for (let i = 0; i < slice.length; i++) {
-                        //     const c = slice[i];
-                        //
-                        //     if (!expectComment) {
-                        //         if (c === "\n") {
-                        //             expectComment = true;
-                        //         }
-                        //     } else {
-                        //         if (!isWhitespace(c) || c === "\n") {
-                        //             updatedSlice.push(...comment);
-                        //             expectComment = false;
-                        //         }
-                        //     }
-                        //
-                        //     updatedSlice.push(c);
-                        // }
-                        
-                        // Ideally, the code above should be updated to comment at the smallest indentation.
-                        // but it is just far simpler to insert the comment right after the new line.
-                        // We still get a similar effect in that all the // appear on the same line.
-                        updatedSlice.push(...comment);
-                        for (let i = 0; i < slice.length; i++) {
-                            const c = slice[i];
-
-                            updatedSlice.push(c);
-
-                            if (c === "\n") {
-                                updatedSlice.push(...comment);
-                            }
-                        }
+                    eventSource._keyDownEvent.preventDefault();
+                    if (eventSource.isShifting) {
+                        deIndentSelection(targetEditor);
                     } else {
-                        let expectComment = true;
-
-                        for (let i = 0; i < slice.length; i++) {
-                            const c = slice[i];
-
-                            if (!expectComment) {
-                                if (c === "\n") {
-                                    expectComment = true;
-                                }
-                            } else {
-                                if (!isWhitespace(c)) {
-                                    if (textEditorQueryBufferAtPos(slice, comment, i)) {
-                                        i += comment.length - 1;
-                                        expectComment = false;
-                                        continue;
-                                    } else if (textEditorQueryBufferAtPos(slice, comment2, i)) {
-                                        i += comment2.length - 1;
-                                        expectComment = false;
-                                        continue;
-                                    }
-                                }
-                            }
-
-                            updatedSlice.push(c);
-                        }
+                        indentSelection(targetEditor);
                     }
-
-                    textEditorInsert(targetEditor, start, updatedSlice);
-                    textEditorSetSelection(targetEditor, start, start + updatedSlice.length);
                 }
             }
         }

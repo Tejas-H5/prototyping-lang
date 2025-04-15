@@ -312,6 +312,8 @@ export function textEditorSetSelection(s: TextEditorState, anchor: number, end: 
     s.selectionAnchorEnd = end;
     s.selectionStart = min(anchor, end);
     s.selectionEnd = max(anchor, end);
+    s.canKeyboardSelect = false;
+    s.canMouseSelect = false;
 }
 
 // events are only set to null if we handle them.
