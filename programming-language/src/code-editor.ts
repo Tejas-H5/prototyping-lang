@@ -1,4 +1,4 @@
-import { defaultTextEditorKeyboardEventHandler, getLastNewlinePos, getNextNewlinePos, handleTextEditorClickEventForChar, imBeginTextEditor, imEndTextEditor, textEditorQueryBufferAtPos, loadText, newTextEditorState, textEditorCursorIsSelected, textEditorDeleteCurrentSelection, textEditorGetNextChar, textEditorHasChars, textEditorHasSelection, textEditorInsert, textEditorMarkViewEnd, textEditorRemove, textEditorSetSelection, TextEditorState } from 'src/utils/text-editor';
+import { defaultTextEditorKeyboardEventHandler, getLastNewlinePos, getNextNewlinePos, handleTextEditorClickEventForChar, imBeginTextEditor, imEndTextEditor, textEditorQueryBufferAtPos, loadText, newTextEditorState, textEditorCursorIsSelected, textEditorDeleteCurrentSelection, textEditorGetNextChar, textEditorHasChars, textEditorHasSelection, textEditorInsert, textEditorMarkViewEnd, textEditorRemove, textEditorSetSelection, TextEditorState, handleTextEditorMouseScrollEvent } from 'src/utils/text-editor';
 import { imProgramOutputs } from './code-output';
 import { renderSliderBody } from './components/slider';
 import {
@@ -42,7 +42,7 @@ import {
 import { GlobalContext, rerun } from './state';
 import "./styling";
 import { cnApp } from './styling';
-import { cn, imBeginList, imBeginMemo, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imRef, imSb, imState, imStateInline, nextListRoot, setAttributes, setClass, setInnerText, setStyle } from './utils/im-dom-utils';
+import { cn, getCurrentRoot, imBeginList, imBeginMemo, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imRef, imSb, imState, imStateInline, nextListRoot, setAttributes, setClass, setInnerText, setStyle } from './utils/im-dom-utils';
 import { max } from './utils/math-utils';
 import { isWhitespace } from './utils/text-utils';
 import { assert } from './utils/assert';
@@ -841,6 +841,7 @@ export function imAppCodeEditor(ctx: GlobalContext) {
 
                     // figures
                     imBeginLayout(COL | NORMAL); {
+
                         if (imInit()) {
                             setStyle("borderRadius", "10px");
                             setStyle("overflow", "clip");
@@ -917,7 +918,11 @@ export function imAppCodeEditor(ctx: GlobalContext) {
             s.lastMaxLine = editorState._renderCursor.line + 1;
 
             handleCodeEditorEvents(s, editorState, editorState);
+
+            handleTextEditorMouseScrollEvent(editorState);
+
         } imEndTextEditor(editorState);
+
 
         if (imBeginMemo()
             .val(editorState.modifiedAt)

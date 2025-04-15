@@ -2,7 +2,7 @@ import { renderApp, } from './app.ts';
 import { imTextSpan } from './layout.ts';
 import "./styling.ts";
 import { cssVars } from './styling.ts';
-import { beginFrame, deltaTimeSeconds, elementHasMouseClick, endFrame, imBeginDiv, imBeginMemo, imBeginSpan, imEnd, imEndMemo, imInit, initializeDomRootAnimiationLoop, initializeDomUtils, initializeImEvents, setInnerText, setStyle } from './utils/im-dom-utils.ts';
+import { imBeginFrame, deltaTimeSeconds, elementHasMouseClick, imEndFrame, imBeginDiv, imBeginMemo, imBeginSpan, imEnd, imEndMemo, imInit, initializeDomRootAnimiationLoop, initializeDomUtils, initializeImEvents, setInnerText, setStyle } from './utils/im-dom-utils.ts';
 
 initializeDomUtils();
 initializeImEvents();
@@ -38,7 +38,7 @@ function renderRoot() {
     }
 
 
-    beginFrame();
+    imBeginFrame();
 
     imBeginDiv(); {
         if (imInit()) {
@@ -124,7 +124,7 @@ function renderRoot() {
         renders++;
     }
 
-    endFrame();
+    imEndFrame();
 }
 
 

@@ -8,7 +8,7 @@
 
 import "src/styling";
 import { copyToClipboard, readFromClipboard } from "src/utils/clipboard";
-import { elementHasMouseClick, elementHasMouseDown, getMouse, imBeginEl, imEnd, imInit, imOn, setStyle, UIRoot } from 'src/utils/im-dom-utils';
+import { elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, getMouse, imBeginEl, imEnd, imInit, imOn, setStyle, UIRoot } from 'src/utils/im-dom-utils';
 import { clamp, max, min } from "src/utils/math-utils";
 import { isWhitespace } from "src/utils/text-utils";
 import { assert } from "./assert";
@@ -210,6 +210,7 @@ export type TextEditorState = {
     _cursorSpan: HTMLElement | null;
     _keyDownEvent: HTMLElementEventMap["keydown"] | null;
     _keyUpEvent: HTMLElementEventMap["keyup"] | null;
+    _handledEvent: boolean;
     _viewCursorAtStart: boolean;
     _viewCursorAtEnd: boolean;
 
@@ -316,26 +317,36 @@ export function textEditorSetSelection(s: TextEditorState, anchor: number, end: 
     s.canMouseSelect = false;
 }
 
+export function handleTextEditorMouseScrollEvent(s: TextEditorState) {
+    const mouse = getMouse();
+    if (mouse.scrollY !== 0) {
+        if (elementHasMouseHover()) {
+            const n = Math.max(Math.abs(mouse.scrollY / 50));
+            if (mouse.scrollY < 0) {
+                for (let i = 0; i < n; i++) {
+                    decrementViewCursors(s);
+                }
+            } else {
+                for (let i = 0; i < n; i++) {
+                    incrementViewCursors(s);
+                }
+            }
+        } 
+    }
+}
+
 // events are only set to null if we handle them.
 export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
+    if (s._handledEvent) {
+        return;
+    }
+    s._handledEvent = true;
+
     const mouse = getMouse();
     if (!mouse.leftMouseButton) {
         s.hasClick = false;
         s.canMouseSelect = false;
     }
-
-    if (mouse.scrollY !== 0) {
-        const n = Math.max(Math.abs(mouse.scrollY / 50));
-        if (mouse.scrollY < 0) {
-            for (let i = 0; i < n; i++) {
-                decrementViewCursors(s);
-            }
-        } else {
-            for (let i = 0; i < n; i++) {
-                incrementViewCursors(s);
-            }
-        }
-    } 
 
     const keyDownEvent = s._keyDownEvent;
     if (keyDownEvent) {
@@ -639,6 +650,7 @@ export function newTextEditorState() {
         keyLower: "",
         _keyUpEvent: null,
         _keyDownEvent: null,
+        _handledEvent: false,
         _viewCursorAtStart:  false,
         _viewCursorAtEnd: false,
 
@@ -718,6 +730,7 @@ export function imBeginTextEditor(s: TextEditorState) {
     s._renderCursor.pos = s.viewCursor.pos;
     s._renderCursor.line = s.viewCursor.line;
     s.cursorLine = -1;
+    s._handledEvent = false;
 
     s._viewCursorAtStart = viewWindowIsAtStart(s);
     s._viewCursorAtEnd = viewWindowIsAtEnd(s);
@@ -903,7 +916,7 @@ export function textEditorHasChars(s: TextEditorState): boolean {
 
 function incrementCursor(s: TextEditorState, c: LineCursor) {
     c.pos++;
-    if (s.buffer[c.pos] === "\n") {
+    if (s.buffer[c.pos] === "\n" || c.pos === s.buffer.length) {
         c.line++;
     }
 }

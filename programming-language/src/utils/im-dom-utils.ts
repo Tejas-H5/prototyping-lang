@@ -637,10 +637,14 @@ export class UIRoot<E extends ValidElement = ValidElement> {
     }
     readonly a = this.setAttribute;
 
+    isDerived() {
+        return this.elementSupplier === null;
+    }
+
     assertNotDerived() {
         // When elementSupplier is null, this is because the root is not the 'owner' of a particular DOM element - 
         // rather, we got it from a ListRenderer somehow - setting attributes on these React.fragment type roots is always a mistake
-        assert(this.elementSupplier !== null);
+        assert(!this.isDerived());
     }
 
     __onRemove(destroy: boolean) {
@@ -1141,6 +1145,11 @@ export function imBeginEl<E extends ValidElement = ValidElement>(elementSupplier
 // This is now called `imEnd`, because it is better to not squat on the variable name "end"
 export function imEnd(detatchElements = true) {
     const val = getCurrentRoot();
+
+    if (!val.isDerived()) {
+        deferClickEventToParentInternal(val);
+    }
+
     val.__end(detatchElements);
 }
 
@@ -1806,7 +1815,9 @@ export function getHoveredElement() {
 }
 
 export function deferClickEventToParent() {
-    const r = getCurrentRoot();
+}
+
+function deferClickEventToParentInternal(r: UIRoot) {
     const el = r.root;
     const parent = el.parentNode;
 
@@ -1818,6 +1829,7 @@ export function deferClickEventToParent() {
     }
     if (mouse.hoverElement === el) {
         mouse.hoverElement = parent;
+        console.log("hover", parent);
     }
 }
 
@@ -1842,8 +1854,8 @@ export function initializeImEvents() {
     document.addEventListener("mousemove", (e) => {
         mouse.lastX = mouse.X;
         mouse.lastY = mouse.Y;
-        mouse.X = e.pageX;
-        mouse.Y = e.pageY;
+        mouse.X = e.clientX;
+        mouse.Y = e.clientY;
 
         // Chromium can run two mousemove events in a single frame,
         // so it is more correct to accumulate the delta like this and then
@@ -1851,12 +1863,10 @@ export function initializeImEvents() {
         mouse.dX += mouse.X - mouse.lastX;
         mouse.dY += mouse.Y - mouse.lastY;
 
-        mouse.hoverElement = e.target;
         mouse.hoverElementOriginal = e.target;
 
     });
     document.addEventListener("mouseenter", (e) => {
-        mouse.hoverElement = e.target;
         mouse.hoverElementOriginal = e.target;
     });
     document.addEventListener("mouseup", (e) => {
@@ -1870,9 +1880,9 @@ export function initializeImEvents() {
     });
     document.addEventListener("wheel", (e) => {
         mouse.scrollY += e.deltaY;
-        mouse.hoverElement = e.target;
         mouse.hoverElementOriginal = e.target;
         e.preventDefault();
+        console.log("[Scrolling]: ", mouse.scrollY);
     });
     document.addEventListener("keydown", (e) => {
         if (e.repeat) {
@@ -1921,7 +1931,10 @@ export function isCtrlPressed() {
 
 
 function newPreventScrollEventPropagationState() {
-    return { isBlocking: true };
+    return { 
+        isBlocking: true,
+        scrollY: 0,
+    };
 }
 
 export function imPreventScrollEventPropagation() {
@@ -1936,16 +1949,24 @@ export function imPreventScrollEventPropagation() {
         });
     }
 
+    const mouse = getMouse();
+    if (state.isBlocking && elementHasMouseHover() && mouse.scrollY !== 0) {
+        state.scrollY += mouse.scrollY;
+        mouse.scrollY = 0;
+    } else {
+        state.scrollY = 0;
+    }
+
     return state;
 }
 
-export function beginFrame() {
+export function imBeginFrame() {
     // persistent things need to be reset every frame, for bubling order to remain consistent per render
     mouse.lastClickedElement = mouse.lastClickedElementOriginal;
     mouse.hoverElement = mouse.hoverElementOriginal;
 }
 
-export function endFrame() {
+export function imEndFrame() {
     mouse.clickedElement = null;
     mouse.lastX = mouse.X;
     mouse.lastY = mouse.Y;
