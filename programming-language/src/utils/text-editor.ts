@@ -8,7 +8,7 @@
 
 import "src/styling";
 import { copyToClipboard, readFromClipboard } from "src/utils/clipboard";
-import { elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, getMouse, imBeginEl, imEnd, imInit, imOn, setStyle, UIRoot } from 'src/utils/im-dom-utils';
+import { elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, getMouse, imBeginEl, imEnd, imInit, imOn, isCtrlHeld, isMetaHeld, isShiftHeld, setStyle, UIRoot } from 'src/utils/im-dom-utils';
 import { clamp, max, min } from "src/utils/math-utils";
 import { isWhitespace } from "src/utils/text-utils";
 import { assert } from "./assert";
@@ -319,10 +319,10 @@ export function textEditorSetSelection(s: TextEditorState, anchor: number, end: 
 
 export function handleTextEditorMouseScrollEvent(s: TextEditorState) {
     const mouse = getMouse();
-    if (mouse.scrollY !== 0) {
+    if (mouse.scrollWheel !== 0) {
         if (elementHasMouseHover()) {
-            const n = Math.max(Math.abs(mouse.scrollY / 50));
-            if (mouse.scrollY < 0) {
+            const n = Math.max(Math.abs(mouse.scrollWheel / 50));
+            if (mouse.scrollWheel < 0) {
                 for (let i = 0; i < n; i++) {
                     decrementViewCursors(s);
                 }
@@ -735,37 +735,25 @@ export function imBeginTextEditor(s: TextEditorState) {
     s._viewCursorAtStart = viewWindowIsAtStart(s);
     s._viewCursorAtEnd = viewWindowIsAtEnd(s);
 
+    s.isShifting = isShiftHeld();
+    s.inCommandMode = isCtrlHeld() || isMetaHeld();
+    s.canKeyboardSelect = s.isShifting;
+
+    if (!s.isShifting) {
+        s.isSelecting = false;
+    }
+
     // using an input to allow hooking into the browser's existing focusing mechanisms.
     const textAreaRoot = imBeginEl(newTextArea); {
         s._textAreaElement = textAreaRoot;
-
         s._keyDownEvent = imOn("keydown");
         s._keyUpEvent = imOn("keyup");
 
         // preprocess events
         {
-            if (s._keyUpEvent) {
-                const key = s._keyUpEvent.key;
-                if (key === "Shift") {
-                    s.canKeyboardSelect = false;
-                    s.isSelecting = false;
-                    s.isShifting = false;
-                } else if (key === "Control") {
-                    s.inCommandMode = false;
-                }
-            }
-
             if (s._keyDownEvent) {
                 const key = s._keyDownEvent.key;
                 s.keyLower = key.toLowerCase();
-
-                if (key === "Control") {
-                    s.inCommandMode = true;
-                }
-
-                if (key === "Shift") {
-                    s.isShifting = true;
-                }
             }
         }
 
@@ -787,8 +775,6 @@ export function imBeginTextEditor(s: TextEditorState) {
                 s.hasFocus = true;
                 resetTextEditorState
 
-                s.isShifting = false;
-                s.inCommandMode = false;
                 s.canMouseSelect = false;
                 s.canKeyboardSelect = false;
             }

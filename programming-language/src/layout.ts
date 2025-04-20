@@ -1,3 +1,4 @@
+import { BuiltinFunction } from "./program-interpreter.ts";
 import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
 import { imBeginMemo, cn, deferClickEventToParent, imBeginDiv, imEnd, imEndMemo, imInit, imRef, setClass, setStyle, imBeginSpan, setAttributes, newCssBuilder, imBeginEl } from './utils/im-dom-utils.ts';
@@ -49,6 +50,31 @@ export function imBeginLayout(flags: number = 0) {
     // setEndPopCount(2);
 
     return root;
+}
+
+export const SPACE_PX = 1;
+export const SPACE_EM = 2;
+
+export function imBeginSpace(width: number, height: number, type = SPACE_PX, flags = 0) {
+    const valRef = imRef<{ width: number; height: number; type: number; }>();
+    if (valRef.val === null) {
+        valRef.val = { width: 0, height: 0, type: 0, };
+    }
+    const val = valRef.val;
+
+    imBeginLayout(flags); {
+        if (val.width !== width || val.type !== type) {
+            val.width = width;
+            val.type = val.type;
+            setStyle("width", isNaN(width) ? "" : width + (type === SPACE_EM ? "em" : "px"));
+        }
+
+        if (val.height !== height || val.type !== type) {
+            val.height = height;
+            val.type = val.type;
+            setStyle("height", isNaN(height) ? "" : height + (type === SPACE_EM ? "em" : "px"));
+        }
+    } // user specified end
 }
 
 export function setStyleFlags(flags: number) {

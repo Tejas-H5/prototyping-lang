@@ -1,4 +1,4 @@
-import { CssColor, newColor, newColorFromHexOrUndefined } from "src/utils/colour";
+
 import { assert, typeGuard } from "src/utils/assert";
 import { copyMatrix, getMatrixRow, getMatrixRowLength, getMatrixValue, getSliceValue, isIndexInSliceBounds, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMul, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, orthographicMatrix3D, perspectiveMatrix3D, rotationMatrix2D, rotationMatrix3DX, rotationMatrix3DY, rotationMatrix3DZ, rotationMatrixTranslate2D, rotationMatrixTranslate3D, scaleMatrix2D, scaleMatrix3D, setSliceValue, sliceToArray, subMatrixShapeEqualsRowShape, transposeMatrix } from "src/utils/matrix-math";
 import {

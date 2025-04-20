@@ -373,10 +373,6 @@ function imGetCurrent<T>(arr: ImmediateModeArray<T>): T | undefined {
 }
 
 function imReset(arr: ImmediateModeArray<unknown>) {
-    // Once an immediate mode array has been finalized, every subsequent render must create the same number of things.
-    // In this case, you've rendered too few things.
-    assert(arr.idx === -1 || arr.idx === arr.items.length - 1);
-
     arr.idx = -1;
 }
 
@@ -575,6 +571,10 @@ export class UIRoot<E extends ValidElement = ValidElement> {
         // DEV: If this is negative, I fkd up (I decremented this thing too many times) 
         // User: If this is positive, u fked up (You forgot to finalize an open list)
         assert(this.openListRenderers === 0);
+
+        // Once an immediate mode array has been finalized, every subsequent render must create the same number of things.
+        // In this case, you've rendered too few things.
+        assert(this.items.idx === -1 || this.items.idx === this.items.items.length - 1);
 
         if (detatchElementsWhenNothingRendered) {
             if (this.items.idx === -1) {
@@ -1104,7 +1104,7 @@ function pop() {
 }
 
 
-export function startRendering(r: UIRoot = appRoot) {
+export function startRendering(r: UIRoot) {
     currentStack.length = 0;
     currentMemoizerStack.length = 0;
     enableIm();
@@ -1656,7 +1656,9 @@ export function setClass(val: string, enabled: boolean | number = true) {
 // of adding and removing events locally, so I'm attempting to
 // go down a second road of rerendering the entire app at 60fps.
 //
-// It would be interesting to see how far this approach scales.
+// It would be interesting to see how far this approach scales. (23/03/2025)
+//
+// So far, it's going pretty great! (16/04/2025)
 
 export type KeyPressEvent = {
     key: string;
@@ -1679,7 +1681,7 @@ let doRender = () => {};
 
 let isRendering = false;
 
-export function initializeDomRootAnimiationLoop(renderFn: () => void, renderRoot?: UIRoot) {
+export function initializeDomRootAnimiationLoop(renderFn: () => void, renderRoot = appRoot) {
     doRender = () => {
         if (isRendering) {
             return;
@@ -1711,12 +1713,43 @@ export function initializeDomRootAnimiationLoop(renderFn: () => void, renderRoot
     requestAnimationFrame(animation);
 }
 
-// NOTE: might be obsolete. or better on the user side.
-const keys = {
-    shiftsDown: 0,
-    ctrlsDown: 0,
-    escPressed: false,
+export type KeyboardState = {
+    keysPressed: string[];
+    keysPressedOrRepeated: string[];
+    keysReleased: string[];
+    keysPressedLower: string[];
+    keysReleasedLower: string[];
+
+    // The order of keysHeld in particular cannot be trusted.
+    // The other two will be in order though.
+    keysHeld: string[];
+    keysHeldLower: string[];
+};
+
+function resetKeyboardState(keyboard: KeyboardState, clearPersistedDataAsWell: boolean) {
+    keyboard.keysPressed.length = 0;
+    keyboard.keysPressedOrRepeated.length = 0;
+    keyboard.keysPressedLower.length = 0;
+    keyboard.keysReleased.length = 0;
+    keyboard.keysReleasedLower.length = 0;
+
+    if (!clearPersistedDataAsWell) {
+        keyboard.keysHeld.length = 0;
+        keyboard.keysHeldLower.length = 0;
+    }
 }
+
+
+// NOTE: might be obsolete. or better on the user side.
+const keyboard: KeyboardState = {
+    keysPressed: [],
+    keysPressedOrRepeated: [],
+    keysHeld: [],
+    keysReleased: [],
+    keysPressedLower: [],
+    keysHeldLower: [],
+    keysReleasedLower: [],
+};
 
 export type MouseState = {
     lastX: number;
@@ -1735,7 +1768,7 @@ export type MouseState = {
      * NOTE: if you want to use this, you'll have to prevent scroll event propagation.
      * See {@link imPreventScrollEventPropagation}
      */
-    scrollY: number;
+    scrollWheel: number;
 
     clickedElement: object | null;
     lastClickedElement: object | null;
@@ -1743,6 +1776,25 @@ export type MouseState = {
     hoverElement: object | null;
     hoverElementOriginal: object | null;
 };
+
+function resetMouseState(mouse: MouseState, clearPersistedStateAsWell: boolean) {
+    mouse.dX = 0;
+    mouse.dY = 0;
+    mouse.lastX = mouse.X;
+    mouse.lastY = mouse.Y;
+
+    if (!clearPersistedStateAsWell) {
+        mouse.leftMouseButton = false;
+        mouse.middleMouseButton = false;
+        mouse.rightMouseButton = false;
+
+        mouse.lastClickedElement = null;
+        mouse.lastClickedElementOriginal = null;
+        mouse.clickedElement = null;
+
+        mouse.scrollWheel = 0;
+    }
+}
 
 const mouse: MouseState = {
     lastX: 0,
@@ -1758,10 +1810,10 @@ const mouse: MouseState = {
     Y: 0,
 
     /**
-     * NOTE: if you want to use this, you'll have to prevent scroll event propagation.
+     * NOTE: if you want to use this, you may have to prevent normal scroll event propagation.
      * See {@link imPreventScrollEventPropagation}
      */
-    scrollY: 0,
+    scrollWheel: 0,
 
     clickedElement: null,
     lastClickedElement: null,
@@ -1770,14 +1822,12 @@ const mouse: MouseState = {
     hoverElementOriginal: null,
 };
 
-
-
 export function getMouse() {
     return mouse;
 }
 
 export function getKeys() {
-    return keys;
+    return keyboard;
 }
 
 
@@ -1829,7 +1879,6 @@ function deferClickEventToParentInternal(r: UIRoot) {
     }
     if (mouse.hoverElement === el) {
         mouse.hoverElement = parent;
-        console.log("hover", parent);
     }
 }
 
@@ -1879,54 +1928,82 @@ export function initializeImEvents() {
         }
     });
     document.addEventListener("wheel", (e) => {
-        mouse.scrollY += e.deltaY;
+        mouse.scrollWheel += e.deltaX + e.deltaY + e.deltaZ;
         mouse.hoverElementOriginal = e.target;
         e.preventDefault();
-        console.log("[Scrolling]: ", mouse.scrollY);
+        console.log("[Scrollihttp://localhost:5173/ng]: ", mouse.scrollWheel);
     });
     document.addEventListener("keydown", (e) => {
         if (e.repeat) {
             return;
         }
 
-        if (e.key === "Shift") {
-            keys.shiftsDown++;
-        }
-        if (e.key === "Control") {
-            keys.ctrlsDown++;
-        }
+        if (!e.repeat) {
+            keyboard.keysPressed.push(e.key);
+            keyboard.keysPressedLower.push(e.key.toLowerCase());
+            keyboard.keysHeld.push(e.key);
+            keyboard.keysHeldLower.push(e.key.toLowerCase());
+        } 
 
-        if (e.key === "Escape") {
-            keys.escPressed = true;
-        }
+        keyboard.keysPressedOrRepeated.push(e.key);
     });
     document.addEventListener("keyup", (e) => {
-        if (e.key === "Shift" && keys.shiftsDown > 0) {
-            keys.shiftsDown--;
-        }
-        if (e.key === "Control" && keys.ctrlsDown > 0) {
-            keys.ctrlsDown--;
-        }
+        const key = e.key;
+        const keyLower = key.toLowerCase();
+        unorderedRemoveKey(keyboard.keysHeld, key);
+        unorderedRemoveKey(keyboard.keysHeldLower, keyLower);
+
+        keyboard.keysReleased.push(key);
+        keyboard.keysReleasedLower.push(keyLower);
     });
     document.addEventListener("blur", () => {
-        mouse.leftMouseButton = false;
-        mouse.middleMouseButton = false;
-        mouse.rightMouseButton = false;
-        mouse.lastClickedElement = null;
-        mouse.lastClickedElementOriginal = null;
-        mouse.clickedElement = null;
-        mouse.scrollY = 0;
-        keys.shiftsDown = 0;
-        keys.ctrlsDown = 0;
+        resetMouseState(mouse, false);
+        resetKeyboardState(keyboard, false);
     });
 }
 
-export function isShiftPressed() {
-    return keys.shiftsDown > 0;
+export function isShiftHeld() {
+    return isKeyHeld("Shift");
 }
 
-export function isCtrlPressed() {
-    return keys.ctrlsDown > 0;
+export function isCtrlHeld() {
+    return isKeyHeld("Control");
+}
+
+export function isMetaHeld() {
+    return isKeyHeld("Meta");
+}
+
+export function isKeyHeld(key: string) {
+    for (let i = 0; i < keyboard.keysHeld.length; i++) {
+        if (keyboard.keysHeld[i] === key) {
+            return true;
+        }
+    }
+    return false;
+}
+
+export function isKeyPressed(key: string) {
+    for (let i = 0; i < keyboard.keysPressed.length; i++) {
+        if (keyboard.keysPressed[i] === key) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function unorderedRemove(arr: unknown[], idx: number) {
+    if (arr.length === 0) return;
+
+    arr[idx] = arr[arr.length - 1];
+    arr.length--;
+}
+
+function unorderedRemoveKey(keys: string[], key: string) {
+    const idx = keys.indexOf(key);
+    if (idx !== -1) {
+        unorderedRemove(keys, idx);
+    }
 }
 
 
@@ -1942,17 +2019,21 @@ export function imPreventScrollEventPropagation() {
 
     if (imInit()) {
         const r = getCurrentRoot();
-        r.root.addEventListener("wheel", e => {
+        const handler = (e: Event) => {
             if (state.isBlocking) {
                 e.preventDefault();
             }
+        }
+        r.root.addEventListener("wheel", handler);
+        r.addDestructor(() => {
+            r.root.removeEventListener("wheel", handler);
         });
     }
 
     const mouse = getMouse();
-    if (state.isBlocking && elementHasMouseHover() && mouse.scrollY !== 0) {
-        state.scrollY += mouse.scrollY;
-        mouse.scrollY = 0;
+    if (state.isBlocking && elementHasMouseHover() && mouse.scrollWheel !== 0) {
+        state.scrollY += mouse.scrollWheel;
+        mouse.scrollWheel = 0;
     } else {
         state.scrollY = 0;
     }
@@ -1967,14 +2048,8 @@ export function imBeginFrame() {
 }
 
 export function imEndFrame() {
-    mouse.clickedElement = null;
-    mouse.lastX = mouse.X;
-    mouse.lastY = mouse.Y;
-    mouse.dX = 0;
-    mouse.dY = 0;
-    mouse.scrollY = 0;
-
-    keys.escPressed = false;
+    resetKeyboardState(keyboard, true);
+    resetMouseState(mouse, true);
 }
 
 class ImmediateModeStringBuilder {

@@ -59,7 +59,7 @@ import { GlobalContext, rerun, startDebugging } from './state';
 import "./styling";
 import { cssVars, getCurrentTheme } from './styling';
 import { assert } from './utils/assert';
-import { deltaTimeSeconds, disableIm, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, enableIm, getCurrentRoot, getKeys, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isShiftPressed, nextListRoot, scrollIntoViewVH, setInnerText, setStyle, UIRoot } from './utils/im-dom-utils';
+import { deltaTimeSeconds, disableIm, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, enableIm, getCurrentRoot, getKeys, getMouse, imBeginDiv, imBeginEl, imBeginList, imBeginMemo, imEnd, imEndList, imEndMemo, imInit, imPreventScrollEventPropagation, imRef, imSb, imSetVal, imState, imStateInline, imTrackSize, imVal, isKeyPressed, isShiftHeld, nextListRoot, scrollIntoViewVH, setInnerText, setStyle, UIRoot } from './utils/im-dom-utils';
 import { clamp, gridSnap, inverseLerp, lerp, max, min } from './utils/math-utils';
 import { getSliceValue } from './utils/matrix-math';
 
@@ -860,7 +860,7 @@ function renderImageOutput(image: ProgramImageOutput) {
 
 function imPlotZoomingAndPanning(plot: PlotState, width: number, height: number, dpi: number) {
     const isMaximized = plot === currentMaximizedItem;
-    const canZoom = elementHasMouseHover() && (isShiftPressed() || isMaximized);
+    const canZoom = elementHasMouseHover() && (isShiftHeld() || isMaximized);
     plot.canZoom = canZoom;
 
     if (imInit()) {
@@ -1318,13 +1318,8 @@ function imMaximizeItemButton(item: object) {
     imBeginButton(isMaximized); {
         imTextSpan(isMaximized ? "minimize" : "maximize");
 
-        const keys = getKeys();
-
         if (isMaximized) {
-            if (
-                keys.escPressed ||
-                (elementHasMouseClick())
-            ) {
+            if (isKeyPressed("Escape") || (elementHasMouseClick())) {
                 currentMaximizedItem = null;
             }
         } else {
@@ -1376,7 +1371,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
 
                     imPlotZoomingAndPanning(plotState, width, height, dpi);
 
-                    if (elementHasMouseHover() && (mouse.scrollY !== 0 && !plotState.canZoom)) {
+                    if (elementHasMouseHover() && (mouse.scrollWheel !== 0 && !plotState.canZoom)) {
                         shiftScrollToZoomVal.val = 1;
                     }
 

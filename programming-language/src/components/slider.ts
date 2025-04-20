@@ -115,7 +115,6 @@ export function renderSliderBody(
                 s.value = Math.round(s.value / s.step) * s.step;
             }
             s.value = clamp(s.value, s.start, s.end);
-
         }
 
     } imEnd();

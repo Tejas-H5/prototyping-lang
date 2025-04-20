@@ -2,44 +2,122 @@ import { renderApp, } from './app.ts';
 import { imTextSpan } from './layout.ts';
 import "./styling.ts";
 import { cssVars } from './styling.ts';
-import { imBeginFrame, deltaTimeSeconds, elementHasMouseClick, imEndFrame, imBeginDiv, imBeginMemo, imBeginSpan, imEnd, imEndMemo, imInit, initializeDomRootAnimiationLoop, initializeDomUtils, initializeImEvents, setInnerText, setStyle } from './utils/im-dom-utils.ts';
+import { imBeginFrame, deltaTimeSeconds, elementHasMouseClick, imEndFrame, imBeginDiv, imBeginMemo, imBeginSpan, imEnd, imEndMemo, imInit, initializeDomRootAnimiationLoop, initializeDomUtils, initializeImEvents, setInnerText, setStyle, imState } from './utils/im-dom-utils.ts';
 
 initializeDomUtils();
 initializeImEvents();
 
-let t = 0;
-let frames = 0;
-let frameTime = 0;
-let screenHz = 0;
+type FpsCounterState = {
+    t: number;
+    t0: number;
+    frames: number;
+    frameTime: number;
+    screenHz: number;
 
-let timeSpentRendering = 0;
-let timeSpentRenderingPerFrame = 0;
-let renders = 0;
-let renderHz = 0;
+    timeSpentRendering: number;
+    timeSpentRenderingPerFrame: number;
+    renders: number;
+    renderHz: number;
 
-// Try to infer the 'baseline' frequency, so we know when we're lagging.
-let baselineFrameMs = 100;
-let baselineFrameMsFreq = 0;
-let nextBaseline = 100;
-let nextFreq = 0;
+    // Try to infer the 'baseline' frequency, so we know when we're lagging.
+    baselineFrameMs: number;
+    baselineFrameMsFreq: number;
+    baselineLocked: boolean;
+    nextBaseline: number;
+    nextFreq: number;
 
-function renderRoot() {
-    const t0 = performance.now();
+    framesMsRounded: number;
+    renderMsRounded: number;
+}
 
+function newFpsCounterState(): FpsCounterState {
+    return {
+        t: 0,
+        t0: 0,
+        frames: 0,
+        frameTime: 0,
+        screenHz: 0,
+
+        timeSpentRendering: 0,
+        timeSpentRenderingPerFrame: 0,
+        renders: 0,
+        renderHz: 0,
+
+        // Try to infer the 'baseline' frequency, so we know when we're lagging.
+        baselineFrameMs: 100,
+        baselineFrameMsFreq: 0,
+        baselineLocked: false,
+        nextBaseline: 100,
+        nextFreq: 0,
+
+        framesMsRounded: 0,
+        renderMsRounded: 0,
+    };
+}
+
+function startPerfTimer(fps: FpsCounterState) {
+    fps.t0 = performance.now();
     const dt = deltaTimeSeconds();
-    t += dt;
-    if (t > 1) {
-        frameTime = t / frames;
-        screenHz = Math.round(frames / t);
-        t = 0;
-        frames = 1;
+    fps.t += dt;
+    if (fps.t > 1) {
+        fps.frameTime = fps.t / fps.frames;
+        fps.screenHz = Math.round(fps.frames / fps.t);
+        fps.t = 0;
+        fps.frames = 1;
     } else {
-        frames++;
+        fps.frames++;
     }
 
+    fps.framesMsRounded = Math.round(1000 * fps.frameTime);
+    fps.renderMsRounded = Math.round(1000 * fps.timeSpentRenderingPerFrame);
 
-    imBeginFrame();
+    // Compute our baseline framerate based on the frames we see.
+    // Lock it down once we've seen the same framerate for long enough.
+    fps.baselineLocked = fps.baselineFrameMsFreq > 240
+    if (!fps.baselineLocked) {
+        if (fps.framesMsRounded === fps.nextBaseline) {
+            if (fps.nextFreq < Number.MAX_SAFE_INTEGER) {
+                fps.nextFreq++;
+            }
+        } else if (fps.framesMsRounded === fps.baselineFrameMs) {
+            if (fps.baselineFrameMsFreq < Number.MAX_SAFE_INTEGER) {
+                fps.baselineFrameMsFreq++;
+            }
+        } else {
+            fps.nextBaseline = fps.framesMsRounded;
+            fps.nextFreq = 1;
+        }
 
+        if (fps.nextFreq > fps.baselineFrameMsFreq) {
+            fps.baselineFrameMs = fps.nextBaseline;
+            fps.baselineFrameMsFreq = fps.nextFreq;
+            fps.nextBaseline = 100;
+            fps.nextFreq = 0;
+        }
+    }
+}
+
+function stopPerfTimer(fps: FpsCounterState) {
+    // render-start     -> Timer start
+    //      rendering code()
+    // render-end       -> timer stop
+    // --- wait for next animation frame ---
+    // this timer intentionally skips all of the time here.
+    // we want to know what our remaining performance budget is, basically
+    // ---
+    // repeat
+    fps.timeSpentRendering += (performance.now() - fps.t0);
+    if (fps.renders > 100) {
+        fps.timeSpentRenderingPerFrame = (fps.timeSpentRendering / 1000) / fps.renders;
+        fps.renderHz = Math.round(fps.renders / (fps.timeSpentRendering / 1000));
+        fps.timeSpentRendering = 0;
+        fps.renders = 1;
+    } else {
+        fps.renders++;
+    }
+}
+
+function imPerfTimerOutput(fps: FpsCounterState) {
     imBeginDiv(); {
         if (imInit()) {
             setStyle("position", "absolute");
@@ -57,72 +135,36 @@ function renderRoot() {
         }
 
         // r.text(screenHz + "hz screen, " + renderHz + "hz code");
-        const frameMs = Math.round(1000 * frameTime);
-        const renderMs = Math.round(1000 * timeSpentRenderingPerFrame);
 
-        // Compute our baseline framerate based on the frames we see.
-        // Lock it down once we've seen the same framerate for long enough.
-        const baselineLocked = baselineFrameMsFreq > 240
-        if (!baselineLocked) {
-            if (frameMs === nextBaseline) {
-                if (nextFreq < Number.MAX_SAFE_INTEGER) {
-                    nextFreq++;
-                }
-            } else if (frameMs === baselineFrameMs) {
-                if (baselineFrameMsFreq < Number.MAX_SAFE_INTEGER) {
-                    baselineFrameMsFreq++;
-                }
-            } else {
-                nextBaseline = frameMs;
-                nextFreq = 1;
-            }
+        imTextSpan(fps.baselineLocked ? (fps.baselineFrameMs + "ms baseline, ") : "computing baseline...");
 
-            if (nextFreq > baselineFrameMsFreq) {
-                baselineFrameMs = nextBaseline;
-                baselineFrameMsFreq = nextFreq;
-                nextBaseline = 100;
-                nextFreq = 0;
-            }
-        }
-
-        imTextSpan(baselineLocked ? (baselineFrameMs + "ms baseline, ") : "computing baseline...");
-
-        imTextSpan(frameMs + "ms frame, ");
+        imTextSpan(fps.framesMsRounded + "ms frame, ");
 
         imBeginSpan(); {
-            if (imBeginMemo().val(renderMs).changed()) {
-                setStyle("color", renderMs / baselineFrameMs > 0.5 ? "red" : "");
+            if (imBeginMemo().val(fps.renderMsRounded).changed()) {
+                setStyle("color", fps.renderMsRounded / fps.baselineFrameMs > 0.5 ? "red" : "");
             } imEndMemo();
-            setInnerText(renderMs + "ms render");
+            setInnerText(fps.renderMsRounded + "ms render");
         } imEnd();
         // setStyle("transform", "rotate(" + angle + "deg)");
 
         if (elementHasMouseClick()) {
-            baselineFrameMsFreq = 0;
+            fps.baselineFrameMsFreq = 0;
         }
 
     } imEnd();
+}
 
+function renderRoot() {
+    imBeginFrame();
+
+    const fps = imState(newFpsCounterState);
+    startPerfTimer(fps);
+    imPerfTimerOutput(fps);
     
     renderApp();
 
-    // render-start     -> Timer start
-    //      rendering code()
-    // render-end       -> timer stop
-    // --- wait for next animation frame ---
-    // this timer intentionally skips all of the time here.
-    // we want to know what our remaining performance budget is, basically
-    // ---
-    // repeat
-    timeSpentRendering += (performance.now() - t0);
-    if (renders > 100) {
-        timeSpentRenderingPerFrame = (timeSpentRendering / 1000) / renders;
-        renderHz = Math.round(renders / (timeSpentRendering / 1000));
-        timeSpentRendering = 0;
-        renders = 1;
-    } else {
-        renders++;
-    }
+    stopPerfTimer(fps);
 
     imEndFrame();
 }

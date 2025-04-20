@@ -9,17 +9,21 @@ import {
     FLEX,
     GAP,
     H100,
+    imBeginButton,
     imBeginLayout,
+    imBeginSpace,
     imTextSpan,
+    JUSTIFY_CENTER,
     NORMAL,
     ROW,
-    setInset
+    setInset,
+    W100
 } from './layout';
 import { GlobalContext, newGlobalContext, rerun, saveState } from './state';
 import "./styling";
 import { cnApp } from './styling';
 import { assert } from './utils/assert';
-import { abortListAndRewindUiStack, cn, imBeginDiv, imBeginList, imBeginMemo, imEnd, imEndList, imEndMemo, imInit, imRef, imState, nextListRoot, setClass, setStyle } from './utils/im-dom-utils';
+import { abortListAndRewindUiStack, cn, elementHasMouseClick, imBeginDiv, imBeginList, imBeginMemo, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imRef, imState, nextListRoot, setClass, setStyle } from './utils/im-dom-utils';
 
 let saveTimeout = 0;
 function saveStateDebounced(ctx: GlobalContext) {
@@ -94,8 +98,19 @@ export function renderApp() {
             } else {
                 nextListRoot();
 
-                imBeginDiv(); {
-                    imTextSpan("An error occured: " + error.val.message);
+                imBeginLayout(COL | ALIGN_CENTER | JUSTIFY_CENTER | W100 | H100); {
+                    imBeginLayout(); {
+                        imTextSpan("An error occured: " + error.val.message);
+                    } imEnd();
+                    imBeginSpace(NaN, 10); imEnd();
+                    imBeginLayout(); {
+                        imBeginButton(); {
+                            imTextSpan("Dismiss [Warning - may lead to data corruption]");
+                            if (elementHasMouseClick()) {
+                                error.val = null;
+                            }
+                        } imEnd();
+                    } imEnd();
                 } imEnd();
             }
         } catch (e) {
