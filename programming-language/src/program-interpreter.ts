@@ -22,7 +22,7 @@ import {
 } from "./program-parser";
 import { clamp, inverseLerp } from "./utils/math-utils";
 import { getNextRng, newRandomNumberGenerator, RandomNumberGenerator, setRngSeed } from "./utils/random";
-import { deferClickEventToParent } from "./utils/im-dom-utils";
+import { CssColor, newColor, newColorFromHexOrUndefined } from "./utils/colour";
 
 export const T_RESULT_NUMBER = 1;
 export const T_RESULT_STRING = 2;
@@ -1457,6 +1457,14 @@ export function getBuiltinFunctionsMap() {
         assert(val?.t === T_RESULT_NUMBER);
         return newNumberResult(Math.log2(val.val));
     })
+    newBuiltinFunction("clamp", [
+        newArg("val", [T_RESULT_NUMBER]), newArg("min", [T_RESULT_NUMBER]), newArg("max", [T_RESULT_NUMBER])
+    ], (_result, _step, val, a, b) => {
+        assert(val?.t === T_RESULT_NUMBER);
+        assert(a?.t === T_RESULT_NUMBER);
+        assert(b?.t === T_RESULT_NUMBER);
+        return newNumberResult(clamp(val.val, a.val, b.val));
+    })
     newBuiltinFunction("max", [newArg("a", [T_RESULT_NUMBER]), newArg("b", [T_RESULT_NUMBER])], (_result, _step, a, b) => {
         assert(a?.t === T_RESULT_NUMBER);
         assert(b?.t === T_RESULT_NUMBER);
@@ -2679,7 +2687,7 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
         } break;
         case EX_STEP_JUMP: {
             assert(step.n >= 0);
-            assert(step.n < steps.length);
+            assert(step.n <= steps.length);
             nextCallI = step.n;
         } break; 
         case EX_STEP_JUMP_IF_FALSE: {

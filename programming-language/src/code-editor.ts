@@ -2,6 +2,7 @@ import { defaultTextEditorKeyboardEventHandler, getLastNewlinePos, getNextNewlin
 import { imProgramOutputs } from './code-output';
 import { renderSliderBody } from './components/slider';
 import {
+    ABSOLUTE,
     ALIGN_CENTER,
     CODE,
     COL,
@@ -14,6 +15,7 @@ import {
     imVerticalBar,
     JUSTIFY_CENTER,
     NORMAL,
+    OPAQUE,
     PADDED,
     PRE,
     PREWRAP,
@@ -42,10 +44,31 @@ import {
 import { GlobalContext, rerun } from './state';
 import "./styling";
 import { cnApp } from './styling';
-import { cn, getCurrentRoot, imBeginList, imBeginMemo, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imRef, imSb, imState, imStateInline, nextListRoot, setAttributes, setClass, setInnerText, setStyle } from './utils/im-dom-utils';
+import {
+    disableIm,
+    enableIm,
+    getCurrentRoot,
+    imArray,
+    imBeginList,
+    imBeginSpan,
+    imEnd,
+    imEndList,
+    imInit,
+    imMemo,
+    imMemoArray,
+    imRef,
+    imState,
+    imStateInline,
+    nextListRoot,
+    setAttributes,
+    setClass,
+    setInnerText,
+    setStyle
+} from './utils/im-dom-utils';
 import { max } from './utils/math-utils';
 import { isWhitespace } from './utils/text-utils';
 import { assert } from './utils/assert';
+import { cn } from './utils/cn';
 
 
 const UNANIMOUSLY_DECIDED_TAB_SIZE = 4;
@@ -123,7 +146,7 @@ function imAutocomplete(lastIdentifier: string) {
     // right now you can't interact with it - it is more so that I actually remember all the crap I've put into here
 
     const results = imStateInline<BuiltinFunction[]>(() => []);
-    if (imBeginMemo().val(lastIdentifier).changed()) {
+    if (imMemo(lastIdentifier)) {
         results.length = 0;
         if (lastIdentifier.length > 0) {
             const funcs = getBuiltinFunctionsMap();
@@ -134,7 +157,7 @@ function imAutocomplete(lastIdentifier: string) {
                 results.push(v);
             }
         }
-    } imEndMemo();
+    }
 
     imBeginList();
     if (nextListRoot() && results.length > 0) {
@@ -269,22 +292,22 @@ function imSimpleTextInputBody(s: SimpleTextEditorState) {
                         if (isCursor) {
                             s.editorState._cursorSpan = textSpan.root;
                         }
-                        if (imBeginMemo()
-                            .val(isSelected)
-                            .val(isCursor)
-                            .changed()
-                        ) {
-                            setClass(cnApp.inverted, isSelected || isCursor);
-                        } imEndMemo();
 
-                        if (imBeginMemo().val(ws).changed()) {
+                        const isSelectedChanged = imMemo(isSelected);
+                        const isCursorChanged = imMemo(isCursor);
+                        if (isSelectedChanged || isCursorChanged) {
+                            setClass(cnApp.inverted, isSelected || isCursor);
+                        } 
+
+                        const wsChanged = imMemo(ws);
+                        if (wsChanged) {
                             let color = "";
                             if (ws) {
                                 color = "#0000";
                             }
 
                             setStyle("color", color);
-                        } imEndMemo();
+                        } 
                     } imEnd();
                 }
                 imEndList();
@@ -593,10 +616,7 @@ export function imAppCodeEditor(ctx: GlobalContext) {
         editorState.shouldFocusTextArea = true;
     }
 
-    if (imBeginMemo()
-        .val(finderState.editorState.modifiedAt)
-        .changed()
-    ) {
+    if (imMemo(finderState.editorState.modifiedAt)) {
         let numResults = 0;
         const queryBuffer = finderState.editorState.buffer;
         if (queryBuffer && queryBuffer.length > 0) {
@@ -632,7 +652,7 @@ export function imAppCodeEditor(ctx: GlobalContext) {
             editorState.cursor = s.allFindResults[minIdx].start;
             editorState.isAutoScrolling = true;
         }
-    } imEndMemo();
+    } 
 
     imBeginScrollContainer(H100 | CODE | COL |  RELATIVE, true).root; {
         if (imInit()) {
@@ -642,9 +662,9 @@ export function imAppCodeEditor(ctx: GlobalContext) {
             setStyle("cursor", "text");
         }
 
-        if (imBeginMemo().val(ctx.lastLoaded).changed()) {
+        if (imMemo(ctx.lastLoaded)) {
             loadText(editorState, state.text);
-        } imEndMemo();
+        } 
 
         ctx.astStart = 1;
         ctx.astEnd = 5;
@@ -653,13 +673,13 @@ export function imAppCodeEditor(ctx: GlobalContext) {
         ctx.textCursorIdx = editorState.cursor;
 
         const astTraverserRef = imRef<ResumeableAstTraverser | null>();
-        if (imBeginMemo().val(lastParseResult).changed()) {
+        if (imMemo(lastParseResult)) {
             if (lastParseResult) {
                 astTraverserRef.val = newResumeableAstTraverser(lastParseResult);
             } else {
                 astTraverserRef.val = null;
             }
-        } imEndMemo();
+        }
 
         if (astTraverserRef.val && lastParseResult) {
             resetAstTraversal(astTraverserRef.val, lastParseResult);
@@ -675,22 +695,15 @@ export function imAppCodeEditor(ctx: GlobalContext) {
 
                     imBeginLayout(COL); {
                         imBeginLayout(ROW | FLEX); {
-                            const lineSb = imSb();
-                            if (imBeginMemo()
-                                .val(lineIdx)
-                                .val(s.lastMaxLine)
-                                .changed()
-                            ) {
-                                lineSb.clear();
+                            const lineText = imRef<string>();
+                            
+                            if (imMemoArray(lineIdx, s.lastMaxLine) || lineText.val === null) {
                                 const numDigits = Math.ceil(Math.log10(s.lastMaxLine + 1));
-                                lineSb
-                                    .s(lPad("" + lineIdx, numDigits))
-                                    .s(" ");
-                            } imEndMemo();
+                                lineText.val = lPad("" + lineIdx, numDigits) + " ";
+                            }
 
-                            const lineStr = lineSb.toString();
                             imBeginLayout(ROW | ALIGN_CENTER | JUSTIFY_CENTER); {
-                                setInnerText(lineStr);
+                                setInnerText(lineText.val);
                             } imEnd();
 
                             imVerticalBar();
@@ -738,12 +751,11 @@ export function imAppCodeEditor(ctx: GlobalContext) {
                                                 editorState._cursorSpan = textSpan.root;
                                                 ctx.textCursorLine = lineIdx;
                                             }
-                                            if (imBeginMemo()
-                                                .val(isSelected)
-                                                .val(isCursor)
-                                                .val(isFindResult)
-                                                .changed()
-                                            ) {
+
+                                            const isSelectedChanged = imMemo(isSelected);
+                                            const isCursorChanged = imMemo(isCursor);
+                                            const isFindResultChanged = imMemo(isFindResult);
+                                            if (isSelectedChanged || isCursorChanged || isFindResultChanged) {
                                                 let bgCol = "";
                                                 if (!setClass(cnApp.inverted, isSelected || isCursor)) {
                                                     if (isFindResult) {
@@ -751,13 +763,12 @@ export function imAppCodeEditor(ctx: GlobalContext) {
                                                     }
                                                 }
                                                 setStyle("backgroundColor", bgCol);
-                                            } imEndMemo();
+                                            }
 
-                                            if (imBeginMemo()
-                                                .val(ws)
-                                                .val(astNode)
-                                                .changed()
-                                            ) {
+                                            const wsChanged = imMemo(ws);
+                                            const astNodeChanged = imMemo(astNode);
+                                            disableIm();
+                                            if (wsChanged || astNodeChanged) {
                                                 let italic = false;
                                                 let bold = false;
                                                 let color = "";
@@ -793,7 +804,8 @@ export function imAppCodeEditor(ctx: GlobalContext) {
                                                 setStyle("color", color);
                                                 setStyle("fontStyle", italic ? "italic" : "");
                                                 setStyle("fontWeight", bold ? "bold" : "");
-                                            } imEndMemo();
+                                            } 
+                                            enableIm();
                                         } imEnd();
 
                                         if (actualC === "\n") {
@@ -874,10 +886,10 @@ export function imAppCodeEditor(ctx: GlobalContext) {
                                                     setStyle("height", "1em");
                                                 }
                                                 const s = renderSliderBody(ui.start, ui.end, ui.step, ui.value);
-                                                if (imBeginMemo().val(s.value).changed()) {
+                                                if (imMemo(s.value)) {
                                                     ui.value = s.value;
                                                     rerun(ctx);
-                                                } imEndMemo();
+                                                }
                                             } imEnd();
                                         } break;
                                         default: {
@@ -924,12 +936,10 @@ export function imAppCodeEditor(ctx: GlobalContext) {
         } imEndTextEditor(editorState);
 
 
-        if (imBeginMemo()
-            .val(editorState.modifiedAt)
-            .changed()
-        ) {
+        const modifiedAtChanged = imMemo(editorState.modifiedAt);
+        if (modifiedAtChanged) {
             state.text = editorState.buffer.join("");
-        } imEndMemo();
+        } 
 
         // Empty space below the lines should just handle click events for the end of the line
         imBeginLayout(FLEX); {
@@ -938,8 +948,16 @@ export function imAppCodeEditor(ctx: GlobalContext) {
 
         imBeginList();
         if (nextListRoot() && s.isFinding) {
-            imBeginLayout(ROW | PRE); {
-                imTextSpan("Find: ");
+            imBeginLayout(ROW | PRE | ABSOLUTE | OPAQUE); {
+                if (imInit()) {
+                    setAttributes({
+                        style: "bottom: 0; left: 0; right: 0"
+                    });
+                }
+
+                imBeginLayout(); {
+                    imTextSpan("Find: ");
+                } imEnd();
 
                 imBeginSimpleTextInput(finderState)
                 imSimpleTextInputBody(finderState);

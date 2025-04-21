@@ -2,10 +2,22 @@ import { renderApp, } from './app.ts';
 import { imTextSpan } from './layout.ts';
 import "./styling.ts";
 import { cssVars } from './styling.ts';
-import { imBeginFrame, deltaTimeSeconds, elementHasMouseClick, imEndFrame, imBeginDiv, imBeginMemo, imBeginSpan, imEnd, imEndMemo, imInit, initializeDomRootAnimiationLoop, initializeDomUtils, initializeImEvents, setInnerText, setStyle, imState } from './utils/im-dom-utils.ts';
-
-initializeDomUtils();
-initializeImEvents();
+import {
+    deltaTimeSeconds,
+    elementHasMouseClick,
+    imBeginDiv,
+    imBeginSpan,
+    imEnd,
+    imInit,
+    initializeDomRootAnimiationLoop,
+    initializeImEvents,
+    setInnerText,
+    setStyle,
+    imState,
+    imMemo,
+    getNumImStateEntriesRendered as getNumItemsRendered
+} from './utils/im-dom-utils.ts';
+import { initCnStyles } from "src/utils/cn";
 
 type FpsCounterState = {
     t: number;
@@ -59,14 +71,8 @@ function startPerfTimer(fps: FpsCounterState) {
     fps.t0 = performance.now();
     const dt = deltaTimeSeconds();
     fps.t += dt;
-    if (fps.t > 1) {
-        fps.frameTime = fps.t / fps.frames;
-        fps.screenHz = Math.round(fps.frames / fps.t);
-        fps.t = 0;
-        fps.frames = 1;
-    } else {
-        fps.frames++;
-    }
+    fps.frames++;
+
 
     fps.framesMsRounded = Math.round(1000 * fps.frameTime);
     fps.renderMsRounded = Math.round(1000 * fps.timeSpentRenderingPerFrame);
@@ -106,15 +112,21 @@ function stopPerfTimer(fps: FpsCounterState) {
     // we want to know what our remaining performance budget is, basically
     // ---
     // repeat
+
     fps.timeSpentRendering += (performance.now() - fps.t0);
-    if (fps.renders > 100) {
+    fps.renders++;
+
+    if (fps.t > 1) {
+        fps.frameTime = fps.t / fps.frames;
+        fps.screenHz = Math.round(fps.frames / fps.t);
+        fps.t = 0;
+        fps.frames = 0;
+
         fps.timeSpentRenderingPerFrame = (fps.timeSpentRendering / 1000) / fps.renders;
         fps.renderHz = Math.round(fps.renders / (fps.timeSpentRendering / 1000));
         fps.timeSpentRendering = 0;
-        fps.renders = 1;
-    } else {
-        fps.renders++;
-    }
+        fps.renders = 0;
+    } 
 }
 
 function imPerfTimerOutput(fps: FpsCounterState) {
@@ -136,15 +148,22 @@ function imPerfTimerOutput(fps: FpsCounterState) {
 
         // r.text(screenHz + "hz screen, " + renderHz + "hz code");
 
-        imTextSpan(fps.baselineLocked ? (fps.baselineFrameMs + "ms baseline, ") : "computing baseline...");
+        imBeginDiv(); {
+            imTextSpan(fps.baselineLocked ? (fps.baselineFrameMs + "ms baseline, ") : "computing baseline...");
+        } imEnd();
 
-        imTextSpan(fps.framesMsRounded + "ms frame, ");
+        imBeginDiv(); {
+            imTextSpan(fps.framesMsRounded + "ms frame, ");
+        } imEnd();
 
-        imBeginSpan(); {
-            if (imBeginMemo().val(fps.renderMsRounded).changed()) {
-                setStyle("color", fps.renderMsRounded / fps.baselineFrameMs > 0.5 ? "red" : "");
-            } imEndMemo();
-            setInnerText(fps.renderMsRounded + "ms render");
+        imBeginDiv(); {
+            imBeginSpan(); {
+                const fpsChanged = imMemo(fps.renderMsRounded);
+                if (fpsChanged) {
+                    setStyle("color", fps.renderMsRounded / fps.baselineFrameMs > 0.5 ? "red" : "");
+                }
+                setInnerText(fps.renderMsRounded + "ms render");
+            } imEnd();
         } imEnd();
         // setStyle("transform", "rotate(" + angle + "deg)");
 
@@ -152,22 +171,23 @@ function imPerfTimerOutput(fps: FpsCounterState) {
             fps.baselineFrameMsFreq = 0;
         }
 
+        imBeginDiv(); {
+            imTextSpan(getNumItemsRendered() + " IM entries");
+        } imEnd();
+
     } imEnd();
 }
 
 function renderRoot() {
-    imBeginFrame();
-
     const fps = imState(newFpsCounterState);
     startPerfTimer(fps);
     imPerfTimerOutput(fps);
-    
+
     renderApp();
 
     stopPerfTimer(fps);
-
-    imEndFrame();
 }
 
-
+initCnStyles();
+initializeImEvents();
 initializeDomRootAnimiationLoop(renderRoot);

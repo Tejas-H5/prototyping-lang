@@ -1,13 +1,14 @@
 import { cssVars } from "src/styling";
+import { cn, newCssBuilder } from "src/utils/cn";
 import { execCommand } from "src/utils/depracated-dom-api-wrappers";
-import { cn, imBeginDiv, imBeginEl, imEnd, imState, imInit, newCssBuilder, newDomElement, Ref, setAttributes, setClass, setInputValue, imBeginSpan, setInnerText, imBeginList, nextListRoot, isEditingTextSomewhereInDocument, imEndList, imBeginMemo, imEndMemo, } from "src/utils/im-dom-utils";
+import { imBeginDiv, imBeginEl, imEnd, imState, imInit, Ref, setAttributes, setClass, setInputValue, imBeginSpan, setInnerText, imBeginList, nextListRoot, isEditingTextSomewhereInDocument, imEndList, } from "src/utils/im-dom-utils";
 import { getLineBeforePos } from "src/utils/text-utils";
 
 const CSSVARS_FOCUS = cssVars.bg;
 const CSSVARS_FG = cssVars.fg;
 
 export function newTextArea(initFn?: (el: HTMLTextAreaElement) => void): HTMLTextAreaElement {
-    const textArea = newDomElement("textarea");
+    const textArea = document.createElement("textarea");
 
     initFn?.(textArea);
 
@@ -21,7 +22,11 @@ cssb.s(`
 textarea.${cnEditableTextArea} { 
     white-space: pre-wrap; padding: 5px; 
     caret-color: ${CSSVARS_FG};
-};
+    color: transparent;
+}
+textarea.${cnEditableTextArea}:focus { 
+    color: ${CSSVARS_FG};
+}
 textarea.${cnEditableTextArea}:focus { background-color: ${CSSVARS_FOCUS}; }
 `);
 
@@ -30,7 +35,7 @@ export type EditableTextAreaArgs = {
     isEditing: boolean;
     isOneLine?: boolean;
     onInput(text: string, textArea: HTMLTextAreaElement): void;
-    onInputKeyDown(e: KeyboardEvent, textArea: HTMLTextAreaElement): void;
+    onInputKeyDown?(e: KeyboardEvent, textArea: HTMLTextAreaElement): void;
     config: EditableTextAreaConfig;
     textAreaRef?: Ref<HTMLTextAreaElement>;
 };
@@ -50,7 +55,7 @@ function newEditableTextAreaState() {
 
 // NOTE: this text area has a tonne of minor things wrong with it. we should fix them at some point.
 //   - When I have a lot of empty newlines, and then click off, the empty lines go away 'as needed' 
-export function beginTextArea({
+export function imEditableTextArea({
     text,
     isEditing,
     isOneLine,
@@ -66,51 +71,14 @@ export function beginTextArea({
 
     const root = imBeginDiv(); {
         imInit() && setAttributes({
-            class: [cn.relative],
+            class: [cn.flex1, cn.row, cn.h100, cn.overflowYAuto] 
         });
-
-        imBeginList(); 
-        if (nextListRoot() && isEditing) {
-            const textArea = imBeginEl(newTextArea).root; {
-                if (textAreaRef) {
-                    textAreaRef.val = textArea;
-                }
-
-                imInit() && setAttributes({
-                    class: [cnEditableTextArea, cn.allUnset, cn.absolute, cn.preWrap, cn.w100, cn.h100],
-                    style: "background-color: transparent; color: transparent; overflow-y: hidden; padding: 0px",
-                });
-
-                if (!wasEditing) {
-                    textArea.focus({ preventScroll: true });
-                }
-
-                if (state.lastText !== text || state.lastIsEditing !== isEditing) {
-                    state.lastText = text;
-                    // for some reason, we need to render this thing again when we start editing - perhaps
-                    // setting the input value doesn't work if it isn't visible...
-                    state.lastIsEditing = isEditing;
-                    setInputValue(textArea, text);
-                }
-
-                if (imInit()) {
-                    textArea.addEventListener("input", () => {
-                        onInput(textArea.value, textArea);
-                    });
-                    textArea.addEventListener("keydown", (e) => {
-                        if (!handleTextAreaKeyboardInput(e, textArea, config)) {
-                            onInputKeyDown(e, textArea);
-                        }
-                    });
-                }
-            } imEnd();
-        } 
-        imEndList();
 
         // This is now always present.
         imBeginDiv(); {
             imInit() && setAttributes({
-                class: [cn.handleLongWords]
+                class: [cn.handleLongWords, cn.relative, cn.w100, cn.hFitContent],
+                style: "min-height: 100%"
             });
 
             setClass(cn.preWrap, !isOneLine)
@@ -121,9 +89,7 @@ export function beginTextArea({
             // This is a facade that gives the text area the illusion of auto-sizing!
             // but it only works if the text doesn't end in whitespace....
             imBeginSpan(); {
-                if (imBeginMemo().val(text).changed()) {
-                    setInnerText(text);
-                } imEndMemo();
+                setInnerText(text);
             } imEnd();
 
             // This full-stop at the end of the text is what prevents the text-area from collapsing in on itself
@@ -133,12 +99,50 @@ export function beginTextArea({
                     setInnerText(".");
                 }
             } imEnd();
+
+            imBeginList();
+            if (nextListRoot() && isEditing) {
+                const textArea = imBeginEl(newTextArea).root; {
+                    if (textAreaRef) {
+                        textAreaRef.val = textArea;
+                    }
+
+                    imInit() && setAttributes({
+                        class: [cnEditableTextArea, cn.allUnset, cn.absoluteFill, cn.preWrap, cn.w100, cn.h100],
+                        style: "background-color: transparent; color: transparent; overflow-y: hidden; padding: 0px",
+                    });
+
+                    if (!wasEditing) {
+                        textArea.focus({ preventScroll: true });
+                    }
+
+                    if (state.lastText !== text || state.lastIsEditing !== isEditing) {
+                        state.lastText = text;
+                        // for some reason, we need to render this thing again when we start editing - perhaps
+                        // setting the input value doesn't work if it isn't visible...
+                        state.lastIsEditing = isEditing;
+                        setInputValue(textArea, text);
+                    }
+
+                    if (imInit()) {
+                        textArea.addEventListener("input", () => {
+                            onInput(textArea.value, textArea);
+                        });
+                        textArea.addEventListener("keydown", (e) => {
+                            if (!handleTextAreaKeyboardInput(e, textArea, config)) {
+                                onInputKeyDown?.(e, textArea);
+                            }
+                        });
+                    }
+                } imEnd();
+            } 
+            imEndList();
         } imEnd();
 
-    }
+    } 
 
+    // user specified end.
     // You can now render your own overlays here.
-    // Don't forget to call end() !
 
     return root;
 }

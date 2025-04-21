@@ -1,5 +1,5 @@
 import { cssVars } from 'src/styling';
-import { deferClickEventToParent, elementHasMouseDown, getCurrentRoot, getMouse, imBeginDiv, imBeginList, imBeginMemo, imEnd, imEndList, imEndMemo, imInit, imState, imTrackSize, nextListRoot, setStyle } from 'src/utils/im-dom-utils';
+import { deferClickEventToParent, elementHasMouseDown, getCurrentRoot, getMouse, imBeginDiv, imBeginList, imEnd, imEndList, imInit, imMemo, imMemoObjectVals, imState, imTrackSize, nextListRoot, setStyle } from 'src/utils/im-dom-utils';
 import { clamp, inverseLerp, lerp } from 'src/utils/math-utils';
 
 export function newSliderState() {
@@ -41,9 +41,10 @@ export function renderSliderBody(
         }
         s.step = step;
 
-        if (imBeginMemo().val(value).changed()) {
+        const valueChanged = imMemo(value);
+        if (valueChanged) {
             s.value = value;
-        } imEndMemo();
+        } 
 
         s.value = clamp(s.value, s.start, s.end);
 
@@ -92,11 +93,12 @@ export function renderSliderBody(
                 setStyle("cursor", "ew-resize");
             }
 
-            if (imBeginMemo().objectVals(s).changed()) {
+            const sChanged = imMemoObjectVals(s);
+            if (sChanged) {
                 const t = inverseLerp(s.start, s.end, s.value);
                 const sliderPos = lerp(0, rect.width - sliderHandleSize, t);
                 setStyle("left", sliderPos + "px");
-            } imEndMemo();
+            }
 
             deferClickEventToParent();
         } imEnd();

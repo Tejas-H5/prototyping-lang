@@ -71,3 +71,12 @@ Lots of ideas here.
 However, if multiple instances of the same component are being rendered, this won't work without every user component needing to 
 also define line = lineNum, col = colNum in it's signature, which is not ideal. 
 
+
+## How to run
+
+1. Install NodeJS
+2. run `npm install` in the `programming-language` directory
+3. run `npm run dev` to start the vite dev server
+4. run `npm build` to create an offline build
+
+

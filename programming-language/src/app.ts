@@ -1,9 +1,11 @@
+import { cn } from "src/utils/cn";
 import { imAppCodeEditor } from './code-editor';
 import { renderAppCodeOutput } from './code-output';
 import { renderDebugger } from './debugger';
 import {
     ABSOLUTE,
     ALIGN_CENTER,
+    imBeginHeading,
     COL,
     FIXED,
     FLEX,
@@ -23,10 +25,14 @@ import { GlobalContext, newGlobalContext, rerun, saveState } from './state';
 import "./styling";
 import { cnApp } from './styling';
 import { assert } from './utils/assert';
-import { abortListAndRewindUiStack, cn, elementHasMouseClick, imBeginDiv, imBeginList, imBeginMemo, imBeginSpan, imEnd, imEndList, imEndMemo, imInit, imRef, imState, nextListRoot, setClass, setStyle } from './utils/im-dom-utils';
+import { abortListAndRewindUiStack, elementHasMouseClick, imBeginList, imEnd, imEndList, imInit, imMap, imMemo, imRef, imState, nextListRoot, setClass, setStyle } from './utils/im-dom-utils';
+import { imEditableTextArea } from "./components/text-area";
 
 let saveTimeout = 0;
+let savingDisabled = false;
 function saveStateDebounced(ctx: GlobalContext) {
+    if (savingDisabled) return;
+
     clearTimeout(saveTimeout);
     saveTimeout = setTimeout(() => {
         saveState(ctx.state);
@@ -35,7 +41,9 @@ function saveStateDebounced(ctx: GlobalContext) {
 }
 
 export function renderApp() {
-    const error = imRef<any>();
+    const errors = imMap<string, number>();
+    const dismissedRef = imRef();
+    const totalErrorsRef = imRef<number>();
 
     imBeginLayout(FIXED | NORMAL); {
         if (imInit()) {
@@ -45,26 +53,33 @@ export function renderApp() {
 
         const l = imBeginList();
         try {
-            if (nextListRoot() && !error.val) {
+            savingDisabled = false;
+
+            if (nextListRoot() && !dismissedRef.val) {
                 const ctx = imState(newGlobalContext);
 
                 const { state } = ctx;
 
 
-                if (imBeginMemo()
-                    .val(state.text)
-                    .val(state.autoRun)
-                    .changed()
-                ) {
+                const textChanged = imMemo(state.text);
+                const autorunChanged = imMemo(state.autoRun);
+                if (textChanged || autorunChanged) {
                     saveStateDebounced(ctx);
                     if (state.autoRun) {
                         rerun(ctx);
                     }
-                } imEndMemo();
+                } 
 
                 imBeginLayout(ROW | H100); {
                     imBeginLayout(FLEX); {
                         imAppCodeEditor(ctx);
+
+                        // imEditableTextArea({
+                        //     text: ctx.state.text,
+                        //     isEditing: true,
+                        //     onInput: text => ctx.state.text = text,
+                        //     config: {},
+                        // }); imEnd();
                     } imEnd();
 
                     imBeginLayout(FLEX | COL | GAP); {
@@ -96,27 +111,66 @@ export function renderApp() {
                     imTextSpan(saveTimeout ? "Saving..." : "Saved");
                 } imEnd();
             } else {
+                assert(errors.size !== 0);
+
                 nextListRoot();
 
                 imBeginLayout(COL | ALIGN_CENTER | JUSTIFY_CENTER | W100 | H100); {
-                    imBeginLayout(); {
-                        imTextSpan("An error occured: " + error.val.message);
-                    } imEnd();
+                    imBeginList(); {
+                        if (nextListRoot() && errors.size === 1 && errors.values().next().value === 1) {
+                            imBeginHeading(); {
+                                imTextSpan("An error occured");
+                            } imEnd();
+                            imBeginLayout(); {
+                                imTextSpan(errors.keys().next().value!);
+                            } imEnd();
+                        } else {
+                            nextListRoot();
+
+                            imBeginHeading(); {
+                                imTextSpan("The errors just keep occuring !!! Apologies.");
+                            } imEnd();
+
+                            imBeginList();
+                            for (const [err, count] of errors) {
+                                nextListRoot();
+                                imBeginLayout(); {
+                                    imTextSpan(err + " [" + count + "x]");
+                                } imEnd();
+                            } imEndList();
+                        }
+                    } imEndList();
                     imBeginSpace(NaN, 10); imEnd();
                     imBeginLayout(); {
-                        imBeginButton(); {
-                            imTextSpan("Dismiss [Warning - may lead to data corruption]");
-                            if (elementHasMouseClick()) {
-                                error.val = null;
-                            }
-                        } imEnd();
+                        imBeginList();
+                        if (nextListRoot() && totalErrorsRef.val && totalErrorsRef.val < 10) {
+                            imBeginButton(); {
+                                imTextSpan("Dismiss [Warning - may lead to data corruption]");
+                                if (elementHasMouseClick()) {
+                                    dismissedRef.val = false;
+                                }
+                            } imEnd();
+                        } else {
+                            nextListRoot();
+
+                            imTextSpan("This button was a bad idea ...");
+                        }
+                        imEndList();
                     } imEnd();
                 } imEnd();
             }
         } catch (e) {
+            savingDisabled = true;
+
             abortListAndRewindUiStack(l);
-            console.error(e);
-            error.val = e;
+            const msg = `` + e;
+            const existing = errors.get(msg) ?? 0;
+            errors.set(msg, existing + 1);
+
+            if (!totalErrorsRef.val) totalErrorsRef.val = 0;
+            totalErrorsRef.val++;
+
+            dismissedRef.val = true;
         }
         imEndList();
     } imEnd();

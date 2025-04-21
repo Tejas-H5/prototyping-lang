@@ -1,7 +1,6 @@
-import { BuiltinFunction } from "./program-interpreter.ts";
-import "./styling.ts";
 import { cnApp, cssVars } from './styling.ts';
-import { imBeginMemo, cn, deferClickEventToParent, imBeginDiv, imEnd, imEndMemo, imInit, imRef, setClass, setStyle, imBeginSpan, setAttributes, newCssBuilder, imBeginEl } from './utils/im-dom-utils.ts';
+import { cn, newCssBuilder } from './utils/cn.ts';
+import { deferClickEventToParent, imBeginDiv, imEnd, imInit, imRef, setClass, setStyle, imBeginSpan, setAttributes, imBeginEl, imMemo, setInnerText, imMemoArray } from './utils/im-dom-utils.ts';
 
 
 // NOTE: you only get 32 of these. use them wisely.
@@ -127,7 +126,7 @@ export function imTextSpan(text: string, flags: number = 0) {
 
         if (lastText.val !== text) {
             lastText.val = text;
-            root.text(text);
+            setInnerText(text);
         }
     } imEnd();
 
@@ -139,15 +138,12 @@ export const NONE = 9999999;
 export function imBeginAbsoluteLayout(flags: number = 0, top: number, left: number, bottom: number, right: number) {
     const root = imBeginLayout(flags | ABSOLUTE);
 
-    if (imBeginMemo()
-        .val(top).val(left).val(bottom).val(right)
-        .changed()
-    ) {
+    if (imMemoArray(top, bottom, left, right)) {
         setStyle("top", top === NONE ? "" : top + "px");
         setStyle("left", left === NONE ? "" : left + "px");
         setStyle("bottom", bottom === NONE ? "" : bottom + "px");
         setStyle("right", right === NONE ? "" : right + "px");
-    } imEndMemo();
+    } 
 
     return root;
 }
@@ -225,7 +221,7 @@ export function newH3() {
 }
 
 // Don't forget to call end()
-export function beginCodeBlock(indent: number) {
+export function imBeginCodeBlock(indent: number) {
     const root = imBeginLayout(CODE); {
         setStyle("paddingLeft", (4 * indent) + "ch");
     }
@@ -234,7 +230,7 @@ export function beginCodeBlock(indent: number) {
 }
 
 
-export function beginHeading() {
+export function imBeginHeading() {
     const root = imBeginEl(newH3); {
         if (imInit()) {
             setStyle("padding", "10px 0");

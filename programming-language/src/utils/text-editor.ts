@@ -8,7 +8,7 @@
 
 import "src/styling";
 import { copyToClipboard, readFromClipboard } from "src/utils/clipboard";
-import { elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, getMouse, imBeginEl, imEnd, imInit, imOn, isCtrlHeld, isMetaHeld, isShiftHeld, setStyle, UIRoot } from 'src/utils/im-dom-utils';
+import { elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, getKeys, getMouse, imBeginEl, imEnd, imInit, imOn, isCtrlHeld, isMetaHeld, isShiftHeld, setStyle, UIRoot } from 'src/utils/im-dom-utils';
 import { clamp, max, min } from "src/utils/math-utils";
 import { isWhitespace } from "src/utils/text-utils";
 import { assert } from "./assert";
@@ -737,10 +737,18 @@ export function imBeginTextEditor(s: TextEditorState) {
 
     s.isShifting = isShiftHeld();
     s.inCommandMode = isCtrlHeld() || isMetaHeld();
-    s.canKeyboardSelect = s.isShifting;
 
-    if (!s.isShifting) {
-        s.isSelecting = false;
+    const keys = getKeys();
+    for (const k of keys.keysPressed) {
+        if (k === "Shift") {
+            s.canKeyboardSelect = true;
+        }
+    }
+
+    for (const k of keys.keysReleased) {
+        if (k === "Shift") {
+            s.isSelecting = false;
+        }
     }
 
     // using an input to allow hooking into the browser's existing focusing mechanisms.
@@ -784,9 +792,9 @@ export function imBeginTextEditor(s: TextEditorState) {
 
 export function imEndTextEditor(s: TextEditorState) {
     if (s._cursorSpan && s._textAreaElement) {
-        s._textAreaElement.setStyle("top", s._cursorSpan.offsetTop + "px")
-        s._textAreaElement.setStyle("left", s._cursorSpan.offsetLeft + "px")
-        s._textAreaElement.setStyle("height", s._cursorSpan.clientHeight + "px");
+        setStyle("top", s._cursorSpan.offsetTop + "px", s._textAreaElement);
+        setStyle("left", s._cursorSpan.offsetLeft + "px", s._textAreaElement)
+        setStyle("height", s._cursorSpan.clientHeight + "px", s._textAreaElement);
     }
 
     defaultTextEditorKeyboardEventHandler(s);
