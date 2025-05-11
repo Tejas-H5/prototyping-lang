@@ -25,8 +25,7 @@ import { GlobalContext, newGlobalContext, rerun, saveState } from './state';
 import "./styling";
 import { cnApp } from './styling';
 import { assert } from './utils/assert';
-import { abortListAndRewindUiStack, elementHasMouseClick, imBeginList, imEnd, imEndList, imInit, imMap, imMemo, imRef, imState, nextListRoot, setClass, setStyle } from './utils/im-dom-utils';
-import { imEditableTextArea } from "./components/text-area";
+import { abortListAndRewindUiStack, disableIm, elementHasMouseClick, enableIm, getImKeys, imBeginList, imEnd, imEndList, imInit, imMap, imMemo, imRef, imState, nextListSlot, setClass, setStyle } from './utils/im-dom-utils';
 
 let saveTimeout = 0;
 let savingDisabled = false;
@@ -55,11 +54,40 @@ export function renderApp() {
         try {
             savingDisabled = false;
 
-            if (nextListRoot() && !dismissedRef.val) {
+            if (nextListSlot() && !dismissedRef.val) {
                 const ctx = imState(newGlobalContext);
 
                 const { state } = ctx;
 
+
+                const input = ctx.input;
+
+                input.keyboard.escape = false;
+
+                disableIm(); {
+                    const { keyDown, keyUp, blur } = getImKeys();
+
+                    if (keyDown) {
+                        const shiftPressed = keyDown.key === "Shift";
+                        const ctrlPressed = keyDown.key === "Control" || keyDown.key === "Meta";
+                        if (shiftPressed) input.keyboard.shiftHeld = true;
+                        if (ctrlPressed) input.keyboard.ctrlHeld = true;
+                        if (keyDown.key === "Escape") input.keyboard.escape = true;
+                    }
+
+                    if (keyUp) {
+                        const shiftPressed = keyUp.key === "Shift";
+                        const ctrlPressed = keyUp.key === "Control" || keyUp.key === "Meta";
+                        if (shiftPressed) input.keyboard.shiftHeld = false;
+                        if (ctrlPressed) input.keyboard.ctrlHeld = false;
+                    }
+
+                    if (blur) {
+                        input.keyboard.shiftHeld = false;
+                        input.keyboard.ctrlHeld = false;
+                    }
+                }
+                enableIm();
 
                 const textChanged = imMemo(state.text);
                 const autorunChanged = imMemo(state.autoRun);
@@ -88,12 +116,12 @@ export function renderApp() {
                         }
 
                         imBeginList();
-                        if (nextListRoot() && ctx.isDebugging) {
+                        if (nextListSlot() && ctx.isDebugging) {
                             const interpretResult = ctx.lastInterpreterResult;
                             assert(interpretResult);
                             renderDebugger(ctx, interpretResult);
                         } else {
-                            nextListRoot();
+                            nextListSlot();
                             renderAppCodeOutput(ctx);
                         }
                         imEndList();
@@ -113,11 +141,11 @@ export function renderApp() {
             } else {
                 assert(errors.size !== 0);
 
-                nextListRoot();
+                nextListSlot();
 
                 imBeginLayout(COL | ALIGN_CENTER | JUSTIFY_CENTER | W100 | H100); {
                     imBeginList(); {
-                        if (nextListRoot() && errors.size === 1 && errors.values().next().value === 1) {
+                        if (nextListSlot() && errors.size === 1 && errors.values().next().value === 1) {
                             imBeginHeading(); {
                                 imTextSpan("An error occured");
                             } imEnd();
@@ -125,7 +153,7 @@ export function renderApp() {
                                 imTextSpan(errors.keys().next().value!);
                             } imEnd();
                         } else {
-                            nextListRoot();
+                            nextListSlot();
 
                             imBeginHeading(); {
                                 imTextSpan("The errors just keep occuring !!! Apologies.");
@@ -133,7 +161,7 @@ export function renderApp() {
 
                             imBeginList();
                             for (const [err, count] of errors) {
-                                nextListRoot();
+                                nextListSlot();
                                 imBeginLayout(); {
                                     imTextSpan(err + " [" + count + "x]");
                                 } imEnd();
@@ -143,7 +171,7 @@ export function renderApp() {
                     imBeginSpace(NaN, 10); imEnd();
                     imBeginLayout(); {
                         imBeginList();
-                        if (nextListRoot() && totalErrorsRef.val && totalErrorsRef.val < 10) {
+                        if (nextListSlot() && totalErrorsRef.val && totalErrorsRef.val < 10) {
                             imBeginButton(); {
                                 imTextSpan("Dismiss [Warning - may lead to data corruption]");
                                 if (elementHasMouseClick()) {
@@ -151,7 +179,7 @@ export function renderApp() {
                                 }
                             } imEnd();
                         } else {
-                            nextListRoot();
+                            nextListSlot();
 
                             imTextSpan("This button was a bad idea ...");
                         }
@@ -161,6 +189,8 @@ export function renderApp() {
             }
         } catch (e) {
             savingDisabled = true;
+
+            console.error(e);
 
             abortListAndRewindUiStack(l);
             const msg = `` + e;

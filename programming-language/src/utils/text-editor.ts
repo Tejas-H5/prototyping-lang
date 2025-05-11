@@ -8,7 +8,7 @@
 
 import "src/styling";
 import { copyToClipboard, readFromClipboard } from "src/utils/clipboard";
-import { elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, getKeys, getMouse, imBeginEl, imEnd, imInit, imOn, isCtrlHeld, isMetaHeld, isShiftHeld, setStyle, UIRoot } from 'src/utils/im-dom-utils';
+import { elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, getImMouse, imBeginEl, imEnd, imInit, imOn, setStyle, UIRoot } from 'src/utils/im-dom-utils';
 import { clamp, max, min } from "src/utils/math-utils";
 import { isWhitespace } from "src/utils/text-utils";
 import { assert } from "./assert";
@@ -188,23 +188,6 @@ type TextEdit = {
     chars: string[];
 };
 
-function applyStep(s: TextEditorState, step: TextEdit, apply: boolean = true) {
-    s.isUndoing = true;
-    if (step.insert === apply) {
-        textEditorInsert(s, step.pos, step.chars);
-        setCursor(s, step.pos + step.chars.length);
-    } else {
-        textEditorRemove(s, step.pos, step.chars.length);
-        setCursor(s, step.pos);
-    }
-    clearSelection(s);
-    s.isUndoing = false;
-}
-
-function revertStep(s: TextEditorState, step: TextEdit) {
-    applyStep(s, step, false);
-}
-
 export type TextEditorState = {
     _textAreaElement: UIRoot<HTMLTextAreaElement> | null;
     _cursorSpan: HTMLElement | null;
@@ -267,6 +250,62 @@ function pushToUndoBuffer(s: TextEditorState, edit: TextEdit) {
     s.undoBuffer.push(edit);
 }
 
+function applyOrRevertUndoStep(s: TextEditorState, step: TextEdit, apply: boolean) {
+    s.isUndoing = true;
+
+    if (step.insert) {
+        if (apply) {
+            textEditorInsert(s, step.pos, step.chars);
+        } else {
+            textEditorRemove(s, step.pos, step.chars.length);
+        }
+    } else {
+        if (apply) {
+            textEditorRemove(s, step.pos, step.chars.length);
+        } else {
+            textEditorInsert(s, step.pos, step.chars);
+        }
+    }
+
+    s.isUndoing = false;
+}
+
+function traverseUndoBuffer(s: TextEditorState, forwards: boolean, withinTime = 100) {
+    if (s.undoBuffer.length === 0) return;
+
+    if (forwards) {
+        if (s.undoBufferIdx < s.undoBuffer.length - 1) {
+            let time = s.undoBuffer[s.undoBufferIdx + 1].time;
+            while (s.undoBufferIdx < s.undoBuffer.length - 1) {
+                const step = s.undoBuffer[s.undoBufferIdx + 1];
+                if (Math.abs(step.time - time) > withinTime) {
+                    break;
+                }
+
+                s.undoBufferIdx++;
+
+                clearSelection(s);
+                applyOrRevertUndoStep(s, step, true);
+            }
+        } 
+    } else {
+        if (s.undoBufferIdx >= 0) {
+            let time = s.undoBuffer[s.undoBufferIdx].time;
+            while (s.undoBufferIdx >= 0) {
+                const step = s.undoBuffer[s.undoBufferIdx];
+                if (Math.abs(step.time - time) > withinTime) {
+                    break;
+                }
+
+                s.undoBufferIdx--;
+
+                clearSelection(s);
+                applyOrRevertUndoStep(s, step, false);
+            }
+        } 
+    }
+}
+
 export function textEditorInsert(s: TextEditorState, pos: number, chars: string[]) {
     s.buffer.splice(pos, 0, ...chars);
     s.modifiedAt = Date.now();
@@ -318,7 +357,7 @@ export function textEditorSetSelection(s: TextEditorState, anchor: number, end: 
 }
 
 export function handleTextEditorMouseScrollEvent(s: TextEditorState) {
-    const mouse = getMouse();
+    const mouse = getImMouse();
     if (mouse.scrollWheel !== 0) {
         if (elementHasMouseHover()) {
             const n = Math.max(Math.abs(mouse.scrollWheel / 50));
@@ -342,7 +381,7 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
     }
     s._handledEvent = true;
 
-    const mouse = getMouse();
+    const mouse = getImMouse();
     if (!mouse.leftMouseButton) {
         s.hasClick = false;
         s.canMouseSelect = false;
@@ -386,41 +425,12 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
                         shouldRedo = true;
                     }
 
-                    if (shouldUndo) {
-                        if (s.undoBufferIdx >= 0) {
-                            // coalesce multiple undo ops into one
-                            let time = s.undoBuffer[s.undoBufferIdx].time;
-                            while (s.undoBufferIdx >= 0) {
-                                const step = s.undoBuffer[s.undoBufferIdx];
-                                if (Math.abs(step.time - time) > 100) {
-                                    break;
-                                }
-
-                                s.undoBufferIdx--;
-                                revertStep(s, step);
-                            }
-                        } else {
-                            handled = false;
-                        }
-                    } else if (shouldRedo) {
-                        shouldRedo = true;
-                        if (s.undoBufferIdx < s.undoBuffer.length - 1) {
-                            // coalesce multiple undo ops into one
-                            let time = s.undoBuffer[s.undoBufferIdx].time;
-                            while (s.undoBufferIdx >= 0) {
-                                const step = s.undoBuffer[s.undoBufferIdx];
-                                if (Math.abs(step.time - time) > 100) {
-                                    break;
-                                }
-
-                                // increment and get in the opposite order as above
-                                s.undoBufferIdx++;
-
-                                applyStep(s, step);
-                            }
-                        } else {
-                            handled = false;
-                        }
+                    if (shouldRedo) {
+                        traverseUndoBuffer(s, true);
+                    } else if (shouldUndo) {
+                        traverseUndoBuffer(s, false);
+                    } else {
+                        handled = true;
                     }
                 } else if (key === ")") {
                     // TODO: expand our selection
@@ -725,7 +735,7 @@ function setCanSelect(s: TextEditorState, keyboard: boolean) {
 
 // NOTE: this needs to be inside a container
 // with position: relative to correctly position the fake text-area.
-export function imBeginTextEditor(s: TextEditorState) {
+export function imBeginTextEditor(s: TextEditorState, ctrlHeld: boolean, shiftHeld: boolean) {
     s._cursorSpan = null;
     s._renderCursor.pos = s.viewCursor.pos;
     s._renderCursor.line = s.viewCursor.line;
@@ -735,21 +745,8 @@ export function imBeginTextEditor(s: TextEditorState) {
     s._viewCursorAtStart = viewWindowIsAtStart(s);
     s._viewCursorAtEnd = viewWindowIsAtEnd(s);
 
-    s.isShifting = isShiftHeld();
-    s.inCommandMode = isCtrlHeld() || isMetaHeld();
-
-    const keys = getKeys();
-    for (const k of keys.keysPressed) {
-        if (k === "Shift") {
-            s.canKeyboardSelect = true;
-        }
-    }
-
-    for (const k of keys.keysReleased) {
-        if (k === "Shift") {
-            s.isSelecting = false;
-        }
-    }
+    s.inCommandMode = ctrlHeld;
+    s.isShifting = shiftHeld;
 
     // using an input to allow hooking into the browser's existing focusing mechanisms.
     const textAreaRoot = imBeginEl(newTextArea); {

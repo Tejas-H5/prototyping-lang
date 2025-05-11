@@ -18,7 +18,7 @@ import { getCurrentCallstack, ProgramInterpretResult, stepProgram } from './prog
 import { GlobalContext, startDebugging } from './state';
 import "./styling";
 import { assert } from './utils/assert';
-import { elementHasMouseClick, imBeginDiv, imBeginEl, imBeginList, imEnd, imEndList, imInit, imRef, imStateInline, nextListRoot, setAttributes } from './utils/im-dom-utils';
+import { elementHasMouseClick, imBeginDiv, imBeginEl, imBeginList, imEnd, imEndList, imInit, imRef, imStateInline, nextListSlot, setAttr } from './utils/im-dom-utils';
 
 
 export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretResult) {
@@ -61,7 +61,7 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
         } imEnd();
 
         imBeginList();
-        if (nextListRoot() && message.val) {
+        if (nextListSlot() && message.val) {
             imBeginDiv(); {
                 imTextSpan(message.val);
             } imEnd();
@@ -73,7 +73,7 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
         imBeginLayout(COL | FLEX); {
             imBeginLayout(COL | FLEX); {
                 imBeginList();
-                if (nextListRoot() && cs) {
+                if (nextListSlot() && cs) {
                     const fnName = imFunctionName(cs.fn);
                     imBeginLayout(H3 | BOLD); {
                         imTextSpan(fnName);
@@ -116,22 +116,20 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
                         for (let addr = 0; addr <= n; addr++) {
                             const res = interpretResult.stack[addr];
 
-                            nextListRoot();
+                            nextListSlot();
 
                             imBeginDiv(); {
                                 imBeginLayout(ROW | GAP); {
                                     const stackAddrArrow = (name: string) => {
                                         imBeginDiv(); {
-                                            imInit() && setAttributes({
-                                                style: "padding-left: 10px; padding-right: 10px"
-                                            });
+                                            if (imInit()) setAttr("style", "padding-left: 10px; padding-right: 10px");
 
                                             imTextSpan(name + "->", CODE);
                                         } imEnd();
                                     }
 
                                     imBeginList();
-                                    if (nextListRoot() && addr === interpretResult.stackIdx) {
+                                    if (nextListSlot() && addr === interpretResult.stackIdx) {
                                         stackAddrArrow("");
                                     }
                                     imEndList();
@@ -146,7 +144,7 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
                                     }
 
                                     imBeginList();
-                                    if (nextListRoot() && callstackIdx !== -1) {
+                                    if (nextListSlot() && callstackIdx !== -1) {
                                         stackAddrArrow("r" + callstackIdx + "");
                                     };
                                     imEndList();
@@ -161,14 +159,14 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
                                     }
 
                                     imBeginList();
-                                    if (nextListRoot() && callstackIdx !== -1) {
+                                    if (nextListSlot() && callstackIdx !== -1) {
                                         stackAddrArrow("v" + callstackIdx + "");
                                     };
                                     imEndList();
 
                                     const variable = variablesReverseMap.get(addr);
                                     imBeginList();
-                                    if (nextListRoot() && variable) {
+                                    if (nextListSlot() && variable) {
                                         imBeginDiv(); {
                                             imTextSpan(variable + " = ", CODE);
                                         } imEnd();
@@ -177,10 +175,10 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
 
                                     imBeginLayout(FLEX); {
                                         imBeginList();
-                                        if (nextListRoot() && res) {
+                                        if (nextListSlot() && res) {
                                             renderProgramResult(res);
                                         } else {
-                                            nextListRoot();
+                                            nextListSlot();
                                             imTextSpan("null");
                                         }
                                         imEndList();

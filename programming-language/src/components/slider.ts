@@ -1,5 +1,5 @@
 import { cssVars } from 'src/styling';
-import { deferClickEventToParent, elementHasMouseDown, getCurrentRoot, getMouse, imBeginDiv, imBeginList, imEnd, imEndList, imInit, imMemo, imMemoObjectVals, imState, imTrackSize, nextListRoot, setStyle } from 'src/utils/im-dom-utils';
+import { deferClickEventToParent, elementHasMouseDown, getCurrentRoot, getImMouse, imBeginDiv, imBeginList, imEnd, imEndList, imInit, imMemo, imMemoObjectVals, imState, imTrackSize, nextListSlot, setStyle } from 'src/utils/im-dom-utils';
 import { clamp, inverseLerp, lerp } from 'src/utils/math-utils';
 
 export function newSliderState() {
@@ -60,7 +60,7 @@ export function renderSliderBody(
                         let t = (i + 1) / count;
                         const sliderPos = lerp(0, rect.width - sliderHandleSize, t);
 
-                        nextListRoot();
+                        nextListSlot();
 
                         imBeginDiv(); {
                             if (imInit()) {
@@ -95,7 +95,7 @@ export function renderSliderBody(
 
             const sChanged = imMemoObjectVals(s);
             if (sChanged) {
-                const t = inverseLerp(s.start, s.end, s.value);
+                const t = inverseLerp(s.value, s.start, s.end);
                 const sliderPos = lerp(0, rect.width - sliderHandleSize, t);
                 setStyle("left", sliderPos + "px");
             }
@@ -103,12 +103,12 @@ export function renderSliderBody(
             deferClickEventToParent();
         } imEnd();
 
-        const mouse = getMouse();
+        const mouse = getImMouse();
         if (mouse.leftMouseButton && elementHasMouseDown()) {
             const rect = getCurrentRoot().root.getBoundingClientRect();
             const x0 = rect.left + sliderHandleSize / 2;
             const x1 = rect.right - sliderHandleSize / 2;
-            let t = inverseLerp(x0, x1, mouse.X);
+            let t = inverseLerp(mouse.X, x0, x1);
             t = clamp(t, 0, 1);
 
             s.value = lerp(s.start, s.end, t);

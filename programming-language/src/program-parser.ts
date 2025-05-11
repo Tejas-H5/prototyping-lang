@@ -1,5 +1,4 @@
 import { assert, typeGuard } from "./utils/assert";
-import { nextListRoot } from "./utils/im-dom-utils";
 import { isWhitespace } from "./utils/text-utils";
 
 ////////////////////////

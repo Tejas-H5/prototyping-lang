@@ -59,7 +59,7 @@ import { GlobalContext, rerun, startDebugging } from './state';
 import "./styling";
 import { cssVars, getCurrentTheme } from './styling';
 import { assert } from './utils/assert';
-import { deltaTimeSeconds, disableIm, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, enableIm, getCurrentRoot, getKeys, getMouse, imArray, imBeginDiv, imBeginEl, imBeginList, imEnd, imEndList, imInit, imMemo, imMemoObjectVals, imPreventScrollEventPropagation, imRef, imState, imStateInline, imTrackSize, isKeyPressed, isShiftHeld, nextListRoot, scrollIntoViewVH, setInnerText, setStyle, UIRoot } from './utils/im-dom-utils';
+import { deltaTimeSeconds, disableIm, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, enableIm, getCurrentRoot, getImMouse, imArray, imBeginDiv, imBeginEl, imBeginList, imEnd, imEndList, imInit, imMemo, imMemoObjectVals, imPreventScrollEventPropagation, imRef, imState, imStateInline, imTrackSize, nextListSlot, scrollIntoViewVH, setInnerText, setStyle, UIRoot } from './utils/im-dom-utils';
 import { clamp, gridSnap, inverseLerp, lerp, max, min } from './utils/math-utils';
 import { getSliceValue } from './utils/matrix-math';
 
@@ -105,7 +105,7 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
         const parseResult = ctx.lastParseResult;
 
         imBeginList();
-        if (nextListRoot() && ctx.state.showParserOutput) {
+        if (nextListSlot() && ctx.state.showParserOutput) {
             imParserOutputs(parseResult);
         }
         imEndList();
@@ -118,9 +118,9 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
         } imEnd();
 
         imBeginList();
-        if (nextListRoot() && ctx.state.showInterpreterOutput) {
+        if (nextListSlot() && ctx.state.showInterpreterOutput) {
             imBeginList();
-            if (nextListRoot() && ctx.lastInterpreterResult) {
+            if (nextListSlot() && ctx.lastInterpreterResult) {
                 const interpretResult = ctx.lastInterpreterResult;
 
                 imBeginDiv(); {
@@ -131,7 +131,7 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
                     } imEnd();
 
                     imBeginList(); {
-                        nextListRoot();
+                        nextListSlot();
 
                         imBeginLayout(ROW | GAP); {
                             imTextSpan(interpretResult.entryPoint.name, H3 | BOLD);
@@ -147,7 +147,7 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
                         renderFunctionInstructions(interpretResult, interpretResult.entryPoint);
 
                         for (const [, fn] of interpretResult.functions) {
-                            nextListRoot();
+                            nextListSlot();
 
                             imBeginLayout(ROW | GAP); {
                                 const fnName = imFunctionName(fn);
@@ -164,7 +164,7 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
 
                 } imEnd();
             } else {
-                nextListRoot();
+                nextListSlot();
                 imBeginLayout(); {
                     imTextSpan("No instructions generated yet");
                 } imEnd();
@@ -176,7 +176,7 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
         } imEnd();
 
         imBeginList();
-        if (nextListRoot() && ctx.lastInterpreterResult) {
+        if (nextListSlot() && ctx.lastInterpreterResult) {
             imProgramOutputs(
                 ctx, 
                 ctx.lastInterpreterResult, 
@@ -184,7 +184,7 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
                 scrollContainer.root
             );
         } else {
-            nextListRoot();
+            nextListSlot();
             imBeginLayout(); {
                 imTextSpan("Program hasn't been run yet");
             } imEnd();
@@ -192,7 +192,7 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
         imEndList();
 
         imBeginList();
-        if (nextListRoot() && ctx.state.text === "") {
+        if (nextListSlot() && ctx.state.text === "") {
             // NOTE: might not be the best workflow. i.e maybe we want to be able to see the examples while we're writing things.
 
             imBeginHeading(); {
@@ -202,7 +202,7 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
             imBeginLayout(COL | GAP); {
                 imBeginList();
                 for (const eg of codeExamples) {
-                    nextListRoot();
+                    nextListSlot();
                     imBeginButton(); {
                         imTextSpan(eg.name);
 
@@ -222,14 +222,14 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
 
 function imParserOutputs(parseResult: ProgramParseResult | undefined) {
     imBeginList();
-    if (nextListRoot() && parseResult) {
+    if (nextListSlot() && parseResult) {
         const statements = parseResult.statements;
 
         imBeginList();
-        if (nextListRoot() && statements.length > 0) {
+        if (nextListSlot() && statements.length > 0) {
 
             function renderRow(title: string, type: string, depth: number, code?: string) {
-                nextListRoot();
+                nextListSlot();
                 imBeginDiv(); {
                     setStyle("paddingLeft", (depth * 20) + "px");
 
@@ -238,7 +238,7 @@ function imParserOutputs(parseResult: ProgramParseResult | undefined) {
                     imTextSpan(type);
                     imBeginList();
                     if (code) {
-                        nextListRoot();
+                        nextListSlot();
 
                         imTextSpan(" ");
                         imTextSpan(code, CODE);
@@ -361,7 +361,7 @@ function imParserOutputs(parseResult: ProgramParseResult | undefined) {
             }
             imEndList();
         } else {
-            nextListRoot();
+            nextListSlot();
             imTextSpan("Nothing parsed yet");
         }
         imEndList();
@@ -369,7 +369,7 @@ function imParserOutputs(parseResult: ProgramParseResult | undefined) {
         imDiagnosticInfo("Errors", parseResult.errors, "No parsing errors!");
         imDiagnosticInfo("Warnings", parseResult.warnings, "No parsing warnings");
     } else {
-        nextListRoot();
+        nextListSlot();
         imTextSpan("No parse results yet");
     } imEndList();
 }
@@ -377,7 +377,7 @@ function imParserOutputs(parseResult: ProgramParseResult | undefined) {
 // TODO: display these above the code editor itself. 
 function imDiagnosticInfo(heading: string, info: DiagnosticInfo[], emptyText: string) {
     imBeginList();
-    if (nextListRoot() && heading) {
+    if (nextListSlot() && heading) {
         imBeginHeading(); {
             imTextSpan(heading);
         } imEnd();
@@ -385,7 +385,7 @@ function imDiagnosticInfo(heading: string, info: DiagnosticInfo[], emptyText: st
 
     imBeginList();
     for (const e of info) {
-        nextListRoot();
+        nextListSlot();
         imBeginDiv(); {
             imTextSpan("Line " + e.pos.line + " Col " + (e.pos.col) + " Tab " + (e.pos.tabs) + " - " + e.problem);
         } imEnd();
@@ -393,7 +393,7 @@ function imDiagnosticInfo(heading: string, info: DiagnosticInfo[], emptyText: st
     imEndList();
 
     imBeginList();
-    if (nextListRoot() && info.length === 0) {
+    if (nextListSlot() && info.length === 0) {
         imBeginDiv(); {
             imTextSpan(emptyText);
         } imEnd();
@@ -408,7 +408,7 @@ export function renderProgramResult(res: ProgramResult) {
     imBeginDiv(); {
         imBeginLayout(COL | GAP); {
             imBeginList(); {
-                nextListRoot(res.t);
+                nextListSlot(res.t);
                 const typeString = programResultTypeString(res)
                 imTextSpan(typeString + " ");
 
@@ -427,7 +427,7 @@ export function renderProgramResult(res: ProgramResult) {
                             imBeginCodeBlock(1); {
                                 imBeginList();
                                 for (let i = 0; i < res.values.length; i++) {
-                                    nextListRoot();
+                                    nextListSlot();
                                     renderProgramResult(res.values[i]);
                                 }
                                 imEndList();
@@ -441,7 +441,7 @@ export function renderProgramResult(res: ProgramResult) {
                             imBeginCodeBlock(1); {
                                 imBeginList();
                                 for (const [k, val] of res.map) {
-                                    nextListRoot();
+                                    nextListSlot();
                                     imTextSpan(k + "", CODE);
                                     renderProgramResult(val);
                                 }
@@ -462,7 +462,7 @@ export function renderProgramResult(res: ProgramResult) {
                                 imTextSpan("" + val);
 
                                 imBeginList();
-                                if (nextListRoot() && !isLast) {
+                                if (nextListSlot() && !isLast) {
                                     imTextSpan(", ");
                                 }
                                 imEndList();
@@ -479,7 +479,7 @@ export function renderProgramResult(res: ProgramResult) {
                                         // and the components we're rendering at a particular level will change. 
                                         // We need to re-key the list, so that we may render a different kind of component at this position.
                                         const key = (res.val.shape.length - dim) + "-" + i;
-                                        nextListRoot(key);
+                                        nextListSlot(key);
                                         dfs(dim + 1, i === len - 1);
                                     }
                                 } imEndList();
@@ -515,10 +515,10 @@ export function renderFunctionInstructions(interpretResult: ProgramInterpretResu
 
             imBeginCodeBlock(0); {
                 imBeginList();
-                if (nextListRoot() && steps.length > 0) {
+                if (nextListSlot() && steps.length > 0) {
                     imBeginList();
                     for (let i = 0; i < steps.length; i++) {
-                        nextListRoot();
+                        nextListSlot();
 
                         const step = steps[i];
 
@@ -532,7 +532,7 @@ export function renderFunctionInstructions(interpretResult: ProgramInterpretResu
                             renderExecutionStep(step);
 
                             imBeginList();
-                            if (nextListRoot() && isCurrent) {
+                            if (nextListSlot() && isCurrent) {
                                 imTextSpan(" <----");
                             }
                             imEndList();
@@ -544,7 +544,7 @@ export function renderFunctionInstructions(interpretResult: ProgramInterpretResu
                     }
                     imEndList();
                 } else {
-                    nextListRoot();
+                    nextListSlot();
                     imBeginDiv(); {
                         imTextSpan("no instructions present");
                     } imEnd();
@@ -617,7 +617,7 @@ export function imProgramOutputs(
     } imEnd();
     imBeginList();
     for (const result of outputs.prints) {
-        nextListRoot();
+        nextListSlot();
         const root = imBeginLayout(ROW | GAP); {
             if (canScrollToThing(ctx, s, result.expr)) {
                 s.outputToScrollTo = root.root;
@@ -642,7 +642,7 @@ export function imProgramOutputs(
     imBeginLayout(COL | GAP); {
         imBeginList();
         for (const [idx, graph] of outputs.graphs) {
-            nextListRoot();
+            nextListSlot();
 
             const root = imBeginLayout(COL | GAP); {
                 if (canScrollToThing(ctx, s, graph.expr)) {
@@ -665,11 +665,11 @@ export function imProgramOutputs(
                     beginMaximizeableContainer(graph); {
                         imBeginLayout(COL | OPAQUE | FLEX | GAP); {
                             imBeginLayout(ROW | GAP); {
-                                imMaximizeItemButton(graph);
+                                imMaximizeItemButton(ctx, graph);
                             } imEnd();
 
                             imBeginAspectRatio(window.innerWidth, window.innerHeight); {
-                                renderGraph(graph);
+                                renderGraph(ctx, graph);
                             } imEnd();
                         } imEnd();
                     } imEnd();
@@ -680,7 +680,7 @@ export function imProgramOutputs(
     } imEnd();
     imBeginList();
     for (const image of outputs.images) {
-        nextListRoot();
+        nextListSlot();
         const root = imBeginLayout(ROW | GAP); {
             if (canScrollToThing(ctx, s, image.expr)) {
                 s.outputToScrollTo = root.root;
@@ -701,16 +701,16 @@ export function imProgramOutputs(
                     )
                 } imEnd();
 
-                renderImageOutput(image);
+                renderImageOutput(ctx, image);
             } imEnd();
         } imEnd();
     };
     imEndList();
     imBeginList();
-    if (nextListRoot() && outputs.plots.size > 0) {
+    if (nextListSlot() && outputs.plots.size > 0) {
         imBeginList();
         for (const [idx, plot] of outputs.plots) {
-            nextListRoot();
+            nextListSlot();
             const root = imBeginLayout(COL | GAP); {
                 for (const line of plot.lines) {
                     if (canScrollToThing(ctx, s, line.expr)) {
@@ -740,7 +740,7 @@ export function imProgramOutputs(
 
                 imBeginList();
                 for (const [expr, count] of exprFrequencies) {
-                    nextListRoot();
+                    nextListSlot();
                     imBeginLayout(ROW | GAP); {
                         imTextSpan(count + "x: ");
                         imTextSpan(expressionToString(programText, expr), CODE);
@@ -749,7 +749,7 @@ export function imProgramOutputs(
                 imEndList();
 
                 imBeginAspectRatio(window.innerWidth, window.innerHeight); {
-                    renderPlot(plot, program);
+                    renderPlot(ctx, plot, program);
                 } imEnd();
             } imEnd();
         }
@@ -771,21 +771,21 @@ function newCanvasElement() {
 }
 
 
-function renderImageOutput(image: ProgramImageOutput) {
+function renderImageOutput(ctx: GlobalContext, image: ProgramImageOutput) {
     beginMaximizeableContainer(image); {
         imBeginLayout(COL | OPAQUE | FLEX | GAP); {
             imBeginLayout(ROW | GAP); {
-                imMaximizeItemButton(image);
+                imMaximizeItemButton(ctx, image);
             } imEnd();
 
             imBeginLayout(FLEX | RELATIVE); {
                 imBeginList();
-                if (nextListRoot() && (image.width !== 0)) {
+                if (nextListSlot() && (image.width !== 0)) {
                     const plotState = imState(newPlotState);
 
                     imBeginAspectRatio(window.innerWidth, window.innerHeight); {
-                        const [, ctx, width, height, dpi] = imBeginCanvasRenderingContext2D(); {
-                            imPlotZoomingAndPanning(plotState, width, height, dpi);
+                        const [, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(); {
+                            imPlotZoomingAndPanning(plotState, width, height, dpi, ctx.input.keyboard.shiftHeld);
 
                             const pixelSize = 10;
 
@@ -803,7 +803,7 @@ function renderImageOutput(image: ProgramImageOutput) {
 
                             disableIm(); 
                             if (imageChanged || plotStateChanged) {
-                                ctx.clearRect(0, 0, width, height);
+                                canvas.clearRect(0, 0, width, height);
 
                                 for (let i = 0; i < image.width; i++) {
                                     for (let j = 0; j < image.height; j++) {
@@ -826,32 +826,32 @@ function renderImageOutput(image: ProgramImageOutput) {
                                             color = `rgb(${v * 255}, ${v * 255}, ${v * 255})`;
                                         }
 
-                                        ctx.beginPath();
+                                        canvas.beginPath();
                                         {
-                                            ctx.fillStyle = color;
+                                            canvas.fillStyle = color;
                                             const x0Canvas = getCanvasElementX(plotState, x0);
                                             const y0Canvas = getCanvasElementY(plotState, y0);
                                             const size = getCanvasElementLength(plotState, pixelSize);
                                             drawRectSized(
-                                                ctx,
+                                                canvas,
                                                 x0Canvas,
                                                 y0Canvas,
                                                 size,
                                                 size
                                             );
-                                            ctx.fill();
+                                            canvas.fill();
                                         }
-                                        ctx.closePath();
+                                        canvas.closePath();
                                     }
                                 }
 
-                                drawBoundary(ctx, width, height);
+                                drawBoundary(canvas, width, height);
                             } 
                             enableIm();
                         } imEndCanvasRenderingContext2D();
                     } imEnd();
                 } else {
-                    nextListRoot();
+                    nextListSlot();
                     imBeginLayout(COL | ALIGN_CENTER | JUSTIFY_CENTER); {
                         imTextSpan("Value was empty");
                     } imEnd();
@@ -863,9 +863,9 @@ function renderImageOutput(image: ProgramImageOutput) {
     } imEnd();
 }
 
-function imPlotZoomingAndPanning(plot: PlotState, width: number, height: number, dpi: number) {
+function imPlotZoomingAndPanning(plot: PlotState, width: number, height: number, dpi: number, shiftHeld: boolean) {
     const isMaximized = plot === currentMaximizedItem;
-    const canZoom = elementHasMouseHover() && (isShiftHeld() || isMaximized);
+    const canZoom = elementHasMouseHover() && (shiftHeld || isMaximized);
     plot.canZoom = canZoom;
 
     if (imInit()) {
@@ -876,7 +876,7 @@ function imPlotZoomingAndPanning(plot: PlotState, width: number, height: number,
     plot.height = height;
     plot.dpi = dpi;
 
-    const mouse = getMouse();
+    const mouse = getImMouse();
 
     plot.isPanning = mouse.leftMouseButton && elementHasMouseDown();
     if (plot.isPanning) {
@@ -926,7 +926,7 @@ function imPlotZoomingAndPanning(plot: PlotState, width: number, height: number,
     }
 }
 
-function renderGraph(graph: ProgramGraphOutput) {
+function renderGraph(ctx: GlobalContext, graph: ProgramGraphOutput) {
     const plotState = imState(newPlotState);
 
     const s = imStateInline((): {
@@ -959,8 +959,8 @@ function renderGraph(graph: ProgramGraphOutput) {
     } 
 
     imBeginLayout(FLEX | RELATIVE | H100).root; {
-        const [_, ctx, width, height, dpi] = imBeginCanvasRenderingContext2D(); {
-            imPlotZoomingAndPanning(plotState, width, height, dpi);
+        const [_, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(); {
+            imPlotZoomingAndPanning(plotState, width, height, dpi, ctx.input.keyboard.shiftHeld);
 
             const widthChanged = imMemo(width);
             const heightChanged = imMemo(height);
@@ -968,7 +968,7 @@ function renderGraph(graph: ProgramGraphOutput) {
             const plotStateChanged = imMemoObjectVals(plotState);
             disableIm();
             if (widthChanged || heightChanged || graphChanged || plotStateChanged) {
-                ctx.clearRect(0, 0, width, height);
+                canvas.clearRect(0, 0, width, height);
 
                 for (const [key] of s.nodeData) {
                     if (!graph.graph.has(key)) {
@@ -998,8 +998,8 @@ function renderGraph(graph: ProgramGraphOutput) {
                 const LINE_WIDTH = CIRCLE_RADIUS / 3;
 
                 // draw edges
-                ctx.strokeStyle = theme.mg.toString();
-                ctx.lineWidth = getCanvasElementLength(plotState, LINE_WIDTH);
+                canvas.strokeStyle = theme.mg.toString();
+                canvas.lineWidth = getCanvasElementLength(plotState, LINE_WIDTH);
                 for (const node of s.nodeData.values()) {
                     const x0Canvas = getCanvasElementX(plotState, node.position.x);
                     const y0Canvas = getCanvasElementY(plotState, node.position.y);
@@ -1011,25 +1011,25 @@ function renderGraph(graph: ProgramGraphOutput) {
                         const x1Canvas = getCanvasElementX(plotState, otherNode.position.x);
                         const y1Canvas = getCanvasElementY(plotState, otherNode.position.y);
 
-                        ctx.beginPath(); {
-                            ctx.moveTo(x0Canvas, y0Canvas);
-                            ctx.lineTo(x1Canvas, y1Canvas);
-                            ctx.stroke();
-                        } ctx.closePath();
+                        canvas.beginPath(); {
+                            canvas.moveTo(x0Canvas, y0Canvas);
+                            canvas.lineTo(x1Canvas, y1Canvas);
+                            canvas.stroke();
+                        } canvas.closePath();
                     }
                 }
 
                 // draw nodes over the edges
-                ctx.fillStyle = theme.fg.toString();
+                canvas.fillStyle = theme.fg.toString();
                 for (const node of s.nodeData.values()) {
                     const xCanvas = getCanvasElementX(plotState, node.position.x);
                     const yCanvas = getCanvasElementY(plotState, node.position.y);
                     const rCanvas = getCanvasElementLength(plotState, CIRCLE_RADIUS);
-                    drawCircle(ctx, xCanvas, yCanvas, rCanvas);
-                    ctx.fill();
+                    drawCircle(canvas, xCanvas, yCanvas, rCanvas);
+                    canvas.fill();
                 }
 
-                drawBoundary(ctx, width, height);
+                drawBoundary(canvas, width, height);
             }
             enableIm();
         } imEndCanvasRenderingContext2D();
@@ -1124,7 +1124,7 @@ function getCanvasElementX(plot: PlotState, x: number): number {
     const extent = getExtent(plot);
     const x0Extent = posX - extent;
     const x1Extent = posX + extent;
-    return (inverseLerp(x0Extent, x1Extent, x) * getDim(plot));
+    return (inverseLerp(x, x0Extent, x1Extent) * getDim(plot));
 }
 
 
@@ -1146,7 +1146,7 @@ function getCanvasElementY(plot: PlotState, y: number): number {
     const other = getOtherDim(plot);
     const diff = dim - other;
 
-    return (inverseLerp(y0Extent, y1Extent, y) * dim - (diff / 2));
+    return (inverseLerp(y, y0Extent, y1Extent) * dim - (diff / 2));
 }
 
 function getPlotX(plot: PlotState, x: number): number {
@@ -1329,14 +1329,14 @@ function beginMaximizeableContainer(item: object) {
 
 }
 
-function imMaximizeItemButton(item: object) {
+function imMaximizeItemButton(ctx: GlobalContext, item: object) {
     const isMaximized = currentMaximizedItem === item;
 
     imBeginButton(isMaximized); {
         imTextSpan(isMaximized ? "minimize" : "maximize");
 
         if (isMaximized) {
-            if (isKeyPressed("Escape") || (elementHasMouseClick())) {
+            if (ctx.input.keyboard.escape || (elementHasMouseClick())) {
                 currentMaximizedItem = null;
             }
         } else {
@@ -1348,7 +1348,7 @@ function imMaximizeItemButton(item: object) {
 }
 
 
-function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
+function renderPlot(ctx: GlobalContext, plot: ProgramPlotOutput, program: ProgramInterpretResult) {
     const isMaximized = plot === currentMaximizedItem;
     const plotState = imState(newPlotState);
     plotState.maximized = isMaximized;
@@ -1356,7 +1356,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
     beginMaximizeableContainer(plot); {
         imBeginLayout(COL | OPAQUE | FLEX | GAP); {
             imBeginLayout(ROW | GAP); {
-                imMaximizeItemButton(plot);
+                imMaximizeItemButton(ctx, plot);
 
                 imBeginButton(plotState.overlay); {
                     setInnerText("Overlays");
@@ -1381,12 +1381,12 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                     problems.val = [];
                 }
 
-                const [_, ctx, width, height, dpi] = imBeginCanvasRenderingContext2D(); {
-                    const mouse = getMouse();
+                const [_, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(); {
+                    const mouse = getImMouse();
 
                     // init canvas 
 
-                    imPlotZoomingAndPanning(plotState, width, height, dpi);
+                    imPlotZoomingAndPanning(plotState, width, height, dpi, ctx.input.keyboard.shiftHeld);
 
                     if (elementHasMouseHover() && (mouse.scrollWheel !== 0 && !plotState.canZoom)) {
                         shiftScrollToZoomVal.val = 1;
@@ -1432,7 +1432,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
 
                         const { width, height } = plotState;
 
-                        ctx.clearRect(0, 0, width, height);
+                        canvas.clearRect(0, 0, width, height);
 
                         // draw function heatmaps (if the program had no errors, since we need to evaluate the function in the same program context)
                         if (program.errors.length === 0) {
@@ -1514,7 +1514,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                                     for (let i = 0; i < n; i++) {
                                         for (let j = 0; j < n; j++) {
                                             const val = rows.val[i][j];
-                                            const heat = inverseLerp(minValue, maxValue, val);
+                                            const heat = inverseLerp(val, minValue, maxValue);
 
                                             const evalPointX = centerX + (-(n / 2) + i) * size;
                                             const evalPointY = centerY + (-(n / 2) + j) * size;
@@ -1522,12 +1522,12 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                                             const x0 = getCanvasElementX(plotState, evalPointX);
                                             const y0 = getCanvasElementY(plotState, evalPointY);
 
-                                            ctx.fillStyle = color.toCssString(heat);
-                                            ctx.beginPath(); {
-                                                ctx.rect(x0, y0, sizeScreen, sizeScreen);
-                                                ctx.fill();
+                                            canvas.fillStyle = color.toCssString(heat);
+                                            canvas.beginPath(); {
+                                                canvas.rect(x0, y0, sizeScreen, sizeScreen);
+                                                canvas.fill();
                                             }
-                                            ctx.closePath();
+                                            canvas.closePath();
                                         }
                                     }
                                 }
@@ -1539,8 +1539,8 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                             for (const line of plot.lines) {
                                 // TODO: labels
 
-                                ctx.strokeStyle = line.color ? line.color.toString() : cssVars.fg;
-                                ctx.lineWidth = screenToCanvas(plotState, 2);
+                                canvas.strokeStyle = line.color ? line.color.toString() : cssVars.fg;
+                                canvas.lineWidth = screenToCanvas(plotState, 2);
 
                                 // draw the actual lines
 
@@ -1548,9 +1548,9 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                                 let y0 = line.pointsY[0];
                                 const x0Plot = getCanvasElementX(plotState, x0);
                                 const y0Plot = getCanvasElementY(plotState, y0);
-                                ctx.beginPath();
                                 if (!line.displayAsPoints) {
-                                    ctx.moveTo(x0Plot, y0Plot);
+                                    canvas.beginPath();
+                                    canvas.moveTo(x0Plot, y0Plot);
                                     for (let i = 1; i < line.pointsX.length; i++) {
                                         const x1 = line.pointsX[i];
                                         const y1 = line.pointsY[i];
@@ -1558,13 +1558,13 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                                         const x1Plot = getCanvasElementX(plotState, x1);
                                         const y1Plot = getCanvasElementY(plotState, y1);
 
-                                        ctx.lineTo(x1Plot, y1Plot);
+                                        canvas.lineTo(x1Plot, y1Plot);
 
                                         x0 = x1; y0 = y1;
                                     }
-                                    ctx.stroke();
+                                    canvas.stroke();
+                                    canvas.closePath();
                                 }
-                                ctx.closePath();
 
                                 let renderPoints = line.displayAsPoints;
                                 if (!renderPoints) {
@@ -1582,8 +1582,8 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
 
                                 if (renderPoints) {
                                     const theme = getCurrentTheme();
-                                    ctx.strokeStyle = theme.fg.toCssString();
-                                    ctx.lineWidth = screenToCanvas(plotState, 2);
+                                    canvas.strokeStyle = theme.fg.toCssString();
+                                    canvas.lineWidth = screenToCanvas(plotState, 2);
                                     for (let i = 0; i < line.pointsX.length; i++) {
                                         const x1 = line.pointsX[i];
                                         const y1 = line.pointsY[i];
@@ -1592,7 +1592,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                                         const y1Plot = getCanvasElementY(plotState, y1);
                                         const r = screenToCanvas(plotState, 5);
 
-                                        drawPointAt(ctx, x1Plot, y1Plot, r);
+                                        drawPointAt(canvas, x1Plot, y1Plot, r);
                                     }
                                 }
                             }
@@ -1607,34 +1607,34 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
                             const padding = screenToCanvas(plotState, 5);
 
                             const theme = getCurrentTheme();
-                            ctx.fillStyle = theme.fg.toCssString();
-                            ctx.strokeStyle = theme.fg.toCssString();
-                            ctx.font = screenToCanvas(plotState, 0.7) + "em Arial";
+                            canvas.fillStyle = theme.fg.toCssString();
+                            canvas.strokeStyle = theme.fg.toCssString();
+                            canvas.font = screenToCanvas(plotState, 0.7) + "em Arial";
 
                             // draw the extent info
                             {
                                 let precision = max(3, Math.ceil(Math.log10(plotState.zoom)));
 
-                                ctx.textAlign = "start";
-                                ctx.textBaseline = "middle";
-                                ctx.fillText("" + xMin.toPrecision(precision), padding, plotState.height / 2);
+                                canvas.textAlign = "start";
+                                canvas.textBaseline = "middle";
+                                canvas.fillText("" + xMin.toPrecision(precision), padding, plotState.height / 2);
 
-                                ctx.textAlign = "end";
-                                ctx.textBaseline = "middle";
-                                ctx.fillText("" + xMax.toPrecision(precision), plotState.width - padding, plotState.height / 2);
+                                canvas.textAlign = "end";
+                                canvas.textBaseline = "middle";
+                                canvas.fillText("" + xMax.toPrecision(precision), plotState.width - padding, plotState.height / 2);
 
-                                ctx.textAlign = "center";
-                                ctx.textBaseline = "top";
-                                ctx.fillText("" + yMin.toPrecision(precision), plotState.width / 2, padding);
+                                canvas.textAlign = "center";
+                                canvas.textBaseline = "top";
+                                canvas.fillText("" + yMin.toPrecision(precision), plotState.width / 2, padding);
 
-                                ctx.textAlign = "center";
-                                ctx.textBaseline = "bottom";
-                                ctx.fillText("" + yMax.toPrecision(precision), plotState.width / 2, plotState.height - padding);
+                                canvas.textAlign = "center";
+                                canvas.textBaseline = "bottom";
+                                canvas.fillText("" + yMax.toPrecision(precision), plotState.width / 2, plotState.height - padding);
                             }
 
                             // draw the grid
-                            ctx.strokeStyle = theme.mg.toCssString();
-                            ctx.lineWidth = screenToCanvas(plotState, 1);
+                            canvas.strokeStyle = theme.mg.toCssString();
+                            canvas.lineWidth = screenToCanvas(plotState, 1);
                             {
                                 const extent = getExtent(plotState);
                                 const gridFractalLevel = Math.floor(Math.log10(extent));
@@ -1645,29 +1645,29 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
 
                                 let safety = 0;
 
-                                ctx.beginPath();
+                                canvas.beginPath();
                                 let x = getCanvasElementX(plotState, gridSnap(getPlotX(plotState, 0), spacing));
                                 for (; x < width; x += spacingEl) {
                                     if (safety++>1000) {
                                         throw new Error("Bruh");
                                     }
-                                    ctx.moveTo(x, 0);
-                                    ctx.lineTo(x, height);
+                                    canvas.moveTo(x, 0);
+                                    canvas.lineTo(x, height);
                                 } 
                                 let y = getCanvasElementY(plotState, gridSnap(getPlotY(plotState, 0), spacing));
                                 for (; y < height; y += spacingEl) {
                                     if (safety++>1000) {
                                         throw new Error("Bruh");
                                     }
-                                    ctx.moveTo(0, y);
-                                    ctx.lineTo(width, y);
+                                    canvas.moveTo(0, y);
+                                    canvas.lineTo(width, y);
                                 }
-                                ctx.closePath();
-                                ctx.stroke();
+                                canvas.closePath();
+                                canvas.stroke();
                             }
                         }
 
-                        drawBoundary(ctx, width, height);
+                        drawBoundary(canvas, width, height);
                     }
                     enableIm();
                 } imEndCanvasRenderingContext2D();
@@ -1690,7 +1690,7 @@ function renderPlot(plot: ProgramPlotOutput, program: ProgramInterpretResult) {
 
                 imBeginList();
                 for (const prob of problems.val) {
-                    nextListRoot();
+                    nextListSlot();
                     imBeginLayout(); {
                         imTextSpan("Problem: " + prob);
                     } imEnd();

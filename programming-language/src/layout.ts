@@ -1,6 +1,6 @@
 import { cnApp, cssVars } from './styling.ts';
 import { cn, newCssBuilder } from './utils/cn.ts';
-import { deferClickEventToParent, imBeginDiv, imEnd, imInit, imRef, setClass, setStyle, imBeginSpan, setAttributes, imBeginEl, imMemo, setInnerText, imMemoArray } from './utils/im-dom-utils.ts';
+import { deferClickEventToParent, imBeginDiv, imEnd, imInit, imRef, setClass, setStyle, imBeginSpan, imBeginEl, setInnerText, imMemoArray, setAttr } from './utils/im-dom-utils.ts';
 
 
 // NOTE: you only get 32 of these. use them wisely.
@@ -44,15 +44,20 @@ export function imBeginLayout(flags: number = 0) {
         }
     };
 
-    // NOTE: this is a possibility for a simple API to allow more higher-level layout primitives.
-    // instructs the corresponding end() to pop more than 1 node.
-    // setEndPopCount(2);
-
     return root;
 }
 
 export const SPACE_PX = 1;
 export const SPACE_EM = 2;
+export const SPACE_PERCENT = 2;
+
+function getUnits(num: number) {
+    switch(num) {
+        case SPACE_EM: return "em";
+        case SPACE_PERCENT: return "%";
+        default: return "px";
+    }
+}
 
 export function imBeginSpace(width: number, height: number, type = SPACE_PX, flags = 0) {
     const valRef = imRef<{ width: number; height: number; type: number; }>();
@@ -65,13 +70,13 @@ export function imBeginSpace(width: number, height: number, type = SPACE_PX, fla
         if (val.width !== width || val.type !== type) {
             val.width = width;
             val.type = val.type;
-            setStyle("width", isNaN(width) ? "" : width + (type === SPACE_EM ? "em" : "px"));
+            setStyle("width", isNaN(width) ? "" : width + getUnits(type));
         }
 
         if (val.height !== height || val.type !== type) {
             val.height = height;
             val.type = val.type;
-            setStyle("height", isNaN(height) ? "" : height + (type === SPACE_EM ? "em" : "px"));
+            setStyle("height", isNaN(height) ? "" : height + getUnits(type));
         }
     } // user specified end
 }
@@ -184,9 +189,9 @@ export function imBeginAspectRatio(w: number, h: number, flags: number = 0) {
 
 export function imVerticalBar() {
     imBeginDiv(); {
-        imInit() && setAttributes({
-            style: `width: 5px; background-color: ${cssVars.fg}; margin: 0px 5px;`
-        });
+        if (imInit()) {
+            setAttr("style", `width: 5px; background-color: ${cssVars.fg}; margin: 0px 5px;`);
+        }
     } imEnd();
 }
 

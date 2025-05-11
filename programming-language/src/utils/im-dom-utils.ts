@@ -1,4 +1,4 @@
-// *IM* DOM-utils v0.1.008 - @Tejas-H5
+// *IM* DOM-utils v0.1.009 - @Tejas-H5
 // A variation on DOM-utils with the immediate-mode API isntead of the normal one. I'm still deciding which one I will continue to use.
 // Right now, this one seems better, but the other one has a 'proven' track record of actually working.
 // But in a matter of hours/days, I was able to implement features in this framework that I wasn't able to for months/years in the other one...
@@ -363,7 +363,7 @@ export function setInnerText(text: string, r = getCurrentRoot()) {
     }
 }
 
-function setAttribute(e: ValidElement, attr: string, val: string | null) {
+export function setAttrElement(e: ValidElement, attr: string, val: string | null) {
     if (val !== null) {
         e.setAttribute(attr, val);
     } else {
@@ -371,8 +371,8 @@ function setAttribute(e: ValidElement, attr: string, val: string | null) {
     }
 }
 
-export function setAttr<T extends keyof Attrs>(k: T, v: string | null, r = getCurrentRoot()) {
-    return setAttribute(r.root, k, v);
+export function setAttr(k: string, v: string, r = getCurrentRoot()) {
+    return setAttrElement(r.root, k, v);
 }
 
 export function __onRemoveUiRoot(r: UIRoot, destroy: boolean) {
@@ -478,7 +478,7 @@ export type RenderFnArgs<A extends unknown[], T extends ValidElement = ValidElem
  * Allows you to render a variable number of UI roots at a particular point in your component.
  * UI Roots that aren't rendered in subsequent renders get removed from the dom when you `end()` a list.
  *
- * See {@link nextListRoot} for more info.
+ * See {@link nextListSlot} for more info.
  * See the {@link UIRoot} docs for more info on what a 'UIRoot' even is, what it's limitations are, and how to effectively (re)-use them.
  *
  * Normal usage:
@@ -530,6 +530,7 @@ export function imBeginList(): ListRenderer {
     return result;
 }
 
+
 /**
  * Read {@link imBeginList}'s doc first for context and examples.
  *
@@ -542,7 +543,7 @@ export function imBeginList(): ListRenderer {
  *
  * See the {@link UIRoot} docs for more info on what a 'UIRoot' even is, what it's limitations are, and how to effectively (re)-use them.
  */
-export function nextListRoot(key?: ValidKey) {
+export function nextListSlot(key?: ValidKey) {
     if (currentRoot) {
         imEnd();
     }
@@ -606,7 +607,7 @@ function imStateInternal<T>(supplier: () => T, skipSupplierCheck: boolean): T {
 
     const r = getCurrentRoot();
 
-    let result: T | undefined;
+    let result: T;
     const items = r.items;
     const idx = ++r.itemsIdx;
     if (idx < items.length) {
@@ -742,10 +743,17 @@ export function imBeginEl<E extends ValidElement = ValidElement>(elementSupplier
 // This is now called `imEnd`, because it is better to not squat on the variable name "end".
 // And we may as well just prefix all the methods that generate immediate mode state with `im` and `imEnd`
 export function imEnd() {
-    const l = currentListRenderer;
-    const r = currentRoot;
+    const r = getCurrentRoot();
+    imEndInternal(undefined, r);
+}
 
+function imEndInternal(
+    l: ListRenderer | undefined,
+    r: UIRoot | undefined,
+) {
     if (l) {
+        // close out this list renderer.
+        
         itemsRendered += l.builders.length;
         if (l.keys) {
             itemsRendered += l.keys.size;
@@ -766,8 +774,22 @@ export function imEnd() {
             }
         }
     } else if (r) {
-        if (!isDerived(r)) {
-            deferClickEventToParentInternal(r);
+        // close out this UI Root.
+        
+        if (isDerived(r)) {
+            // Defer the mouse events upwards, so that parent elements can handle it if they want
+            const el = r.root;
+            const parent = el.parentNode;
+
+            if (mouse.clickedElement === el) {
+                mouse.clickedElement = parent;
+            }
+            if (mouse.lastClickedElement === el) {
+                mouse.lastClickedElement = parent;
+            }
+            if (mouse.hoverElement === el) {
+                mouse.hoverElement = parent;
+            }
         }
 
         itemsRendered += r.items.length;
@@ -781,6 +803,7 @@ export function imEnd() {
         }
     }
 
+    // fix the `current` variables
     currentStack.pop();
     if (currentStack.length === 0) {
         currentRoot = undefined;
@@ -797,13 +820,18 @@ export function imEnd() {
     }
 }
 
-// TODO: replace imEndList with just imEnd somehow. 
 export function imEndList() {
     if (currentRoot) {
         imEnd();
     }
 
-    imEnd();
+    // NOTE: the main reason why I won't make a third ITEM_COMPONENT_FENCE 
+    // to detect an incorrect number of calls to begin() and end() methods, is because
+    // most UI components will interlace imBeginList() and imEl() methods frequently enough that
+    // this assertion here or the one in imEnd() will already catch this bug most of the time.
+    const l = getCurrentListRendererInternal();
+
+    imEndInternal(l, undefined);
 }
 
 function newListRenderer(root: UIRoot): ListRenderer {
@@ -830,32 +858,6 @@ export function createSvgElement<E extends SVGElement>(type: string): E {
     return svgEl;
 }
 
-/** 
- * Any name and string is fine, but I've hardcoded a few for autocomplete. 
- * A common bug is to type 'styles' instead of 'style' and wonder why the layout isn't working, for example.
- */
-type Attrs = Record<string, string | string[] | undefined> & {
-    style?: string | Record<keyof HTMLElement["style"], string | null>;
-    class?: string[];
-};
-
-export function setAttributesElement(element: ValidElement, attrs: Attrs) {
-    for (const attr in attrs) {
-        let val = attrs[attr];
-        if (val === undefined) {
-            continue;
-        }
-
-        if (Array.isArray(val)) {
-            // I would have liked for this to only happen to the `class` attribute, but I 
-            // couldn't figure out the correct typescript type. AI was no help either btw.
-            // Also add a space, so that we can call `setAttrs` on the same component multiple times without breaking the class defs
-            val = val.join(" ") + " ";
-        }
-
-        setAttribute(element, attr, val);
-    }
-}
 
 export function newDiv() {
     return document.createElement("div");
@@ -875,6 +877,10 @@ export function imBeginSpan(): UIRoot<HTMLSpanElement> {
 
 export function imTextSpan(text: string) {
     imBeginSpan(); setInnerText(text); imEnd();
+}
+
+export function imTextDiv(text: string) {
+    imBeginDiv(); setInnerText(text); imEnd();
 }
 
 
@@ -949,6 +955,12 @@ function newMemoState(): { last: unknown } {
 
 /**
  * Returns true if it was different to the previous value.
+ * ```ts
+ * if (imMemo(val)) {
+ *      // do expensive thing with val here
+ *      setStyle("backgroundColor", getColor(val));
+ * }
+ * ```
  */
 export function imMemo(val: unknown): boolean {
     const ref = imState(newMemoState);
@@ -964,6 +976,7 @@ export function imMemoArray(...val: unknown[]): boolean {
     let changed = false;
     if (val.length !== arr.length) {
         changed = true;
+        arr.length = val.length;
     }
 
     for (let i = 0; i < val.length; i++) {
@@ -1061,27 +1074,6 @@ export function imInit(): boolean {
     return false;
 }
 
-/**
- * ```ts
- * function Component() {
- *      imBeginDiv(); {
- *          // By putting it behind imInit, we only do this expensive call once
- *          imInit() && setAttributes({ 
- *              class: [cn.row, cn.alignItemsCenter, cn.justifyContentCenter],
- *              anythingReally: "some value"
- *          });
- *      } imEnd();
- * }
- * ```
- */
-export function setAttributes(attrs: Attrs, r = getCurrentRoot()) {
-    // When elementSupplier is null, this is because the root is not the 'owner' of a particular DOM element - 
-    // rather, we got it from a ListRenderer somehow - setting attributes on these roots is usually a mistake
-    assert(r.elementSupplier !== null);
-
-    setAttributesElement(r.root, attrs);
-}
-
 export function addClasses(classes: string[]) {
     for (let i = 0; i < classes.length; i++) {
         setClass(classes[i]);
@@ -1132,7 +1124,14 @@ let isRendering = false;
 
 let initialized = false;
 
-export function initializeDomRootAnimiationLoop(renderFn: () => void, renderRoot?: UIRoot) {
+/**
+ * @param renderFn This is the method that will be called inside of the `requestAnimationFrame` loop
+ * @param renderRoot This is the dom element where we mount all the components. By default, it is the `body` element.
+ */
+export function initializeImDomUtils(
+    renderFn: () => void, 
+    renderRoot?: UIRoot
+) {
     if (initialized) {
         return;
     }
@@ -1146,16 +1145,14 @@ export function initializeDomRootAnimiationLoop(renderFn: () => void, renderRoot
         }
 
         isRendering = true;
+        startRendering(renderRoot);
 
         imBeginFrame();
 
-        startRendering(renderRoot);
         renderFn();
 
         imEndFrame();
 
-        // If this throws, then you've forgotten to pop some elements off the stack.
-        // inspect currentStack in the debugger for more info
         assert(currentStack.length === 1);
 
         isRendering = false;
@@ -1173,45 +1170,28 @@ export function initializeDomRootAnimiationLoop(renderFn: () => void, renderRoot
     requestAnimationFrame(animation);
 }
 
-export type KeyboardState = {
-    keysPressed: string[];
-    keysPressedOrRepeated: string[];
-    keysReleased: string[];
-    keysPressedLower: string[];
-    keysReleasedLower: string[];
-
-    // The order of keysHeld in particular cannot be trusted.
-    // The other two will be in order though.
-    keysHeld: string[];
-    keysHeldLower: string[];
+export type ImKeyboardState = {
+    // We need to use this approach instead of a buffered approach like `keysPressed: string[]`, so that a user
+    // may call `preventDefault` on the html event as needed.
+    keyDown: KeyboardEvent | null;
+    keyUp: KeyboardEvent | null;
+    blur: boolean;
 };
 
-function resetKeyboardState(keyboard: KeyboardState, clearPersistedDataAsWell: boolean) {
-    keyboard.keysPressed.length = 0;
-    keyboard.keysPressedOrRepeated.length = 0;
-    keyboard.keysPressedLower.length = 0;
-    keyboard.keysReleased.length = 0;
-    keyboard.keysReleasedLower.length = 0;
-
-    if (clearPersistedDataAsWell) {
-        keyboard.keysHeld.length = 0;
-        keyboard.keysHeldLower.length = 0;
-    }
+function resetKeyboardState(keyEvent: ImKeyboardState) {
+    keyEvent.keyDown = null;
+    keyEvent.keyUp = null;
+    keyEvent.blur = false;
 }
 
 
-// NOTE: might be obsolete. or better on the user side.
-const keyboard: KeyboardState = {
-    keysPressed: [],
-    keysPressedOrRepeated: [],
-    keysHeld: [],
-    keysReleased: [],
-    keysPressedLower: [],
-    keysHeldLower: [],
-    keysReleasedLower: [],
+const keyboardEvents: ImKeyboardState = {
+    keyDown: null,
+    keyUp: null,
+    blur: false,
 };
 
-export type MouseState = {
+export type ImMouseState = {
     lastX: number;
     lastY: number;
 
@@ -1238,7 +1218,7 @@ export type MouseState = {
     hoverElementOriginal: object | null;
 };
 
-function resetMouseState(mouse: MouseState, clearPersistedStateAsWell: boolean) {
+function resetMouseState(mouse: ImMouseState, clearPersistedStateAsWell: boolean) {
     mouse.dX = 0;
     mouse.dY = 0;
     mouse.lastX = mouse.X;
@@ -1259,7 +1239,7 @@ function resetMouseState(mouse: MouseState, clearPersistedStateAsWell: boolean) 
     }
 }
 
-const mouse: MouseState = {
+const mouse: ImMouseState = {
     lastX: 0,
     lastY: 0,
 
@@ -1286,18 +1266,18 @@ const mouse: MouseState = {
     hoverElementOriginal: null,
 };
 
-export function getMouse() {
+export function getImMouse() {
     return mouse;
 }
 
-export function getKeys() {
-    return keyboard;
+export function getImKeys(): ImKeyboardState {
+    return keyboardEvents;
 }
 
 
 // I cant fking believe this shit works, lol
 export function elementHasMouseClick() {
-    const mouse = getMouse();
+    const mouse = getImMouse();
     const r = getCurrentRoot();
     if (mouse.leftMouseButton) {
         return r.root === mouse.clickedElement;
@@ -1331,28 +1311,13 @@ export function getHoveredElement() {
 export function deferClickEventToParent() {
 }
 
-function deferClickEventToParentInternal(r: UIRoot) {
-    const el = r.root;
-    const parent = el.parentNode;
-
-    if (mouse.clickedElement === el) {
-        mouse.clickedElement = parent;
-    }
-    if (mouse.lastClickedElement === el) {
-        mouse.lastClickedElement = parent;
-    }
-    if (mouse.hoverElement === el) {
-        mouse.hoverElement = parent;
-    }
-}
-
 function setClickedElement(el: object | null) {
     mouse.clickedElement = el;
     mouse.lastClickedElement = el;
     mouse.lastClickedElementOriginal = el;
 }
 
-export function initializeImEvents() {
+function initializeImEvents() {
     document.addEventListener("mousedown", (e) => {
         setClickedElement(e.target);
 
@@ -1406,78 +1371,23 @@ export function initializeImEvents() {
         console.log("[Scrolling]: ", mouse.scrollWheel);
     });
     document.addEventListener("keydown", (e) => {
-        if (e.repeat) {
-            return;
-        }
-
-        if (!e.repeat) {
-            keyboard.keysPressed.push(e.key);
-            keyboard.keysPressedLower.push(e.key.toLowerCase());
-            keyboard.keysHeld.push(e.key);
-            keyboard.keysHeldLower.push(e.key.toLowerCase());
-        } 
-
-        keyboard.keysPressedOrRepeated.push(e.key);
+        keyboardEvents.keyDown = e;
+        doRender();
     });
     document.addEventListener("keyup", (e) => {
-        const key = e.key;
-        const keyLower = key.toLowerCase();
-        unorderedRemoveKey(keyboard.keysHeld, key);
-        unorderedRemoveKey(keyboard.keysHeldLower, keyLower);
-
-        keyboard.keysReleased.push(key);
-        keyboard.keysReleasedLower.push(keyLower);
+        keyboardEvents.keyUp = e;
+        doRender();
     });
-    document.addEventListener("blur", () => {
+    window.addEventListener("blur", () => {
         resetMouseState(mouse, true);
-        resetKeyboardState(keyboard, true);
+
+        resetKeyboardState(keyboardEvents);
+
+        keyboardEvents.blur = true;
+
+        doRender();
     });
 }
-
-export function isShiftHeld() {
-    return isKeyHeld("Shift");
-}
-
-export function isCtrlHeld() {
-    return isKeyHeld("Control");
-}
-
-export function isMetaHeld() {
-    return isKeyHeld("Meta");
-}
-
-export function isKeyHeld(key: string) {
-    for (let i = 0; i < keyboard.keysHeld.length; i++) {
-        if (keyboard.keysHeld[i] === key) {
-            return true;
-        }
-    }
-    return false;
-}
-
-export function isKeyPressed(key: string) {
-    for (let i = 0; i < keyboard.keysPressed.length; i++) {
-        if (keyboard.keysPressed[i] === key) {
-            return true;
-        }
-    }
-    return false;
-}
-
-function unorderedRemove(arr: unknown[], idx: number) {
-    if (arr.length === 0) return;
-
-    arr[idx] = arr[arr.length - 1];
-    arr.length--;
-}
-
-function unorderedRemoveKey(keys: string[], key: string) {
-    const idx = keys.indexOf(key);
-    if (idx !== -1) {
-        unorderedRemove(keys, idx);
-    }
-}
-
 
 function newPreventScrollEventPropagationState() {
     return { 
@@ -1502,7 +1412,7 @@ export function imPreventScrollEventPropagation() {
         });
     }
 
-    const mouse = getMouse();
+    const mouse = getImMouse();
     if (state.isBlocking && elementHasMouseHover() && mouse.scrollWheel !== 0) {
         state.scrollY += mouse.scrollWheel;
         mouse.scrollWheel = 0;
@@ -1520,7 +1430,7 @@ function imBeginFrame() {
 }
 
 function imEndFrame() {
-    resetKeyboardState(keyboard, false);
+    resetKeyboardState(keyboardEvents);
     resetMouseState(mouse, false);
 
     mouse.hasMouseEvent = false;

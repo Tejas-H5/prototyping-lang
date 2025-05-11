@@ -1630,7 +1630,7 @@ export function getBuiltinFunctionsMap() {
 
                 for (let i = 0; i < n; i++) {
                     const val = getSliceValue(vec.val.values, i);
-                    const pixelVal = inverseLerp(minVal, maxVal, val);
+                    const pixelVal = inverseLerp(val, minVal, maxVal);
                     pixels[i] = pixelVal;
                 }
 
@@ -1672,15 +1672,15 @@ export function getBuiltinFunctionsMap() {
 
                 for (let i = 0; i < n; i += 3) {
                     const rVal = getSliceValue(vec.val.values, i + 0);
-                    const rPixelVal = inverseLerp(rMinVal, rMaxVal, rVal);
+                    const rPixelVal = inverseLerp(rVal, rMinVal, rMaxVal);
                     pixels[i + 0] = rPixelVal;
 
                     const gVal = getSliceValue(vec.val.values, i + 1);
-                    const gPixelVal = inverseLerp(gMinVal, gMaxVal, gVal);
+                    const gPixelVal = inverseLerp(gVal, gMinVal, gMaxVal);
                     pixels[i + 1] = gPixelVal;
 
                     const bVal = getSliceValue(vec.val.values, i + 2);
-                    const bPixelVal = inverseLerp(bMinVal, bMaxVal, bVal);
+                    const bPixelVal = inverseLerp(bVal, bMinVal, bMaxVal);
                     pixels[i + 2] = bPixelVal;
                 }
 

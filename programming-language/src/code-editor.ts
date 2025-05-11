@@ -1,4 +1,4 @@
-import { defaultTextEditorKeyboardEventHandler, getLastNewlinePos, getNextNewlinePos, handleTextEditorClickEventForChar, imBeginTextEditor, imEndTextEditor, textEditorQueryBufferAtPos, loadText, newTextEditorState, textEditorCursorIsSelected, textEditorDeleteCurrentSelection, textEditorGetNextChar, textEditorHasChars, textEditorHasSelection, textEditorInsert, textEditorMarkViewEnd, textEditorRemove, textEditorSetSelection, TextEditorState, handleTextEditorMouseScrollEvent } from 'src/utils/text-editor';
+import { defaultTextEditorKeyboardEventHandler, getLastNewlinePos, getNextNewlinePos, handleTextEditorClickEventForChar, imBeginTextEditor, imEndTextEditor, textEditorQueryBufferAtPos, loadText, newTextEditorState, textEditorCursorIsSelected, textEditorGetNextChar, textEditorHasChars, textEditorHasSelection, textEditorInsert, textEditorMarkViewEnd, textEditorRemove, textEditorSetSelection, TextEditorState, handleTextEditorMouseScrollEvent } from 'src/utils/text-editor';
 import { imProgramOutputs } from './code-output';
 import { renderSliderBody } from './components/slider';
 import {
@@ -47,8 +47,6 @@ import { cnApp } from './styling';
 import {
     disableIm,
     enableIm,
-    getCurrentRoot,
-    imArray,
     imBeginList,
     imBeginSpan,
     imEnd,
@@ -59,8 +57,8 @@ import {
     imRef,
     imState,
     imStateInline,
-    nextListRoot,
-    setAttributes,
+    nextListSlot,
+    setAttr,
     setClass,
     setInnerText,
     setStyle
@@ -117,13 +115,17 @@ const renderDiagnostics = (diagnostics: DiagnosticInfo[], col: string, line: num
             continue
         }
 
-        nextListRoot();
+        nextListSlot();
 
         // transparent span
         imBeginLayout(); {
             imBeginSpan(); {
-                imInit() && setAttributes({ style: "color: transparent" });
-                setInnerText("0".repeat(max(0, err.pos.col + err.pos.tabs * UNANIMOUSLY_DECIDED_TAB_SIZE)));
+                if (imInit()) {
+                    setAttr("style", "color: transparent");
+                }
+
+                const numWhitespaces = max(0, err.pos.col + err.pos.tabs * UNANIMOUSLY_DECIDED_TAB_SIZE);
+                setInnerText("0".repeat(numWhitespaces));
             } imEnd();
 
             imBeginSpan(); {
@@ -160,7 +162,7 @@ function imAutocomplete(lastIdentifier: string) {
     }
 
     imBeginList();
-    if (nextListRoot() && results.length > 0) {
+    if (nextListSlot() && results.length > 0) {
         // TODO: when we do the AST editor, this will completely change, or be ripped out.
 
         imBeginLayout(PREWRAP | CODE | TRANSPARENT); {
@@ -177,7 +179,7 @@ function imAutocomplete(lastIdentifier: string) {
                 if (i > 5) {
                     break;
                 }
-                nextListRoot();
+                nextListSlot();
 
                 imBeginLayout(CODE); {
                     setStyle("border", "1px solid black");
@@ -186,11 +188,11 @@ function imAutocomplete(lastIdentifier: string) {
                     imBeginList();
                     for (let i = 0; i < v.args.length; i++) {
                         const arg = v.args[i];
-                        nextListRoot();
+                        nextListSlot();
                         imTextSpan(arg.name);
 
                         imBeginList();
-                        if (nextListRoot() && arg.optional) {
+                        if (nextListSlot() && arg.optional) {
                             imTextSpan("?");
                         }
                         imEndList();
@@ -207,7 +209,7 @@ function imAutocomplete(lastIdentifier: string) {
                         imTextSpan(type);
 
                         imBeginList();
-                        if (nextListRoot() && i < v.args.length - 1) {
+                        if (nextListSlot() && i < v.args.length - 1) {
                             imTextSpan(", ");
                         }
                         imEndList();
@@ -257,8 +259,8 @@ function newSimpleTextEditorState(): SimpleTextEditorState {
     };
 }
 
-function imBeginSimpleTextInput(s: SimpleTextEditorState) {
-    imBeginTextEditor(s.editorState);
+function imBeginSimpleTextInput(ctx: GlobalContext, s: SimpleTextEditorState) {
+    imBeginTextEditor(s.editorState, ctx.input.keyboard.ctrlHeld, ctx.input.keyboard.shiftHeld);
 }
 
 function imEndSimpleTextInput(s: SimpleTextEditorState) {
@@ -270,11 +272,11 @@ function imSimpleTextInputBody(s: SimpleTextEditorState) {
     imBeginLayout(COL); {
         imBeginList();
         while (textEditorHasChars(s.editorState)) {
-            nextListRoot();
+            nextListSlot();
             imBeginLayout(ROW); {
                 imBeginList();
                 while (textEditorHasChars(s.editorState)) {
-                    nextListRoot();
+                    nextListSlot();
                     const textSpan = imBeginSpan(); {
                         const actualC = textEditorGetNextChar(s.editorState);
                         const ws = isWhitespace(actualC);
@@ -686,10 +688,10 @@ export function imAppCodeEditor(ctx: GlobalContext) {
         }
 
         // TODO: only render the stuff that is onscreen
-        imBeginTextEditor(editorState); {
+        imBeginTextEditor(editorState, ctx.input.keyboard.ctrlHeld, ctx.input.keyboard.shiftHeld); {
             imBeginList();
             while (textEditorHasChars(editorState)) {
-                nextListRoot();
+                nextListSlot();
                 const line = imBeginLayout(COL); {
                     const lineIdx = editorState._renderCursor.line + 1;
 
@@ -713,7 +715,7 @@ export function imAppCodeEditor(ctx: GlobalContext) {
                                 imBeginLayout(ROW); {
                                     imBeginList();
                                     while (textEditorHasChars(editorState)) {
-                                        nextListRoot();
+                                        nextListSlot();
 
                                         const actualC = textEditorGetNextChar(editorState);
 
@@ -824,17 +826,17 @@ export function imAppCodeEditor(ctx: GlobalContext) {
                                 {
                                     let numErrors = 0;
                                     imBeginList();
-                                    if (nextListRoot() && lastInterpreterResult?.errors) {
+                                    if (nextListSlot() && lastInterpreterResult?.errors) {
                                         renderDiagnostics(lastInterpreterResult.errors, "#F00", lineIdx);
                                         numErrors += lastInterpreterResult.errors.length;
                                     }
 
-                                    if (nextListRoot() && lastParseResult?.warnings) {
+                                    if (nextListSlot() && lastParseResult?.warnings) {
                                         renderDiagnostics(lastParseResult.warnings, "#F00", lineIdx);
                                         numErrors += lastParseResult.warnings.length;
                                     }
 
-                                    if (nextListRoot() &&
+                                    if (nextListSlot() &&
                                         // if this is true, Error: identifier isnt set will prevent this from opening, which is bad.
                                         // we should reconsider even showing that error.
                                         // numErrors === 0 && 
@@ -862,14 +864,14 @@ export function imAppCodeEditor(ctx: GlobalContext) {
                         const outputs = lastInterpreterResult?.outputs;
                         const inputs = outputs?.uiInputsPerLine?.get(lineIdx);
                         imBeginList();
-                        if (nextListRoot() && inputs) {
+                        if (nextListSlot() && inputs) {
                             imBeginList();
                             for (const ui of inputs) {
-                                nextListRoot();
+                                nextListSlot();
 
                                 imBeginLayout(COL | GAP | NORMAL | PADDED); {
                                     imBeginList();
-                                    nextListRoot(ui.t);
+                                    nextListSlot(ui.t);
                                     switch (ui.t) {
                                         case UI_INPUT_SLIDER: {
                                             imBeginLayout(ROW | GAP); {
@@ -905,7 +907,7 @@ export function imAppCodeEditor(ctx: GlobalContext) {
 
                         const thisLineOutputs = lastInterpreterResult?.flushedOutputs?.get(lineIdx);
                         imBeginList();
-                        if (nextListRoot() && thisLineOutputs && lastInterpreterResult) {
+                        if (nextListSlot() && thisLineOutputs && lastInterpreterResult) {
                             imBeginLayout(NORMAL | PADDED); {
                                 if (imInit()) {
                                     setStyle("maxWidth", "60vw");
@@ -947,19 +949,17 @@ export function imAppCodeEditor(ctx: GlobalContext) {
         } imEnd();
 
         imBeginList();
-        if (nextListRoot() && s.isFinding) {
+        if (nextListSlot() && s.isFinding) {
             imBeginLayout(ROW | PRE | ABSOLUTE | OPAQUE); {
                 if (imInit()) {
-                    setAttributes({
-                        style: "bottom: 0; left: 0; right: 0"
-                    });
+                    setAttr("style", "bottom: 0; left: 0; right: 0");
                 }
 
                 imBeginLayout(); {
                     imTextSpan("Find: ");
                 } imEnd();
 
-                imBeginSimpleTextInput(finderState)
+                imBeginSimpleTextInput(ctx, finderState)
                 imSimpleTextInputBody(finderState);
 
                 handleCodeEditorEvents(s, editorState, finderState.editorState);
@@ -967,5 +967,9 @@ export function imAppCodeEditor(ctx: GlobalContext) {
             } imEnd();
         }
         imEndList();
+        // Empty space below the lines should just handle click events for the end of the line
+        imBeginLayout(FLEX); {
+            handleTextEditorClickEventForChar(editorState, editorState._renderCursor.pos);
+        } imEnd();
     } imEnd();
 }

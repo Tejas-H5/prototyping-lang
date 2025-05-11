@@ -20,7 +20,7 @@ export function lerp(a: number, b: number, t: number) {
     return a + (b - a) * t;
 }
 
-export function inverseLerp(start: number, end: number, value: number) {
+export function inverseLerp(value: number, start: number, end: number) {
     return (value - start) / (end - start);
 }
 

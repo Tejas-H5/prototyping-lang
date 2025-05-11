@@ -9,8 +9,7 @@ import {
 import "./styling.ts";
 import {
     imState,
-    initializeDomRootAnimiationLoop,
-    initializeImEvents
+    initializeImDomUtils,
 } from './utils/im-dom-utils.ts';
 
 
@@ -26,5 +25,4 @@ function renderRoot() {
 }
 
 initCnStyles();
-initializeImEvents();
-initializeDomRootAnimiationLoop(renderRoot);
+initializeImDomUtils(renderRoot);

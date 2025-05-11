@@ -1,7 +1,7 @@
 import { cssVars } from "src/styling";
 import { cn, newCssBuilder } from "src/utils/cn";
 import { execCommand } from "src/utils/depracated-dom-api-wrappers";
-import { imBeginDiv, imBeginEl, imEnd, imState, imInit, Ref, setAttributes, setClass, setInputValue, imBeginSpan, setInnerText, imBeginList, nextListRoot, isEditingTextSomewhereInDocument, imEndList, } from "src/utils/im-dom-utils";
+import { imBeginDiv, imBeginEl, imEnd, imState, imInit, Ref, setClass, setInputValue, imBeginSpan, setInnerText, imBeginList, nextListSlot, imEndList, setAttr } from "src/utils/im-dom-utils";
 import { getLineBeforePos } from "src/utils/text-utils";
 
 const CSSVARS_FOCUS = cssVars.bg;
@@ -70,16 +70,16 @@ export function imEditableTextArea({
     state.isEditing = isEditing;
 
     const root = imBeginDiv(); {
-        imInit() && setAttributes({
-            class: [cn.flex1, cn.row, cn.h100, cn.overflowYAuto] 
-        });
+        if (imInit()) {
+            setAttr("class", [cn.flex1, cn.row, cn.h100, cn.overflowYAuto].join(" "));
+        }
 
         // This is now always present.
         imBeginDiv(); {
-            imInit() && setAttributes({
-                class: [cn.handleLongWords, cn.relative, cn.w100, cn.hFitContent],
-                style: "min-height: 100%"
-            });
+            if (imInit()) {
+                setAttr("class", [cn.handleLongWords, cn.relative, cn.w100, cn.hFitContent].join(" "));
+                setAttr("style", "min-height: 100%");
+            }
 
             setClass(cn.preWrap, !isOneLine)
             setClass(cn.pre, !!isOneLine)
@@ -95,22 +95,22 @@ export function imEditableTextArea({
             // This full-stop at the end of the text is what prevents the text-area from collapsing in on itself
             imBeginSpan(); {
                 if (imInit()) {
-                    setAttributes({ style: "color: transparent" });
+                    setAttr("style", "color: transparent");
                     setInnerText(".");
                 }
             } imEnd();
 
             imBeginList();
-            if (nextListRoot() && isEditing) {
+            if (nextListSlot() && isEditing) {
                 const textArea = imBeginEl(newTextArea).root; {
                     if (textAreaRef) {
                         textAreaRef.val = textArea;
                     }
 
-                    imInit() && setAttributes({
-                        class: [cnEditableTextArea, cn.allUnset, cn.absoluteFill, cn.preWrap, cn.w100, cn.h100],
-                        style: "background-color: transparent; color: transparent; overflow-y: hidden; padding: 0px",
-                    });
+                    if (imInit()) {
+                        setAttr("class", [cnEditableTextArea, cn.allUnset, cn.absoluteFill, cn.preWrap, cn.w100, cn.h100].join(" "));
+                        setAttr("style", "background-color: transparent; color: transparent; overflow-y: hidden; padding: 0px");
+                    }
 
                     if (!wasEditing) {
                         textArea.focus({ preventScroll: true });

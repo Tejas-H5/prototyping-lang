@@ -22,9 +22,19 @@ export type GlobalContext = {
     lastInterpreterResult: ProgramInterpretResult | undefined;
     lastLoaded: number;
 
+    input: GlobalInput;
+
     // This stuff is actually saved and persisted between runs
     state: GlobalState;
 }
+
+type GlobalInput = {
+    keyboard: {
+        escape: boolean;
+        shiftHeld: boolean;
+        ctrlHeld: boolean;
+    },
+};
 
 export function rerun(ctx: GlobalContext) {
     ctx.lastParseResult = parse(ctx.state.text);
@@ -85,6 +95,14 @@ export function newGlobalContext(): GlobalContext {
         lastParseResult: undefined, 
         lastInterpreterResult: undefined,
         lastLoaded: 0,
+
+        input: {
+            keyboard: {
+                escape: false,
+                shiftHeld: false,
+                ctrlHeld: false,
+            }
+        }
     };
 }
 export function newGlobalState(): GlobalState {
