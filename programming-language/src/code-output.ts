@@ -1216,7 +1216,7 @@ function imBeginCanvasRenderingContext2D() {
 
     imBeginLayout(RELATIVE | W100 | H100);
 
-    const { rect } = imTrackSize();
+    const { size } = imTrackSize();
     const canvasRoot = imBeginEl(newCanvasElement);
 
     const canvas = canvasRoot.root;
@@ -1234,8 +1234,8 @@ function imBeginCanvasRenderingContext2D() {
     }
     const ctx = ctxRef.val;
 
-    const w = rect.width;
-    const h = rect.height;
+    const w = size.width;
+    const h = size.height;
     // const sf = window.devicePixelRatio ?? 1;
     const dpi = 2; // TODO: revert
     const wC = imMemo(w);
@@ -1718,34 +1718,28 @@ const codeExamples: CodeExample[] = [
         name: "Plotting",
         code:
             `
-// Multiple sine waves, each sine wave is made of multiple segments with gradually increasing colour
+// Creating a square/triangle wave from multiple sine waves
 
-n = 10
+harmonics = slider("harmonics", 5, 30, 1)
+harmonic_offset = slider("harmonic_offset", 1, 10, 1)
 
-for size in range(1, 6) {
-    period = 0.1
-    pos = 0
+samples = list[]
+for t in range(0, 4*PI, 0.05) {
+	sample = 0
+	magnitude = 0
+	
+	for harmonic in range(1, harmonics * harmonic_offset, harmonic_offset) {	
+		m = 1 / harmonic
+		sample = sample + (
+			m * 2 * sin(t * harmonic) - 1
+		)
+		magnitude = magnitude + m
+	}
 
-    for i in range(0, n) {
-        sine_wave = list[]
-        for j in range(pos, pos + 3 / period) {
-            push(
-                sine_wave, 
-                [j, size * 10 * sin(j * period) + i]
-            )
-        }
-        pos = pos + 3
-
-        col = [i/n, 0, 0]
-
-        // try changing this 1 to i
-        plot_lines(1, sine_wave, col)
-    }
+	push(samples, [t, sample / magnitude])
 }
 
-// try this
-// output_here()
-
+plot_lines(1, samples)
 `
     },
     {

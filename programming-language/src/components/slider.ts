@@ -1,5 +1,5 @@
 import { cssVars } from 'src/styling';
-import { deferClickEventToParent, elementHasMouseDown, getCurrentRoot, getImMouse, imBeginDiv, imBeginList, imEnd, imEndList, imInit, imMemo, imMemoObjectVals, imState, imTrackSize, nextListSlot, setStyle } from 'src/utils/im-dom-utils';
+import { elementHasMouseDown, getCurrentRoot, getImMouse, imBeginDiv, imBeginList, imEnd, imEndList, imInit, imMemo, imMemoObjectVals, imState, imTrackSize, nextListSlot, setStyle } from 'src/utils/im-dom-utils';
 import { clamp, inverseLerp, lerp } from 'src/utils/math-utils';
 
 export function newSliderState() {
@@ -22,7 +22,7 @@ export function renderSliderBody(
 
     // slider body
     imBeginDiv(); {
-        const { rect } = imTrackSize();
+        const { size } = imTrackSize();
 
         if (imInit()) {
             setStyle("display", "flex");
@@ -48,33 +48,32 @@ export function renderSliderBody(
 
         s.value = clamp(s.value, s.start, s.end);
 
-        const sliderHandleSize = rect.height;
+        const sliderHandleSize = size.height;
 
         // little dots for every step
-        imBeginList(); {
-            if (s.step) {
-                const width = s.end - s.start;
-                const count = Math.floor(width / s.step);
-                if (count < 50) {
-                    for (let i = 0; i < count - 1; i++) {
-                        let t = (i + 1) / count;
-                        const sliderPos = lerp(0, rect.width - sliderHandleSize, t);
+        imBeginList(); 
+        if (s.step) {
+            const width = s.end - s.start;
+            const count = Math.floor(width / s.step);
+            if (count < 50) {
+                for (let i = 0; i < count - 1; i++) {
+                    let t = (i + 1) / count;
+                    const sliderPos = lerp(0, size.width - sliderHandleSize, t);
 
-                        nextListSlot();
+                    nextListSlot();
 
-                        imBeginDiv(); {
-                            if (imInit()) {
-                                setStyle("position", "absolute");
-                                setStyle("aspectRatio", "1 / 1");
-                                setStyle("height", "100%");
-                                setStyle("backgroundColor", cssVars.mg);
-                                setStyle("transformOrigin", "center");
-                                setStyle("transform", "scale(0.4) rotate(45deg)");
-                            }
+                    imBeginDiv(); {
+                        if (imInit()) {
+                            setStyle("position", "absolute");
+                            setStyle("aspectRatio", "1 / 1");
+                            setStyle("height", "100%");
+                            setStyle("backgroundColor", cssVars.mg);
+                            setStyle("transformOrigin", "center");
+                            setStyle("transform", "scale(0.4) rotate(45deg)");
+                        }
 
-                            setStyle("left", sliderPos + "px");
-                        } imEnd();
-                    }
+                        setStyle("left", sliderPos + "px");
+                    } imEnd();
                 }
             }
         }
@@ -96,11 +95,9 @@ export function renderSliderBody(
             const sChanged = imMemoObjectVals(s);
             if (sChanged) {
                 const t = inverseLerp(s.value, s.start, s.end);
-                const sliderPos = lerp(0, rect.width - sliderHandleSize, t);
+                const sliderPos = lerp(0, size.width - sliderHandleSize, t);
                 setStyle("left", sliderPos + "px");
             }
-
-            deferClickEventToParent();
         } imEnd();
 
         const mouse = getImMouse();
@@ -118,7 +115,6 @@ export function renderSliderBody(
             }
             s.value = clamp(s.value, s.start, s.end);
         }
-
     } imEnd();
 
     return s;

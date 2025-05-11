@@ -478,7 +478,7 @@ export type RenderFnArgs<A extends unknown[], T extends ValidElement = ValidElem
  * Allows you to render a variable number of UI roots at a particular point in your component.
  * UI Roots that aren't rendered in subsequent renders get removed from the dom when you `end()` a list.
  *
- * See {@link nextListSlot} for more info.
+ * See {@link nextListRoot} for more info.
  * See the {@link UIRoot} docs for more info on what a 'UIRoot' even is, what it's limitations are, and how to effectively (re)-use them.
  *
  * Normal usage:
@@ -776,7 +776,7 @@ function imEndInternal(
     } else if (r) {
         // close out this UI Root.
         
-        if (isDerived(r)) {
+        if (!isDerived(r)) {
             // Defer the mouse events upwards, so that parent elements can handle it if they want
             const el = r.root;
             const parent = el.parentNode;
@@ -1036,7 +1036,7 @@ export function imOn<K extends keyof HTMLElementEventMap>(type: K): HTMLElementE
 
         const handler = (e: HTMLElementEventMap[K]) => {
             eventRef.val = e;
-            doRender();
+            doRender(true);
         }
         r.root.addEventListener(
             type, 
@@ -1118,9 +1118,31 @@ export function deltaTimeSeconds(): number {
     return dtSeconds;
 }
 
-let doRender = () => {};
+let doRender = (isEvent: boolean) => {};
 
 let isRendering = false;
+
+let _isExcessEventRender = false;
+
+/**
+ * This framework rerenders your entire application every event. 
+ * This is required, so that we have a nice immediatem mode API for events, while 
+ * also allowing for calling `e.preventDefault()` on any specific event, within that event cycle itself.
+ *
+ * This does mean that some expensive renders will become noticeably slow when you have multiple keys held down, for instance.
+ *
+ * ```ts
+ * imBeginCanvas2D(); 
+ * if (!isRenderEventDriven()) {
+ *
+ *      // draw expensive canvas thing
+ * } imEnd();
+ * ```
+ *
+ */
+export function isExcessEventRender() {
+    return _isExcessEventRender;
+}
 
 let initialized = false;
 
@@ -1128,10 +1150,7 @@ let initialized = false;
  * @param renderFn This is the method that will be called inside of the `requestAnimationFrame` loop
  * @param renderRoot This is the dom element where we mount all the components. By default, it is the `body` element.
  */
-export function initializeImDomUtils(
-    renderFn: () => void, 
-    renderRoot?: UIRoot
-) {
+export function initializeImDomUtils(renderFn: () => void, renderRoot?: UIRoot) {
     if (initialized) {
         return;
     }
@@ -1139,9 +1158,13 @@ export function initializeImDomUtils(
 
     initializeImEvents();
 
-    doRender = () => {
+    doRender = (isInsideEvent) => {
         if (isRendering) {
             return;
+        }
+
+        if (!isInsideEvent) {
+            _isExcessEventRender = false;
         }
 
         isRendering = true;
@@ -1156,13 +1179,17 @@ export function initializeImDomUtils(
         assert(currentStack.length === 1);
 
         isRendering = false;
+
+        if (isInsideEvent) {
+            _isExcessEventRender = isInsideEvent;
+        }
     }
 
     const animation = (t: number) => {
         dtSeconds = (t - lastTime) / 1000;
         lastTime = t;
 
-        doRender();
+        doRender(false);
 
         requestAnimationFrame(animation);
     };
@@ -1287,7 +1314,8 @@ export function elementHasMouseClick() {
 
 export function elementHasMouseDown(
     // Do we care that this element was initially clicked?
-    // Set to false if you want to detect when an element drags their mouse over this element.
+    // Set to false if you want to detect when an element drags their mouse over this element but 
+    // it didn't initiate the click from this element.
     hadClick = true
 ) {
     const r = getCurrentRoot();
@@ -1306,9 +1334,6 @@ export function elementHasMouseHover() {
 
 export function getHoveredElement() {
     return mouse.hoverElement;
-}
-
-export function deferClickEventToParent() {
 }
 
 function setClickedElement(el: object | null) {
@@ -1372,11 +1397,11 @@ function initializeImEvents() {
     });
     document.addEventListener("keydown", (e) => {
         keyboardEvents.keyDown = e;
-        doRender();
+        doRender(true);
     });
     document.addEventListener("keyup", (e) => {
         keyboardEvents.keyUp = e;
-        doRender();
+        doRender(true);
     });
     window.addEventListener("blur", () => {
         resetMouseState(mouse, true);
@@ -1385,7 +1410,7 @@ function initializeImEvents() {
 
         keyboardEvents.blur = true;
 
-        doRender();
+        doRender(true);
     });
 }
 
@@ -1450,25 +1475,25 @@ export type SizeState = {
 }
 
 function newImGetSizeState(): {
-    rect: SizeState;
+    size: SizeState;
     observer: ResizeObserver;
     resized: boolean;
 } {
     const r = getCurrentRoot();
 
     const self = {
-        rect: { width: 0, height: 0, },
+        size: { width: 0, height: 0, },
         resized: false,
         observer: new ResizeObserver((entries) => {
             for (const entry of entries) {
                 // NOTE: resize-observer cannot track the top, right, left, bottom of a rect. Sad.
                 
-                self.rect.width = entry.contentRect.width;
-                self.rect.height = entry.contentRect.height;
+                self.size.width = entry.contentRect.width;
+                self.size.height = entry.contentRect.height;
                 break;
             }
 
-            doRender();
+            doRender(true);
         })
     };
 

@@ -7,10 +7,7 @@ import {
     stopFpsCounter,
 } from "./components/fps-counter.ts";
 import "./styling.ts";
-import {
-    imState,
-    initializeImDomUtils,
-} from './utils/im-dom-utils.ts';
+import { imState, initializeImDomUtils, } from './utils/im-dom-utils.ts';
 
 
 function renderRoot() {

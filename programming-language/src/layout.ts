@@ -1,6 +1,6 @@
 import { cnApp, cssVars } from './styling.ts';
 import { cn, newCssBuilder } from './utils/cn.ts';
-import { deferClickEventToParent, imBeginDiv, imEnd, imInit, imRef, setClass, setStyle, imBeginSpan, imBeginEl, setInnerText, imMemoArray, setAttr } from './utils/im-dom-utils.ts';
+import { imBeginDiv, imEnd, imInit, imRef, setClass, setStyle, imBeginSpan, imBeginEl, setInnerText, imMemoArray, setAttr } from './utils/im-dom-utils.ts';
 
 
 // NOTE: you only get 32 of these. use them wisely.
@@ -127,7 +127,6 @@ export function imTextSpan(text: string, flags: number = 0) {
             setStyleFlags(flags);
         }
 
-        deferClickEventToParent();
 
         if (lastText.val !== text) {
             lastText.val = text;

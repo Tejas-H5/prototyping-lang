@@ -746,7 +746,13 @@ export function imBeginTextEditor(s: TextEditorState, ctrlHeld: boolean, shiftHe
     s._viewCursorAtEnd = viewWindowIsAtEnd(s);
 
     s.inCommandMode = ctrlHeld;
+
+    const wasShifting = s.isShifting;
     s.isShifting = shiftHeld;
+
+    if (wasShifting && !shiftHeld) {
+        s.isSelecting = false;
+    }
 
     // using an input to allow hooking into the browser's existing focusing mechanisms.
     const textAreaRoot = imBeginEl(newTextArea); {
@@ -778,8 +784,6 @@ export function imBeginTextEditor(s: TextEditorState, ctrlHeld: boolean, shiftHe
             if (!s.hasFocus) {
                 s._textAreaElement.root.focus();
                 s.hasFocus = true;
-                resetTextEditorState
-
                 s.canMouseSelect = false;
                 s.canKeyboardSelect = false;
             }
