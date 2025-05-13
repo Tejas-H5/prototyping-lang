@@ -18,7 +18,7 @@ import { getCurrentCallstack, ProgramInterpretResult, stepProgram } from './prog
 import { GlobalContext, startDebugging } from './state';
 import "./styling";
 import { assert } from './utils/assert';
-import { elementHasMouseClick, imBeginDiv, imBeginEl, imBeginList, imEnd, imEndList, imInit, imRef, imStateInline, nextListSlot, setAttr } from './utils/im-dom-utils';
+import { elementHasMousePress, imBeginDiv, imBeginEl, imBeginList, imEnd, imEndList, imInit, imRef, imStateInline, nextListSlot, setAttr } from './utils/im-dom-utils';
 
 
 export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretResult) {
@@ -29,7 +29,7 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
             imBeginLayout(FLEX); {
                 imBeginButton(); {
                     imTextSpan("Stop debugging");
-                    if (elementHasMouseClick()) {
+                    if (elementHasMousePress()) {
                         ctx.isDebugging = false;
                     }
                 } imEnd();
@@ -39,7 +39,7 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
                 imBeginButton(); {
                     imTextSpan("Step");
 
-                    if (elementHasMouseClick()) {
+                    if (elementHasMousePress()) {
                         const result = stepProgram(interpretResult);
                         if (!result) {
                             message.val = "Program complete! you can stop debugging now.";
@@ -51,7 +51,7 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
             imBeginLayout(FLEX); {
                 imBeginButton(); {
                     imTextSpan("Reset");
-                    if (elementHasMouseClick()) {
+                    if (elementHasMousePress()) {
                         assert(ctx.lastParseResult);
                         startDebugging(ctx);
                         message.val = "";

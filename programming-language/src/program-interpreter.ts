@@ -1,4 +1,3 @@
-
 import { assert, typeGuard } from "src/utils/assert";
 import { copyMatrix, getMatrixRow, getMatrixRowLength, getMatrixValue, getSliceValue, isIndexInSliceBounds, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMul, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, orthographicMatrix3D, perspectiveMatrix3D, rotationMatrix2D, rotationMatrix3DX, rotationMatrix3DY, rotationMatrix3DZ, rotationMatrixTranslate2D, rotationMatrixTranslate3D, scaleMatrix2D, scaleMatrix3D, setSliceValue, sliceToArray, subMatrixShapeEqualsRowShape, transposeMatrix } from "src/utils/matrix-math";
 import {
@@ -23,6 +22,7 @@ import {
 import { clamp, inverseLerp } from "./utils/math-utils";
 import { getNextRng, newRandomNumberGenerator, RandomNumberGenerator, setRngSeed } from "./utils/random";
 import { CssColor, newColor, newColorFromHexOrUndefined } from "./utils/colour";
+import { groupBy, mapSet } from "./utils/array-utils";
 
 export const T_RESULT_NUMBER = 1;
 export const T_RESULT_STRING = 2;
@@ -581,6 +581,7 @@ export type ProgramPrintOutput = {
     step: ProgramExecutionStep;
     expr: ProgramExpression;
     val: ProgramResult;
+    visible: boolean;
 }
 
 export type ProgramPlotOutputLine = {
@@ -604,6 +605,7 @@ export type ProgramImageOutput = {
 }
 
 export type ProgramPlotOutput = {
+    idx: number;
     lines: ProgramPlotOutputLine[];
     functions: ProgramPlotOutputHeatmapFunction[];
 }
@@ -640,9 +642,13 @@ export type ProgramUiInput = ProgramUiInputSlider;
 
 export type ProgramOutputs = {
     prints: ProgramPrintOutput[];
+    printsGroupedByStep: Map<ProgramExecutionStep, ProgramPrintOutput[]>;
+
     images: ProgramImageOutput[];
+    // NOTE: graph like node -- edge --> node, not y = f(x), that is plot
     graphs: Map<number, ProgramGraphOutput>;
     plots: Map<number, ProgramPlotOutput>;
+    plotsInOrder: ProgramPlotOutput[];
     uiInputsCache: Map<string, ProgramUiInput>;
     // Unlike the cahce, these are actually in the right order
     uiInputs: ProgramUiInput[];
@@ -1097,9 +1103,11 @@ function push(result: ProgramInterpretResult, val: ProgramResult, step: ProgramE
 function newEmptyProgramOutputs(): ProgramOutputs {
     return {
         prints: [],
+        printsGroupedByStep: new Map(),
         images: [],
         graphs: new Map(),
         plots: new Map(),
+        plotsInOrder: [],
         uiInputsCache: new Map(),
         uiInputs: [],
         uiInputsPerLine: new Map(),
@@ -1218,9 +1226,9 @@ function newArg(name: string, type: ProgramResult["t"][], optional = false, expr
     return { name, type, optional, expr };
 }
 
-const ZERO_VEC2 = matrixZeroes([2]);
-const ZERO_VEC3 = matrixZeroes([3]);
-const ZERO_VEC4 = matrixZeroes([4]);
+export const ZERO_VEC2 = matrixZeroes([2]);
+export const ZERO_VEC3 = matrixZeroes([3]);
+export const ZERO_VEC4 = matrixZeroes([4]);
 
 const builtinFunctions = new Map<string, BuiltinFunction>();
 
@@ -2187,6 +2195,7 @@ function getOrAddNewPlot(result: ProgramInterpretResult, idx: number): ProgramPl
         plot = {
             lines: [],
             functions: [],
+            idx,
         };
         result.outputs.plots.set(idx, plot);
     }
@@ -2198,7 +2207,8 @@ function printResult(result: ProgramInterpretResult, step: ProgramExecutionStep,
     result.outputs.prints.push({
         step,
         expr,
-        val: { ...val }
+        val: { ...val },
+        visible: true,
     });
 }
 
@@ -2941,7 +2951,7 @@ export function interpret(
 
     interpretRestOfProgram(result);
 
-    // Let's clean up the inputs
+    // Delete inputs from previous run that we retained, and 
     {
         for (const input of result.outputs.uiInputsCache.values()) {
             if (!input.fromThisRun) {
@@ -2949,6 +2959,10 @@ export function interpret(
             }
         }
 
+    }
+
+    // Coalesce multiple inputs that are on the same line
+    {
         const uiInputsPerLine = result.outputs.uiInputsPerLine;
         for (const input of result.outputs.uiInputs.values()) {
             const line = input.expr.start.line;
@@ -2967,6 +2981,102 @@ export function interpret(
 
             existingInputs.push(input);
         }
+    }
+
+
+    // Convert multiple debug logs from the same number into graphs, or other outputs if possible.
+    {
+        const printsGroupedByStep = result.outputs.printsGroupedByStep;
+        printsGroupedByStep.clear();
+        groupBy(printsGroupedByStep, result.outputs.prints, p => p.step);
+
+        // Some of these can become other kinds of outputs, like plots.
+        for (const [step, outputs] of printsGroupedByStep) {
+            if (outputs.length <= 1) continue;
+
+            let pointsX: number[] | undefined;
+            let pointsY: number[] | undefined;
+
+            let allNumbers = true;
+            let allPoints = false;
+
+            for (let i = 0; i < outputs.length; i++) {
+                if (outputs[i].val.t !== T_RESULT_NUMBER) {
+                    allNumbers = false;
+                    break;
+                }
+            }
+
+            if (!allNumbers) {
+                allPoints = true;
+                for (let i = 0; i < outputs.length; i++) {
+                    const o = outputs[i];
+                    if (o.val.t === T_RESULT_MATRIX && matrixShapesAreEqual(o.val.val, ZERO_VEC2)) {
+                        continue;
+                    }
+
+                    allPoints = false;
+                    break;
+                }
+            }
+
+            if (allNumbers) {
+                pointsX = Array(outputs.length).fill(0);
+                pointsY = Array(outputs.length).fill(0);
+                for (let i = 0; i < outputs.length; i++) {
+                    const o = outputs[i];
+                    o.visible = false;
+
+                    assert(o.val.t === T_RESULT_NUMBER);
+                    pointsX[i] = i;
+                    pointsY[i] = o.val.val;
+                }
+            }
+
+            if (allPoints) {
+                pointsX = Array(outputs.length).fill(0);
+                pointsY = Array(outputs.length).fill(0);
+
+                for (let i = 0; i < outputs.length; i++) {
+                    const o = outputs[i];
+                    o.visible = false;
+
+                    assert(o.val.t === T_RESULT_MATRIX);
+                    pointsX[i] = getSliceValue(o.val.val.values, 0);
+                    pointsY[i] = getSliceValue(o.val.val.values, 1);
+                }
+            }
+
+            if (pointsX && pointsY) {
+                let i = 0;
+                while (result.outputs.plots.has(i)) {
+                    i++;
+                }
+
+                result.outputs.plots.set(i, {
+                    idx: i,
+                    lines: [{
+                        expr: step.expr,
+                        pointsX,
+                        pointsY,
+                        color: undefined,
+                        label: undefined,
+                        displayAsPoints: false,
+                    }],
+                    functions: []
+                });
+            }
+        }
+    }
+
+    // order the plots
+    {
+        result.outputs.plotsInOrder.length = 0;
+        for (const plot of result.outputs.plots.values()) {
+            result.outputs.plotsInOrder.push(plot);
+        }
+
+        result.outputs.plotsInOrder.sort((a, b) => a.idx - b.idx);
     }
 
     return result;

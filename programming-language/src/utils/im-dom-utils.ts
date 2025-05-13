@@ -1303,7 +1303,13 @@ export function getImKeys(): ImKeyboardState {
 
 
 // I cant fking believe this shit works, lol
-export function elementHasMouseClick() {
+
+/**
+ * Mouse press is distinct from mouse-click - A click is what happens when we release the mouse
+ * above the same element that we pressed it on. However a press happens immediately on mouse-down.
+ * TODO: add elementHasMouseClick
+ */
+export function elementHasMousePress() {
     const mouse = getImMouse();
     const r = getCurrentRoot();
     if (mouse.leftMouseButton) {

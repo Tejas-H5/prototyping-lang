@@ -47,36 +47,50 @@ export function imBeginLayout(flags: number = 0) {
     return root;
 }
 
-export const SPACE_PX = 1;
-export const SPACE_EM = 2;
-export const SPACE_PERCENT = 2;
+export const PX = 10001;
+export const EM = 20001;
+export const PERCENT = 30001;
+export const NOT_SET = 40001;
 
-function getUnits(num: number) {
+export type SizeUnits = typeof PX |
+    typeof EM |
+    typeof PERCENT |
+    typeof NOT_SET;
+
+function getUnits(num: SizeUnits) {
     switch(num) {
-        case SPACE_EM: return "em";
-        case SPACE_PERCENT: return "%";
+        case EM: return "em";
+        case PERCENT: return "%";
         default: return "px";
     }
 }
 
-export function imBeginSpace(width: number, height: number, type = SPACE_PX, flags = 0) {
-    const valRef = imRef<{ width: number; height: number; type: number; }>();
+function getSize(num: number, units: SizeUnits) {
+    return units === NOT_SET ? "" : num + getUnits(units);
+}
+
+export function imBeginSpace(
+    width: number, wType: SizeUnits,
+    height: number, hType: SizeUnits, 
+    flags = 0,
+) {
+    const valRef = imRef<{ width: number; height: number; wType: number; hType: number; }>();
     if (valRef.val === null) {
-        valRef.val = { width: 0, height: 0, type: 0, };
+        valRef.val = { width: 0, height: 0, wType: 0, hType: 0 };
     }
     const val = valRef.val;
 
     imBeginLayout(flags); {
-        if (val.width !== width || val.type !== type) {
+        if (val.width !== width || val.wType !== wType) {
             val.width = width;
-            val.type = val.type;
-            setStyle("width", isNaN(width) ? "" : width + getUnits(type));
+            val.wType = wType;
+            setStyle("width", getSize(width, wType));
         }
 
-        if (val.height !== height || val.type !== type) {
+        if (val.height !== height || val.hType !== hType) {
             val.height = height;
-            val.type = val.type;
-            setStyle("height", isNaN(height) ? "" : height + getUnits(type));
+            val.hType = hType;
+            setStyle("height", getSize(height, hType));
         }
     } // user specified end
 }

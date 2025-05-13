@@ -1,7 +1,7 @@
 import { cssVars } from 'src/styling';
 import {
     deltaTimeSeconds,
-    elementHasMouseClick,
+    elementHasMousePress,
     imBeginDiv,
     imBeginSpan,
     imEnd,
@@ -112,6 +112,7 @@ export function stopFpsCounter(fps: FpsCounterState) {
     fps.timeSpentRendering += (performance.now() - fps.t0);
     fps.renders++;
 
+    
     if (fps.t > 1) {
         fps.frameTime = fps.t / fps.frames;
         fps.screenHz = Math.round(fps.frames / fps.t);
@@ -159,7 +160,7 @@ export function imFpsCounterOutput(fps: FpsCounterState) {
         } imEnd();
         // setStyle("transform", "rotate(" + angle + "deg)");
 
-        if (elementHasMouseClick()) {
+        if (elementHasMousePress()) {
             fps.baselineFrameMsFreq = 0;
         }
 

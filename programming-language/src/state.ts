@@ -7,6 +7,7 @@ export type GlobalState = {
     showParserOutput: boolean;
     showInterpreterOutput: boolean;
     autoRun: boolean;
+    showGroupedOutput: boolean;
 };
 
 export type GlobalContext = {
@@ -26,6 +27,8 @@ export type GlobalContext = {
 
     // This stuff is actually saved and persisted between runs
     state: GlobalState;
+
+    autoRunTimer: number;
 }
 
 type GlobalInput = {
@@ -102,7 +105,9 @@ export function newGlobalContext(): GlobalContext {
                 shiftHeld: false,
                 ctrlHeld: false,
             }
-        }
+        },
+
+        autoRunTimer: 0,
     };
 }
 export function newGlobalState(): GlobalState {
@@ -111,6 +116,7 @@ export function newGlobalState(): GlobalState {
         showParserOutput: false,
         showInterpreterOutput: false,
         autoRun: true,
+        showGroupedOutput: false,
     };
 }
 

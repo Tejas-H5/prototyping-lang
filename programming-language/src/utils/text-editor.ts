@@ -8,7 +8,7 @@
 
 import "src/styling";
 import { copyToClipboard, readFromClipboard } from "src/utils/clipboard";
-import { elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, getImMouse, imBeginEl, imEnd, imInit, imOn, setStyle, UIRoot } from 'src/utils/im-dom-utils';
+import { elementHasMousePress, elementHasMouseDown, elementHasMouseHover, getImMouse, imBeginEl, imEnd, imInit, imOn, setStyle, UIRoot } from 'src/utils/im-dom-utils';
 import { clamp, max, min } from "src/utils/math-utils";
 import { isWhitespace } from "src/utils/text-utils";
 import { assert } from "./assert";
@@ -469,7 +469,7 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
                     handled = false;
                 }
             }
-        } else if (key === "Backspace") {
+        } else if (key === "Backspace" || key === "Delete") {
             if (textEditorHasSelection(s)) {
                 textEditorDeleteCurrentSelection(s);
             } else if (s.inCommandMode) {
@@ -834,7 +834,7 @@ export function setCurrentSpan(s: TextEditorState, span: HTMLElement) {
 }
 
 export function handleTextEditorClickEventForChar(s: TextEditorState, charIdx: number) {
-    if (elementHasMouseClick()) {
+    if (elementHasMousePress()) {
         s.hasClick = true;
 
         // single click, clear selection

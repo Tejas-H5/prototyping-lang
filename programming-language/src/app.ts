@@ -1,6 +1,5 @@
 import { cn } from "src/utils/cn";
 import { imAppCodeEditor } from './code-editor';
-import { renderAppCodeOutput } from './code-output';
 import { renderDebugger } from './debugger';
 import {
     ABSOLUTE,
@@ -19,13 +18,17 @@ import {
     NORMAL,
     ROW,
     setInset,
-    W100
+    W100,
+    NOT_SET,
+    PX
 } from './layout';
 import { GlobalContext, newGlobalContext, rerun, saveState } from './state';
 import "./styling";
 import { cnApp } from './styling';
 import { assert } from './utils/assert';
-import { abortListAndRewindUiStack, disableIm, elementHasMouseClick, enableIm, getImKeys, imBeginList, imEnd, imEndList, imInit, imMap, imMemo, imRef, imState, nextListSlot, setClass, setStyle } from './utils/im-dom-utils';
+import { abortListAndRewindUiStack, deltaTimeSeconds, disableIm, elementHasMousePress, enableIm, getImKeys, imBeginList, imEnd, imEndList, imInit, imMap, imMemo, imMemoObjectVals, imRef, imState, nextListSlot, setClass, setStyle } from './utils/im-dom-utils';
+import { parse } from "./program-parser";
+import { renderAppCodeOutput } from "./code-output";
 
 let saveTimeout = 0;
 let savingDisabled = false;
@@ -89,14 +92,29 @@ export function renderApp() {
                 }
                 enableIm();
 
-                const textChanged = imMemo(state.text);
-                const autorunChanged = imMemo(state.autoRun);
-                if (textChanged || autorunChanged) {
+                const stateChanged = imMemoObjectVals(state);
+                if (stateChanged) {
                     saveStateDebounced(ctx);
+
+                    // Need to parse as soon as the text changes
+                    ctx.lastParseResult = parse(ctx.state.text);
+
+                    // Run the code with a slight debounce
                     if (state.autoRun) {
-                        rerun(ctx);
+                        ctx.autoRunTimer = 0.15;
                     }
                 } 
+
+                const timerOn = ctx.autoRunTimer > 0;
+                if (timerOn) {
+                    ctx.autoRunTimer -= deltaTimeSeconds();
+                }
+
+                if (imMemo(timerOn)) {
+                    if (!timerOn) {
+                        rerun(ctx);
+                    }
+                }
 
                 imBeginLayout(ROW | H100); {
                     imBeginLayout(FLEX); {
@@ -168,13 +186,13 @@ export function renderApp() {
                             } imEndList();
                         }
                     } imEndList();
-                    imBeginSpace(NaN, 10); imEnd();
+                    imBeginSpace(0, NOT_SET, 10, PX); imEnd();
                     imBeginLayout(); {
                         imBeginList();
                         if (nextListSlot() && totalErrorsRef.val && totalErrorsRef.val < 10) {
                             imBeginButton(); {
                                 imTextSpan("Dismiss [Warning - may lead to data corruption]");
-                                if (elementHasMouseClick()) {
+                                if (elementHasMousePress()) {
                                     dismissedRef.val = false;
                                 }
                             } imEnd();

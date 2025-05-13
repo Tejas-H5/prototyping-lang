@@ -1,3 +1,4 @@
+import { CODE_EXAMPLES } from './examples';
 import {
     ALIGN_CENTER,
     imBeginCodeBlock,
@@ -26,9 +27,9 @@ import {
     ROW,
     setInset,
     TRANSLUCENT,
-    W100
+    W100,
 } from './layout';
-import { evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getCurrentCallstack, newNumberResult, ProgramExecutionStep, ProgramGraphOutput, ProgramImageOutput, ProgramInterpretResult, ProgramOutputs, ProgramPlotOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MAP, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING } from './program-interpreter';
+import { evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getCurrentCallstack, newNumberResult, ProgramExecutionStep, ProgramGraphOutput, ProgramImageOutput, ProgramInterpretResult, ProgramOutputs, ProgramPlotOutput, ProgramPrintOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MAP, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING } from './program-interpreter';
 import {
     binOpToString,
     binOpToOpString as binOpToSymbolString,
@@ -59,18 +60,16 @@ import { GlobalContext, rerun, startDebugging } from './state';
 import "./styling";
 import { cssVars, getCurrentTheme } from './styling';
 import { assert } from './utils/assert';
-import { deltaTimeSeconds, disableIm, elementHasMouseClick, elementHasMouseDown, elementHasMouseHover, enableIm, getCurrentRoot, getImMouse, imArray, imBeginDiv, imBeginEl, imBeginList, imEnd, imEndList, imInit, imMemo, imMemoObjectVals, imPreventScrollEventPropagation, imRef, imState, imStateInline, imTrackSize, nextListSlot, scrollIntoViewVH, setInnerText, setStyle, UIRoot } from './utils/im-dom-utils';
+import { deltaTimeSeconds, disableIm, elementHasMousePress, elementHasMouseDown, elementHasMouseHover, enableIm, getCurrentRoot, getImMouse, imArray, imBeginDiv, imBeginEl, imBeginList, imEnd, imEndList, imInit, imMemo, imMemoObjectVals, imPreventScrollEventPropagation, imRef, imState, imStateInline, imTrackSize, nextListSlot, scrollIntoViewVH, setInnerText, setStyle, UIRoot } from './utils/im-dom-utils';
 import { clamp, gridSnap, inverseLerp, lerp, max, min } from './utils/math-utils';
 import { getSliceValue } from './utils/matrix-math';
-
-
 
 export function renderAppCodeOutput(ctx: GlobalContext) {
     imBeginLayout(ROW | GAP); {
         imBeginButton(ctx.state.autoRun); {
             imTextSpan("Autorun");
 
-            if (elementHasMouseClick()) {
+            if (elementHasMousePress()) {
                 ctx.state.autoRun = !ctx.state.autoRun
                 if (ctx.state.autoRun) {
                     rerun(ctx);
@@ -80,14 +79,14 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
 
         imBeginButton(); {
             imTextSpan("Start debugging");
-            if (elementHasMouseClick()) {
+            if (elementHasMousePress()) {
                 startDebugging(ctx);
             }
         } imEnd();
 
         imBeginButton(ctx.state.showParserOutput); {
             imTextSpan("Show AST");
-            if (elementHasMouseClick()) {
+            if (elementHasMousePress()) {
                 ctx.state.showParserOutput = !ctx.state.showParserOutput;
             }
         } imEnd();
@@ -95,7 +94,7 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
 
         imBeginButton(ctx.state.showInterpreterOutput); {
             imTextSpan("Show instructions");
-            if (elementHasMouseClick()) {
+            if (elementHasMousePress()) {
                 ctx.state.showInterpreterOutput = !ctx.state.showInterpreterOutput;
             }
         } imEnd();
@@ -138,7 +137,7 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
 
                             imBeginButton(); {
                                 imTextSpan("Start debugging");
-                                if (elementHasMouseClick()) {
+                                if (elementHasMousePress()) {
                                     startDebugging(ctx);
                                 }
                             } imEnd();
@@ -175,6 +174,16 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
             imTextSpan("Code output");
         } imEnd();
 
+        imBeginLayout(ROW); {
+            imBeginButton(ctx.state.showGroupedOutput); {
+                imTextSpan("Grouped");
+
+                if (elementHasMousePress()) {
+                    ctx.state.showGroupedOutput = !ctx.state.showGroupedOutput;
+                }
+            } imEnd();
+        } imEnd();
+
         imBeginList();
         if (nextListSlot() && ctx.lastInterpreterResult) {
             imProgramOutputs(
@@ -201,12 +210,12 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
 
             imBeginLayout(COL | GAP); {
                 imBeginList();
-                for (const eg of codeExamples) {
+                for (const eg of CODE_EXAMPLES) {
                     nextListSlot();
                     imBeginButton(); {
                         imTextSpan(eg.name);
 
-                        if (elementHasMouseClick()) {
+                        if (elementHasMousePress()) {
                             ctx.state.text = eg.code.trim();
                             ctx.lastLoaded = Date.now();
                         }
@@ -405,102 +414,100 @@ function imDiagnosticInfo(heading: string, info: DiagnosticInfo[], emptyText: st
 
 
 export function renderProgramResult(res: ProgramResult) {
-    imBeginDiv(); {
-        imBeginLayout(COL | GAP); {
-            imBeginList(); {
-                nextListSlot(res.t);
-                const typeString = programResultTypeString(res)
-                imTextSpan(typeString + " ");
+    imBeginLayout(ROW | GAP); {
+        imBeginList(); {
+            nextListSlot(res.t);
+            const typeString = programResultTypeString(res)
+            imTextSpan(typeString + " ");
 
-                switch (res.t) {
-                    case T_RESULT_NUMBER:
-                        imTextSpan("" + res.val, CODE);
-                        break;
-                    case T_RESULT_STRING:
-                        imBeginLayout(COL | GAP); {
-                            imTextSpan(res.val, CODE | PRE);
-                        } imEnd();
-                        break;
-                    case T_RESULT_LIST:
-                        imBeginCodeBlock(0); {
-                            imTextSpan("list[", CODE);
-                            imBeginCodeBlock(1); {
-                                imBeginList();
-                                for (let i = 0; i < res.values.length; i++) {
-                                    nextListSlot();
-                                    renderProgramResult(res.values[i]);
-                                }
-                                imEndList();
-                            } imEnd();
-                            imTextSpan("]", CODE);
-                        } imEnd();
-                        break;
-                    case T_RESULT_MAP: {
-                        imBeginCodeBlock(0); {
-                            imTextSpan("map{", CODE);
-                            imBeginCodeBlock(1); {
-                                imBeginList();
-                                for (const [k, val] of res.map) {
-                                    nextListSlot();
-                                    imTextSpan(k + "", CODE);
-                                    renderProgramResult(val);
-                                }
-                                imEndList();
-                            } imEnd();
-                            imTextSpan("}", CODE);
-                        } imEnd();
-                    } break;
-                    case T_RESULT_MATRIX:
-                        let idx = 0;
-                        const dfs = (dim: number, isLast: boolean) => {
-                            if (dim === res.val.shape.length) {
-                                const val = getSliceValue(res.val.values, idx);
-
-                                // assuming everything renders in order, this is the only thing we need to do for this to work.
-                                idx++;
-
-                                imTextSpan("" + val);
-
-                                imBeginList();
-                                if (nextListSlot() && !isLast) {
-                                    imTextSpan(", ");
-                                }
-                                imEndList();
-
-                                return;
+            switch (res.t) {
+                case T_RESULT_NUMBER:
+                    imTextSpan("" + res.val, CODE);
+                    break;
+                case T_RESULT_STRING:
+                    imBeginLayout(COL | GAP); {
+                        imTextSpan(res.val, CODE | PRE);
+                    } imEnd();
+                    break;
+                case T_RESULT_LIST:
+                    imBeginCodeBlock(0); {
+                        imTextSpan("list[", CODE);
+                        imBeginCodeBlock(1); {
+                            imBeginList();
+                            for (let i = 0; i < res.values.length; i++) {
+                                nextListSlot();
+                                renderProgramResult(res.values[i]);
                             }
+                            imEndList();
+                        } imEnd();
+                        imTextSpan("]", CODE);
+                    } imEnd();
+                    break;
+                case T_RESULT_MAP: {
+                    imBeginCodeBlock(0); {
+                        imTextSpan("map{", CODE);
+                        imBeginCodeBlock(1); {
+                            imBeginList();
+                            for (const [k, val] of res.map) {
+                                nextListSlot();
+                                imTextSpan(k + "", CODE);
+                                renderProgramResult(val);
+                            }
+                            imEndList();
+                        } imEnd();
+                        imTextSpan("}", CODE);
+                    } imEnd();
+                } break;
+                case T_RESULT_MATRIX:
+                    let idx = 0;
+                    const dfs = (dim: number, isLast: boolean) => {
+                        if (dim === res.val.shape.length) {
+                            const val = getSliceValue(res.val.values, idx);
 
-                            imBeginCodeBlock(dim === 0 ? 0 : 1); {
-                                imTextSpan("[");
-                                imBeginList(); {
-                                    const len = res.val.shape[dim];
-                                    for (let i = 0; i < len; i++) {
-                                        // This is because when the 'level' of the list changes, the depth itself changes,
-                                        // and the components we're rendering at a particular level will change. 
-                                        // We need to re-key the list, so that we may render a different kind of component at this position.
-                                        const key = (res.val.shape.length - dim) + "-" + i;
-                                        nextListSlot(key);
-                                        dfs(dim + 1, i === len - 1);
-                                    }
-                                } imEndList();
-                                imTextSpan("]");
-                            } imEnd();
+                            // assuming everything renders in order, this is the only thing we need to do for this to work.
+                            idx++;
+
+                            imTextSpan("" + val);
+
+                            imBeginList();
+                            if (nextListSlot() && !isLast) {
+                                imTextSpan(", ");
+                            }
+                            imEndList();
+
+                            return;
                         }
-                        dfs(0, false);
-                        break;
-                    case T_RESULT_RANGE:
-                        imTextSpan("" + res.val.lo, CODE);
-                        imTextSpan(" -> ", CODE);
-                        imTextSpan("" + res.val.hi, CODE);
-                        break;
-                    case T_RESULT_FN:
-                        imTextSpan(res.expr.fnName.name, CODE);
-                        break;
-                    default:
-                        throw new Error("Unhandled result type: " + programResultTypeString(res));
-                }
-            } imEndList();
-        } imEnd();
+
+                        imBeginCodeBlock(dim === 0 ? 0 : 1); {
+                            imTextSpan("[");
+                            imBeginList(); {
+                                const len = res.val.shape[dim];
+                                for (let i = 0; i < len; i++) {
+                                    // This is because when the 'level' of the list changes, the depth itself changes,
+                                    // and the components we're rendering at a particular level will change. 
+                                    // We need to re-key the list, so that we may render a different kind of component at this position.
+                                    const key = (res.val.shape.length - dim) + "-" + i;
+                                    nextListSlot(key);
+                                    dfs(dim + 1, i === len - 1);
+                                }
+                            } imEndList();
+                            imTextSpan("]");
+                        } imEnd();
+                    }
+                    dfs(0, false);
+                    break;
+                case T_RESULT_RANGE:
+                    imTextSpan("" + res.val.lo, CODE);
+                    imTextSpan(" -> ", CODE);
+                    imTextSpan("" + res.val.hi, CODE);
+                    break;
+                case T_RESULT_FN:
+                    imTextSpan(res.expr.fnName.name, CODE);
+                    break;
+                default:
+                    throw new Error("Unhandled result type: " + programResultTypeString(res));
+            }
+        } imEndList();
     } imEnd();
 }
 
@@ -589,14 +596,38 @@ type ProgramOutputState = {
     outputToScrollTo: HTMLElement | undefined;
 };
 function newProgramOutputsState(): ProgramOutputState {
-    return  {
-        outputToScrollTo: undefined
-    };
+    return  { outputToScrollTo: undefined };
 }
 
 function canScrollToThing(ctx: GlobalContext, s: ProgramOutputState, expr: ProgramExpression) {
     return !s.outputToScrollTo &&
         expr.start.i <= ctx.textCursorIdx && ctx.textCursorIdx <= expr.end.i;
+}
+
+function imProgramPrintOutput(
+    ctx: GlobalContext,
+    program: ProgramInterpretResult, 
+    s: ProgramOutputState,
+    result: ProgramPrintOutput,
+) {
+    const programText = program.parseResult.text;
+    const root = imBeginLayout(ROW | GAP); {
+        if (canScrollToThing(ctx, s, result.expr)) {
+            s.outputToScrollTo = root.root;
+        }
+
+        imVerticalBar();
+
+        imBeginCodeBlock(0); {
+            imTextSpan(
+                expressionToString(programText, result.expr)
+            )
+        } imEnd();
+
+        imBeginLayout(FLEX); {
+            renderProgramResult(result.val);
+        } imEnd();
+    } imEnd();
 }
 
 
@@ -615,30 +646,60 @@ export function imProgramOutputs(
             setStyle("height", "5px")
         }
     } imEnd();
-    imBeginList();
-    for (const result of outputs.prints) {
-        nextListSlot();
-        const root = imBeginLayout(ROW | GAP); {
-            if (canScrollToThing(ctx, s, result.expr)) {
-                s.outputToScrollTo = root.root;
+    imBeginLayout(COL | GAP); {
+        imBeginList();
+        if (nextListSlot() && ctx.state.showGroupedOutput) {
+            imBeginList();
+            for (const [step, prints] of outputs.printsGroupedByStep) {
+                nextListSlot();
+
+                const localState = imStateInline(() => {
+                    return { open: false };
+                });
+
+                imBeginLayout(COL | FLEX); {
+                    imBeginLayout(ROW | FLEX); {
+                        imBeginLayout(CODE); {
+                            imTextSpan(expressionToString(programText, step.expr));
+                        } imEnd();
+
+                        imBeginLayout(FLEX); imEnd();
+
+                        imBeginButton(); {
+                            imTextSpan("(" + prints.length + ")");
+                            if (elementHasMousePress()) {
+                                localState.open = !localState.open;
+                            }
+                        } imEnd();
+                    } imEnd();
+
+                    imBeginList();
+                    if (nextListSlot() && localState.open) {
+                        imBeginLayout(); {
+                            imBeginList();
+                            for (const result of prints) {
+                                nextListSlot();
+
+                                renderProgramResult(result.val);
+                            }
+                            imEndList();
+                        } imEnd();
+                    }
+                    imEndList();
+                } imEnd();
             }
-
-            imVerticalBar();
-
-            imBeginLayout(COL | GAP); {
-                imBeginCodeBlock(0); {
-                    imTextSpan(
-                        expressionToString(programText, result.expr)
-                    )
-                } imEnd();
-
-                imBeginLayout(FLEX); {
-                    renderProgramResult(result.val);
-                } imEnd();
-            } imEnd();
-        } imEnd();
-    };
-    imEndList();
+            imEndList();
+        } else if (nextListSlot()) {
+            imBeginList();
+            for (const result of outputs.prints) {
+                if (!result.visible) continue;
+                nextListSlot();
+                imProgramPrintOutput(ctx, program, s, result);
+            };
+            imEndList();
+        }
+        imEndList();
+    } imEnd();
     imBeginLayout(COL | GAP); {
         imBeginList();
         for (const [idx, graph] of outputs.graphs) {
@@ -709,7 +770,7 @@ export function imProgramOutputs(
     imBeginList();
     if (nextListSlot() && outputs.plots.size > 0) {
         imBeginList();
-        for (const [idx, plot] of outputs.plots) {
+        for (const plot of outputs.plotsInOrder) {
             nextListSlot();
             const root = imBeginLayout(COL | GAP); {
                 for (const line of plot.lines) {
@@ -724,7 +785,7 @@ export function imProgramOutputs(
                 }
 
                 imBeginLayout(COL | GAP); {
-                    imTextSpan("Plot #" + idx, H3);
+                    imTextSpan("Plot #" + plot.idx, H3);
                 } imEnd();
 
                 const exprFrequencies = imStateInline(() => new Map<ProgramExpression, number>());
@@ -1336,11 +1397,11 @@ function imMaximizeItemButton(ctx: GlobalContext, item: object) {
         imTextSpan(isMaximized ? "minimize" : "maximize");
 
         if (isMaximized) {
-            if (ctx.input.keyboard.escape || (elementHasMouseClick())) {
+            if (ctx.input.keyboard.escape || (elementHasMousePress())) {
                 currentMaximizedItem = null;
             }
         } else {
-            if (elementHasMouseClick()) {
+            if (elementHasMousePress()) {
                 currentMaximizedItem = item;
             }
         }
@@ -1360,14 +1421,14 @@ function renderPlot(ctx: GlobalContext, plot: ProgramPlotOutput, program: Progra
 
                 imBeginButton(plotState.overlay); {
                     setInnerText("Overlays");
-                    if (elementHasMouseClick()) {
+                    if (elementHasMousePress()) {
                         plotState.overlay = !plotState.overlay;
                     }
                 } imEnd();
 
                 imBeginButton(plotState.autofit); {
                     setInnerText("Autofit");
-                    if (elementHasMouseClick()) {
+                    if (elementHasMousePress()) {
                         plotState.autofit = !plotState.autofit;
                     }
                 } imEnd();
@@ -1700,223 +1761,3 @@ function renderPlot(ctx: GlobalContext, plot: ProgramPlotOutput, program: Progra
         } imEnd();
     } imEnd();
 }
-
-type CodeExample = {
-    name: string;
-    code: string;
-}
-
-// TODO: improve examples to be simpler and to demonstrate individual concepts. 
-// right now, I'm just using this mechanism to save and load various scenarios.
-const codeExamples: CodeExample[] = [
-    {
-        name: "Large text",
-        code: 
-        `as;f;askdf;lasdfkdjfajd;ak;jf\n`.repeat(40),
-    },
-    {
-        name: "Plotting",
-        code:
-            `
-// Creating a square/triangle wave from multiple sine waves
-
-harmonics = slider("harmonics", 5, 30, 1)
-harmonic_offset = slider("harmonic_offset", 1, 10, 1)
-
-samples = list[]
-for t in range(0, 4*PI, 0.05) {
-	sample = 0
-	magnitude = 0
-	
-	for harmonic in range(1, harmonics * harmonic_offset, harmonic_offset) {	
-		m = 1 / harmonic
-		sample = sample + (
-			m * 2 * sin(t * harmonic) - 1
-		)
-		magnitude = magnitude + m
-	}
-
-	push(samples, [t, sample / magnitude])
-}
-
-plot_lines(1, samples)
-`
-    },
-    {
-        name: "Signed distance fields",
-        code: `
-// Try increasing this, if your PC allows for it 
-set_heatmap_subdiv(40)
-
-heatmap(1, sdf(a, b) { 
-    radius = 0.2
-    thickness = 0.03
-    sqrt(a*a + b*b) 
-    (radius - thickness) < ^ && ^ < (radius + thickness)
-}, [0.5, 0, 0])
-
-heatmap(1, sdf2(a, b) { 
-    radius = 0.3
-    thickness = 0.03
-    sqrt(a*a + b*b) 
-    (radius - thickness) < ^ && ^ < (radius + thickness)
-}, "#F00")
-
-plot_points(1, 0.5 * [
-    [0, 0],
-    [1, 0], 
-    [-1, 0],
-    [0, 1],
-    [0, -1],
-])
-`
-
-    },
-    {
-        name: "Slider inputs",
-        code: `
-period = slider("period", 0, 100)
-resolution = slider("resolution", 1, 100)
-
-lines = list[]
-
-one_over_res = 1 / resolution
-for i in range(0, 100, one_over_res) {
-    push(lines, [i, sin(i * period)])
-}
-
-plot_lines(1, lines)
-        `
-    },
-    {
-        name: "Images",
-        code: `
-seed = slider("seed", 0, 1000)
-
-// rand_seed(now())
-rand_seed(seed)
-
-image([
-    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
-    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
-    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
-    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
-    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
-    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
-    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
-    [rand(), rand(), rand(),rand(), rand(), rand(),rand(), rand(), rand()],
-])
-
-`
-    },
-    {
-        name: "Graphs",
-        code: `
-g = map{}
-
-for i in range(0, 10) {
-    adj = list[]
-    for j in range(0, 10) {
-        push(adj, j)
-    }
-
-    g[i] = adj
-}
-
-graph(1, g)
-`
-    },
-    {
-        name: "Matrices",
-        code: `
-
-angle = slider("angle", 0, 2 * PI)
-
-rot_matrix(a) {
-    [[cos(a), -sin(a)],
-     [sin(a), cos(a)]]
-}
-
-A = rot_matrix(angle)
-
-plot_points(1, [
-    [0, 1],
-    [1, 0],
-    [0, -1],
-    [-1, 0],
-
-    mul(A, [0, 0.5]),
-])
-
-`
-    },
-    {
-        name: "3D stuff",
-        code: `
-xAngle = slider("x", 0, 2 * PI)
-yAngle = slider("y", 0, 2 * PI)
-zAngle = slider("z", 0, 2 * PI)
-
-X = rot3d_x(xAngle)
-Y = rot3d_y(yAngle)
-Z = rot3d_z(zAngle)
-
-// Alternatively, you can do this:
-
-// sinX = sin(xAngle)
-// sinY = sin(yAngle)
-// sinZ = sin(zAngle)
-//
-// cosX = cos(xAngle)
-// cosY = cos(yAngle)
-// cosZ = cos(zAngle)
-//
-// X =  [
-//     [1,  0,  0, 0],
-//     [0, cosX, -sinX, 0],
-//     [0, sinX, cosX,  0],
-//     [0,  0,  0, 1],
-// ]
-//
-// Y = [
-//     [cosY,  0,  -sinY, 0],
-//     [0,    1, 0, 0],
-//     [sinY, 0, cosY,  0],
-//     [0,  0,  0, 1],
-// ]
-//
-// Z = [
-//     [cosZ, -sinZ, 0, 0],
-//     [sinZ, cosZ,  0, 0],
-//     [0,  0,  1, 0],
-//     [0,  0,  0, 1],
-// ]
-
-T = mul(Z, mul(Y, mul(Z, X)))
-
-point_cloud = list[]
-for i in range(0, 100) {
-    vec = [rand(), rand(), rand(), 1] -0.5
-    vec[3]=1
-    push(point_cloud, vec)
-}
-point_cloud = to_vec(point_cloud)
-
-mul(point_cloud, T)
-plot_points(1, ^)
-
-x_axis = [[0, 0, 0, 0], [1, 0, 0, 1]]
-mul(^, T)
-plot_lines(1, ^, [1, 0, 0])
-
-y_axis = [[0, 0, 0, 0], [0, 1, 0, 1]]
-mul(^, T)
-plot_lines(1, ^, [0, 1, 0])
-
-z_axis = [[0, 0, 0, 0], [0, 0, 1, 1]]
-mul(^, T)
-plot_lines(1, ^, [0, 0, 1])
-
-        `
-    }
-]
