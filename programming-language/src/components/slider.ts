@@ -1,5 +1,20 @@
 import { cssVars } from 'src/styling';
-import { elementHasMouseDown, getCurrentRoot, getImMouse, imBeginDiv, imBeginList, imEnd, imEndList, imInit, imMemo, imMemoObjectVals, imState, imTrackSize, nextListSlot, setStyle } from 'src/utils/im-dom-utils';
+import {
+    elementHasMouseDown,
+    getCurrentRoot,
+    getImMouse,
+    imDiv,
+    imList,
+    imEnd,
+    imEndList,
+    imInit,
+    imMemo,
+    imMemoObjectVals,
+    imState,
+    imTrackSize,
+    nextListRoot,
+    setStyle
+} from 'src/utils/im-dom-utils';
 import { clamp, inverseLerp, lerp } from 'src/utils/math-utils';
 
 export function newSliderState() {
@@ -21,7 +36,7 @@ export function renderSliderBody(
     const s = imState(newSliderState);
 
     // slider body
-    imBeginDiv(); {
+    imDiv(); {
         const { size } = imTrackSize();
 
         if (imInit()) {
@@ -51,7 +66,7 @@ export function renderSliderBody(
         const sliderHandleSize = size.height;
 
         // little dots for every step
-        imBeginList(); 
+        imList(); 
         if (s.step) {
             const width = s.end - s.start;
             const count = Math.floor(width / s.step);
@@ -60,9 +75,9 @@ export function renderSliderBody(
                     let t = (i + 1) / count;
                     const sliderPos = lerp(0, size.width - sliderHandleSize, t);
 
-                    nextListSlot();
+                    nextListRoot();
 
-                    imBeginDiv(); {
+                    imDiv(); {
                         if (imInit()) {
                             setStyle("position", "absolute");
                             setStyle("aspectRatio", "1 / 1");
@@ -80,7 +95,7 @@ export function renderSliderBody(
         imEndList();
 
         // slider handle
-        imBeginDiv(); {
+        imDiv(); {
             if (imInit()) {
                 setStyle("position", "absolute");
                 setStyle("backgroundColor", cssVars.fg);

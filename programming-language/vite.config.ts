@@ -2,7 +2,7 @@ import path from 'path';
 import { defineConfig } from 'vite';
 import { viteSingleFile } from "vite-plugin-singlefile";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   base: "/Working-on-Tree/",
   plugins: [viteSingleFile()],
   build: {
@@ -16,4 +16,4 @@ export default defineConfig({
       src: path.resolve(__dirname, "src/")
     }
   }
-});
+}));

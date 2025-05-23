@@ -18,7 +18,22 @@ import { getCurrentCallstack, ProgramInterpretResult, stepProgram } from './prog
 import { GlobalContext, startDebugging } from './state';
 import "./styling";
 import { assert } from './utils/assert';
-import { elementHasMousePress, imBeginDiv, imBeginEl, imBeginList, imEnd, imEndList, imInit, imRef, imStateInline, nextListSlot, setAttr } from './utils/im-dom-utils';
+import {
+    elementHasMousePress,
+    imDiv,
+    imEl,
+    imList,
+    imEnd,
+    imEndList,
+    imInit,
+    imRef,
+    imStateInline,
+    nextListRoot,
+    setAttr,
+    imIf,
+    imEndIf,
+    imElse
+} from './utils/im-dom-utils';
 
 
 export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretResult) {
@@ -52,7 +67,7 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
                 imBeginButton(); {
                     imTextSpan("Reset");
                     if (elementHasMousePress()) {
-                        assert(ctx.lastParseResult);
+                        assert(ctx.lastParseResult !== undefined);
                         startDebugging(ctx);
                         message.val = "";
                     }
@@ -60,31 +75,28 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
             } imEnd();
         } imEnd();
 
-        imBeginList();
-        if (nextListSlot() && message.val) {
-            imBeginDiv(); {
+        if (imIf() && message.val) {
+            imDiv(); {
                 imTextSpan(message.val);
             } imEnd();
-        } imEndList();
+        } imEndIf();
 
-        assert(interpretResult);
         const cs = getCurrentCallstack(interpretResult);
 
         imBeginLayout(COL | FLEX); {
             imBeginLayout(COL | FLEX); {
-                imBeginList();
-                if (nextListSlot() && cs) {
+                if (imIf() && cs) {
                     const fnName = imFunctionName(cs.fn);
                     imBeginLayout(H3 | BOLD); {
                         imTextSpan(fnName);
                     } imEnd();
 
                     renderFunctionInstructions(interpretResult, cs.code);
-                } imEndList()
+                } imEndIf()
             } imEnd();
             imBeginLayout(ROW | FLEX); {
                 imBeginLayout(COL | FLEX); {
-                    imBeginEl(newH3); {
+                    imEl(newH3); {
                         imTextSpan("Stack");
                     } imEnd();
 
@@ -112,27 +124,25 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
                             n = interpretResult.stack.length - 1;
                         }
 
-                        imBeginList();
+                        imList();
                         for (let addr = 0; addr <= n; addr++) {
                             const res = interpretResult.stack[addr];
 
-                            nextListSlot();
+                            nextListRoot();
 
-                            imBeginDiv(); {
+                            imDiv(); {
                                 imBeginLayout(ROW | GAP); {
                                     const stackAddrArrow = (name: string) => {
-                                        imBeginDiv(); {
+                                        imDiv(); {
                                             if (imInit()) setAttr("style", "padding-left: 10px; padding-right: 10px");
 
                                             imTextSpan(name + "->", CODE);
                                         } imEnd();
                                     }
 
-                                    imBeginList();
-                                    if (nextListSlot() && addr === interpretResult.stackIdx) {
+                                    if (imIf() && addr === interpretResult.stackIdx) {
                                         stackAddrArrow("");
-                                    }
-                                    imEndList();
+                                    } imEndIf();
 
                                     // every callstack will have a different return address
                                     let callstackIdx = -1;
@@ -143,11 +153,9 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
                                         }
                                     }
 
-                                    imBeginList();
-                                    if (nextListSlot() && callstackIdx !== -1) {
+                                    if (imIf() && callstackIdx !== -1) {
                                         stackAddrArrow("r" + callstackIdx + "");
-                                    };
-                                    imEndList();
+                                    } imEndIf();
 
                                     // every callstack will have a different next-variable address
                                     callstackIdx = -1;
@@ -158,30 +166,24 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
                                         }
                                     }
 
-                                    imBeginList();
-                                    if (nextListSlot() && callstackIdx !== -1) {
+                                    if (imIf() && callstackIdx !== -1) {
                                         stackAddrArrow("v" + callstackIdx + "");
-                                    };
-                                    imEndList();
+                                    } imEndIf();
 
                                     const variable = variablesReverseMap.get(addr);
-                                    imBeginList();
-                                    if (nextListSlot() && variable) {
-                                        imBeginDiv(); {
+                                    if (imIf() && variable) {
+                                        imDiv(); {
                                             imTextSpan(variable + " = ", CODE);
                                         } imEnd();
-                                    }
-                                    imEndList();
+                                    } imEndIf();
 
                                     imBeginLayout(FLEX); {
-                                        imBeginList();
-                                        if (nextListSlot() && res) {
+                                        if (imIf() && res) {
                                             renderProgramResult(res);
                                         } else {
-                                            nextListSlot();
+                                            imElse();
                                             imTextSpan("null");
-                                        }
-                                        imEndList();
+                                        } imEndIf();
                                     } imEnd();
                                 } imEnd();
                             } imEnd();
@@ -189,7 +191,7 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
                     }
                 } imEnd();
                 imBeginLayout(FLEX | COL); {
-                    imBeginEl(newH3); {
+                    imEl(newH3); {
                         imTextSpan("Results");
                     } imEnd();
 

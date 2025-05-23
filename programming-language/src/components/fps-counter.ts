@@ -2,15 +2,16 @@ import { cssVars } from 'src/styling';
 import {
     deltaTimeSeconds,
     elementHasMousePress,
-    imBeginDiv,
-    imBeginSpan,
+    imDiv,
+    imSpan,
     imEnd,
     imInit,
     setInnerText,
     setStyle,
     imMemo,
     imTextSpan,
-    getNumImStateEntriesRendered as getNumItemsRendered
+    getNumItemsRendered,
+    isExcessEventRender
 } from 'src/utils/im-dom-utils';
 
 const VAR_BG = cssVars.bg;
@@ -64,6 +65,8 @@ export function newFpsCounterState(): FpsCounterState {
 }
 
 export function startFpsCounter(fps: FpsCounterState) {
+    if (isExcessEventRender()) return;
+
     fps.t0 = performance.now();
     const dt = deltaTimeSeconds();
     fps.t += dt;
@@ -100,6 +103,8 @@ export function startFpsCounter(fps: FpsCounterState) {
 }
 
 export function stopFpsCounter(fps: FpsCounterState) {
+    if (isExcessEventRender()) return;
+
     // render-start     -> Timer start
     //      rendering code()
     // render-end       -> timer stop
@@ -127,13 +132,12 @@ export function stopFpsCounter(fps: FpsCounterState) {
 }
 
 export function imFpsCounterOutput(fps: FpsCounterState) {
-    imBeginDiv(); {
+    imDiv(); {
         if (imInit()) {
             setStyle("position", "absolute");
             setStyle("top", "5px");
             setStyle("right", "5px");
             setStyle("padding", "5px");
-            setStyle("zIndex", "1000000");
             setStyle("backgroundColor", VAR_BG);
             setStyle("borderRadius", "1000px");
             setStyle("opacity", "0.5");
@@ -141,16 +145,16 @@ export function imFpsCounterOutput(fps: FpsCounterState) {
 
         // r.text(screenHz + "hz screen, " + renderHz + "hz code");
 
-        imBeginDiv(); {
+        imDiv(); {
             imTextSpan(fps.baselineLocked ? (fps.baselineFrameMs + "ms baseline, ") : "computing baseline...");
         } imEnd();
 
-        imBeginDiv(); {
+        imDiv(); {
             imTextSpan(fps.framesMsRounded + "ms frame, ");
         } imEnd();
 
-        imBeginDiv(); {
-            imBeginSpan(); {
+        imDiv(); {
+            imSpan(); {
                 const fpsChanged = imMemo(fps.renderMsRounded);
                 if (fpsChanged) {
                     setStyle("color", fps.renderMsRounded / fps.baselineFrameMs > 0.5 ? "red" : "");
@@ -164,7 +168,7 @@ export function imFpsCounterOutput(fps: FpsCounterState) {
             fps.baselineFrameMsFreq = 0;
         }
 
-        imBeginDiv(); {
+        imDiv(); {
             imTextSpan(getNumItemsRendered() + " IM entries");
         } imEnd();
 

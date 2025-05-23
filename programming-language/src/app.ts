@@ -26,7 +26,30 @@ import { GlobalContext, newGlobalContext, rerun, saveState } from './state';
 import "./styling";
 import { cnApp } from './styling';
 import { assert } from './utils/assert';
-import { abortListAndRewindUiStack, deltaTimeSeconds, disableIm, elementHasMousePress, enableIm, getImKeys, imBeginList, imEnd, imEndList, imInit, imMap, imMemo, imMemoObjectVals, imRef, imState, nextListSlot, setClass, setStyle } from './utils/im-dom-utils';
+import {
+    abortListAndRewindUiStack,
+    deltaTimeSeconds,
+    disableIm,
+    elementHasMousePress,
+    enableIm,
+    getImKeys,
+    imList,
+    imEnd,
+    imEndList,
+    imInit,
+    imMap,
+    imMemo,
+    imMemoObjectVals,
+    imRef,
+    imState,
+    nextListRoot,
+    setClass,
+    setStyle,
+    imIf,
+    imElse,
+    imEndIf,
+    imTry,
+} from './utils/im-dom-utils';
 import { parse } from "./program-parser";
 import { renderAppCodeOutput } from "./code-output";
 
@@ -53,11 +76,11 @@ export function renderApp() {
             setClass(cn.absoluteFill);
         }
 
-        const l = imBeginList();
+        const l = imTry();
         try {
             savingDisabled = false;
 
-            if (nextListSlot() && !dismissedRef.val) {
+            if (imIf() && !dismissedRef.val) {
                 const ctx = imState(newGlobalContext);
 
                 const { state } = ctx;
@@ -133,16 +156,15 @@ export function renderApp() {
                             setInset("10px");
                         }
 
-                        imBeginList();
-                        if (nextListSlot() && ctx.isDebugging) {
+                        if (imIf() && ctx.isDebugging) {
                             const interpretResult = ctx.lastInterpreterResult;
                             assert(interpretResult);
                             renderDebugger(ctx, interpretResult);
                         } else {
-                            nextListSlot();
+                            imElse();
+                            nextListRoot();
                             renderAppCodeOutput(ctx);
-                        }
-                        imEndList();
+                        } imEndIf();
                     } imEnd();
                 } imEnd();
 
@@ -159,37 +181,35 @@ export function renderApp() {
             } else {
                 assert(errors.size !== 0);
 
-                nextListSlot();
+                imElse();
 
                 imBeginLayout(COL | ALIGN_CENTER | JUSTIFY_CENTER | W100 | H100); {
-                    imBeginList(); {
-                        if (nextListSlot() && errors.size === 1 && errors.values().next().value === 1) {
-                            imBeginHeading(); {
-                                imTextSpan("An error occured");
-                            } imEnd();
+                    if (imIf() && errors.size === 1 && errors.values().next().value === 1) {
+                        imBeginHeading(); {
+                            imTextSpan("An error occured");
+                        } imEnd();
+                        imBeginLayout(); {
+                            imTextSpan(errors.keys().next().value!);
+                        } imEnd();
+                    } else {
+                        imElse();
+
+                        imBeginHeading(); {
+                            imTextSpan("The errors just keep occuring !!! Apologies.");
+                        } imEnd();
+
+                        imList();
+                        for (const [err, count] of errors) {
+                            nextListRoot();
                             imBeginLayout(); {
-                                imTextSpan(errors.keys().next().value!);
+                                imTextSpan(err + " [" + count + "x]");
                             } imEnd();
-                        } else {
-                            nextListSlot();
-
-                            imBeginHeading(); {
-                                imTextSpan("The errors just keep occuring !!! Apologies.");
-                            } imEnd();
-
-                            imBeginList();
-                            for (const [err, count] of errors) {
-                                nextListSlot();
-                                imBeginLayout(); {
-                                    imTextSpan(err + " [" + count + "x]");
-                                } imEnd();
-                            } imEndList();
-                        }
-                    } imEndList();
+                        } 
+                        imEndList();
+                    } imEndIf();
                     imBeginSpace(0, NOT_SET, 10, PX); imEnd();
                     imBeginLayout(); {
-                        imBeginList();
-                        if (nextListSlot() && totalErrorsRef.val && totalErrorsRef.val < 10) {
+                        if (imIf() && totalErrorsRef.val && totalErrorsRef.val < 10) {
                             imBeginButton(); {
                                 imTextSpan("Dismiss [Warning - may lead to data corruption]");
                                 if (elementHasMousePress()) {
@@ -197,14 +217,12 @@ export function renderApp() {
                                 }
                             } imEnd();
                         } else {
-                            nextListSlot();
-
+                            imElse();
                             imTextSpan("This button was a bad idea ...");
-                        }
-                        imEndList();
+                        } imEndIf();
                     } imEnd();
                 } imEnd();
-            }
+            } imEndIf();
         } catch (e) {
             savingDisabled = true;
 

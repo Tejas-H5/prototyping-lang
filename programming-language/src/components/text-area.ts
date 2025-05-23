@@ -1,7 +1,21 @@
 import { cssVars } from "src/styling";
 import { cn, newCssBuilder } from "src/utils/cn";
 import { execCommand } from "src/utils/depracated-dom-api-wrappers";
-import { imBeginDiv, imBeginEl, imEnd, imState, imInit, Ref, setClass, setInputValue, imBeginSpan, setInnerText, imBeginList, nextListSlot, imEndList, setAttr } from "src/utils/im-dom-utils";
+import {
+    imDiv,
+    imEl,
+    imEnd,
+    imState,
+    imInit,
+    Ref,
+    setClass,
+    setInputValue,
+    imSpan,
+    setInnerText,
+    setAttr,
+    imIf,
+    imEndIf
+} from "src/utils/im-dom-utils";
 import { getLineBeforePos } from "src/utils/text-utils";
 
 const CSSVARS_FOCUS = cssVars.bg;
@@ -69,13 +83,13 @@ export function imEditableTextArea({
     const wasEditing = state.isEditing;
     state.isEditing = isEditing;
 
-    const root = imBeginDiv(); {
+    const root = imDiv(); {
         if (imInit()) {
             setAttr("class", [cn.flex1, cn.row, cn.h100, cn.overflowYAuto].join(" "));
         }
 
         // This is now always present.
-        imBeginDiv(); {
+        imDiv(); {
             if (imInit()) {
                 setAttr("class", [cn.handleLongWords, cn.relative, cn.w100, cn.hFitContent].join(" "));
                 setAttr("style", "min-height: 100%");
@@ -88,21 +102,20 @@ export function imEditableTextArea({
 
             // This is a facade that gives the text area the illusion of auto-sizing!
             // but it only works if the text doesn't end in whitespace....
-            imBeginSpan(); {
+            imSpan(); {
                 setInnerText(text);
             } imEnd();
 
             // This full-stop at the end of the text is what prevents the text-area from collapsing in on itself
-            imBeginSpan(); {
+            imSpan(); {
                 if (imInit()) {
                     setAttr("style", "color: transparent");
                     setInnerText(".");
                 }
             } imEnd();
 
-            imBeginList();
-            if (nextListSlot() && isEditing) {
-                const textArea = imBeginEl(newTextArea).root; {
+            if (imIf() && isEditing) {
+                const textArea = imEl(newTextArea).root; {
                     if (textAreaRef) {
                         textAreaRef.val = textArea;
                     }
@@ -135,8 +148,7 @@ export function imEditableTextArea({
                         });
                     }
                 } imEnd();
-            } 
-            imEndList();
+            } imEndIf();
         } imEnd();
 
     } 

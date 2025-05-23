@@ -1,6 +1,19 @@
 import { cnApp, cssVars } from './styling.ts';
 import { cn, newCssBuilder } from './utils/cn.ts';
-import { imBeginDiv, imEnd, imInit, imRef, setClass, setStyle, imBeginSpan, imBeginEl, setInnerText, imMemoArray, setAttr } from './utils/im-dom-utils.ts';
+import {
+    imDiv,
+    imEnd,
+    imInit,
+    imRef,
+    setClass,
+    setStyle,
+    imSpan,
+    imEl,
+    setInnerText,
+    imMemoArray,
+    setAttr,
+    imMemo
+} from './utils/im-dom-utils.ts';
 
 
 // NOTE: you only get 32 of these. use them wisely.
@@ -37,7 +50,7 @@ export const PADDED = 1 << 25;
 
 export function imBeginLayout(flags: number = 0) {
     const lastFlags = imRef();
-    const root = imBeginDiv(); {
+    const root = imDiv(); {
         if (lastFlags.val !== flags) {
             lastFlags.val = flags;
             setStyleFlags(flags);
@@ -135,7 +148,7 @@ export function imTextSpan(text: string, flags: number = 0) {
     // Don't set the text every render. that way, we may modify it in the inspector.
     // may also be faster, idc
     const lastText = imRef();
-    const root = imBeginSpan(); {
+    const root = imSpan(); {
         if (lastFlags.val !== flags) {
             lastFlags.val = flags;
             setStyleFlags(flags);
@@ -201,7 +214,7 @@ export function imBeginAspectRatio(w: number, h: number, flags: number = 0) {
 }
 
 export function imVerticalBar() {
-    imBeginDiv(); {
+    imDiv(); {
         if (imInit()) {
             setAttr("style", `width: 5px; background-color: ${cssVars.fg}; margin: 0px 5px;`);
         }
@@ -227,7 +240,9 @@ export function imBeginButton(toggled: boolean = false) {
             setClass(cnButton);
         }
 
-        setClass(cnApp.inverted, toggled);
+        if (imMemo(toggled)) {
+            setClass(cnApp.inverted, toggled);
+        }
     };
 
     return root;
@@ -249,7 +264,7 @@ export function imBeginCodeBlock(indent: number) {
 
 
 export function imBeginHeading() {
-    const root = imBeginEl(newH3); {
+    const root = imEl(newH3); {
         if (imInit()) {
             setStyle("padding", "10px 0");
         }
