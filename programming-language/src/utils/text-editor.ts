@@ -5,7 +5,7 @@ import {
     elementHasMouseDown,
     elementHasMouseHover,
     getImMouse,
-    imEl,
+    imBeginRoot,
     imEnd,
     imInit,
     imOn,
@@ -29,27 +29,39 @@ export function textEditorDeleteCurrentSelection(s: TextEditorState) {
         return;
     }
 
-    textEditorRemove(s, s.selectionStart, s.selectionEnd);
-
     tb.itCopy(s.cursor, s.selectionStart);
+    tb.iterateBackwards(s.cursor);
+    textEditorRemove(s, s.selectionStart, s.selectionEnd);
+    tb.iterate(s.cursor);
+
     clearSelection(s);
 }
 
-export function iterateToLastNewline(cursor: TextEditorCursor) {
-    if (!tb.iterateBackwards(cursor)) return;
-
-    while (tb.itGet(cursor) !== "\n") {
-        tb.iterateBackwards(cursor);
+export function iterateToLastNewline(cursor: tb.Iterator) {
+    let count = 0;
+    while (tb.iterateBackwards(cursor) && tb.itGet(cursor) !== "\n") {
+        count++;
     }
+    return count;
 }
 
-
-function moveToLastNewline(s: TextEditorState) {
-    iterateToLastNewline(s.cursor);
+export function iterateToNextNewline(cursor: tb.Iterator) {
+    let count = 0;
+    while (tb.iterate(cursor) && tb.itGet(cursor) !== "\n") {
+        count++;
+    }
+    return count;
 }
 
 function moveDown(s: TextEditorState) {
-    moveToLastNewline(s);
+    const count = iterateToLastNewline(s.cursor);
+    iterateToNextNewline(s.cursor);
+
+    let count2 = 0;
+    while (tb.iterate(s.cursor) && tb.itGet(s.cursor) !== "\n") {
+        count2++;
+        if (count === count2) break;
+    }
     tb.iterate(s.cursor);
 }
 
@@ -69,49 +81,38 @@ function moveUp(s: TextEditorState) {
 
 function moveToEndOfThisWord(s: TextEditorState) {
     // get off whitespace
-    while (tb.iterate(s.cursor) && 
-        isWhitespace(tb.itGet(s.cursor))
-    ) {}
+    while (tb.iterate(s.cursor) && isWhitespace(tb.itGet(s.cursor))) {}
 
     // get to the end of the word
-    while (tb.iterate(s.cursor) && 
-        !isWhitespace(tb.itGet(s.cursor))
-    ) {}
+    while (tb.iterate(s.cursor) && !isWhitespace(tb.itGet(s.cursor))) {}
 }
 
 function moveToStartOfLastWord(s: TextEditorState) {
     if (!tb.iterateBackwards(s.cursor)) return;
 
     // get off whitespace
-    while (isWhitespace(tb.itGet(s.cursor))) {
-        tb.iterateBackwards(s.cursor);
-    }
+    while (isWhitespace(tb.itGet(s.cursor)) && tb.iterateBackwards(s.cursor)) {}
 
     // get to the end of the word
-    while (!isWhitespace(tb.itGet(s.cursor))) {
-        tb.iterateBackwards(s.cursor);
-    }
+    while (!isWhitespace(tb.itGet(s.cursor)) && tb.iterateBackwards(s.cursor)) {}
 }
 
-export function iterateToNextNewline(cursor: TextEditorCursor) {
-    while (tb.iterate(cursor) && tb.itGet(cursor) !== "\n") {}
-}
 
 type TextEdit = {
     time: number;
-    cursor: TextEditorCursor;
+    pos: number;
     insert: boolean;
     str: string;
 };
 
-export type TextEditorCursor = tb.Iterator;
-
 export type TextEditorState = {
-    _textAreaElement: UIRoot<HTMLTextAreaElement>    | null;
-    _cursorSpan:      HTMLElement                    | null;
-    _keyDownEvent:    HTMLElementEventMap["keydown"] | null;
-    _keyUpEvent:      HTMLElementEventMap["keyup"]   | null;
-    _handledEvent:    boolean;
+    _textAreaElement:      UIRoot<HTMLTextAreaElement>    | null;
+    _cursorSpan:           HTMLElement                    | null;
+    _lastRenderedCharSpan: HTMLElement                    | null;
+    _containerElement:     HTMLElement                    | null;
+    _keyDownEvent:         HTMLElementEventMap["keydown"] | null;
+    _keyUpEvent:           HTMLElementEventMap["keyup"]   | null;
+    _handledEvent:         boolean;
 
     inCommandMode: boolean;
     keyLower:      string;
@@ -126,22 +127,30 @@ export type TextEditorState = {
     modifiedAt: number;
 
     wantedScrollAmount: number;
+    // Curent line
     viewLine:           number;
-    _viewEndLine:       number;
+    // number of lines we _can_ view at once. its the viewport height in lines
+    viewTotalLines:    number;
+    _cursorLine:        number;
+    _hasCursorLine:     boolean;
     // TODO: viewCol for horizonal scrolling
     
-    _renderCursorStart:     TextEditorCursor;
-    _renderCursor:          TextEditorCursor;
-    _tempCursor:            TextEditorCursor;
-    _initialCursor:         TextEditorCursor;
-    cursor:                 TextEditorCursor;
-    selectionAnchor:        TextEditorCursor;
-    selectionAnchorEnd:     TextEditorCursor;
-    selectionStart:         TextEditorCursor;
-    selectionEnd:           TextEditorCursor;
-    selectionStartedCursor: TextEditorCursor;
+    _renderPosStart:         number;
+    _renderCursorReachedEnd: boolean;
+    _renderCursorStart:      tb.Iterator;
+    _renderCursorEnd:        tb.Iterator;
+    _renderCursor:           tb.Iterator;
+    _tempCursor:             tb.Iterator;
+    _initialCursor:          tb.Iterator;
+    cursor:                  tb.Iterator;
+    selectionAnchor:         tb.Iterator;
+    selectionAnchorEnd:      tb.Iterator;
+    selectionStart:          tb.Iterator;
+    selectionEnd:            tb.Iterator;
+    selectionStartedCursor:  tb.Iterator;
 
-    isAutoScrolling:   boolean;
+    isAutoScrolling: boolean;
+
     hasFocus:          boolean;
     hasClick:          boolean;
     canKeyboardSelect: boolean;
@@ -169,15 +178,15 @@ function applyOrRevertUndoStep(s: TextEditorState, step: TextEdit, apply: boolea
 
     if (step.insert) {
         if (apply) {
-            textEditorInsert(s, step.cursor, step.str);
+            tb.buffInsertAt(s.buffer, step.pos, step.str);
         } else {
-            textEditorRemoveLen(s, step.cursor, step.str.length);
+            tb.buffRemoveStartLen(s.buffer, step.pos, step.str.length);
         }
     } else {
         if (apply) {
-            textEditorRemoveLen(s, step.cursor, step.str.length);
+            tb.buffRemoveStartLen(s.buffer, step.pos, step.str.length);
         } else {
-            textEditorInsert(s, step.cursor, step.str);
+            tb.buffInsertAt(s.buffer, step.pos, step.str);
         }
     }
 
@@ -219,65 +228,40 @@ function traverseUndoBuffer(s: TextEditorState, forwards: boolean, withinTime = 
         } 
     }
 }
-export function textEditorInsert(s: TextEditorState, cursor: TextEditorCursor, str: string) {
-    const it = tb.itInsert(cursor, str);
-    if (!it) return;
+export function textEditorInsert(s: TextEditorState, cursor: tb.Iterator, str: string) {
+    if (!tb.itInsert(cursor, str)) return;
 
-    tb.itCopy(s.cursor, it);
-    
+    const pos = tb.itGetPos(cursor);
     s.modifiedAt = Date.now();
 
     pushToUndoBuffer(s, { 
         time: s.modifiedAt, 
-        cursor: it, 
+        pos,
         insert: true, 
         str: str 
     });
 }
 
-
-export function textEditorInsertAtCursor(s: TextEditorState, cursor: TextEditorCursor, str: string) {
-    assert(s.buffer === cursor.buff);
-    const it = tb.itInsert(cursor, str);
-    if (!it) return;
-
-    tb.itCopy(s.cursor, it);
-    
-    s.modifiedAt = Date.now();
-
-    pushToUndoBuffer(s, { 
-        time: s.modifiedAt, 
-        cursor: cursor, 
-        insert: true, 
-        str: str 
-    });
-}
-
-export function textEditorRemoveLen(s: TextEditorState, pos: TextEditorCursor, len: number) {
-    tb.itCopy(s._tempCursor, pos);
-    for (let i = 0; i < len; i++) tb.iterate(s._tempCursor);
-
-    textEditorRemove(s, pos, s._tempCursor);
-}
-
-export function textEditorRemove(s: TextEditorState, pos: TextEditorCursor, end: TextEditorCursor) {
-    const removed = tb.itRemove(pos, end);
+export function textEditorRemove(s: TextEditorState, start: tb.Iterator, end: tb.Iterator) {
+    const removed = tb.itGetTextBetween(start, end);
     if (!removed) return;
+    if (!tb.itRemove(start, end)) return;
 
     s.modifiedAt = Date.now();
+    const startPos = tb.itGetPos(start);
 
-    tb.itCopy(s.cursor, pos);
+    tb.itCopy(s.cursor, start);
     tb.iterateBackwards(s.cursor);
 
     pushToUndoBuffer(s, { 
         time: s.modifiedAt, 
-        cursor: pos, 
+        pos: startPos,
         insert: false,
         str: removed
     });
 }
 
-export function textEditorSetSelection(s: TextEditorState, start: TextEditorCursor, end: TextEditorCursor) {
+export function textEditorSetSelection(s: TextEditorState, start: tb.Iterator, end: tb.Iterator) {
     tb.itMin(s.selectionStart, start, end);
     tb.itMax(s.selectionStart, start, end);
     
@@ -334,7 +318,7 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
 
         if (c) {
             if (!s.inCommandMode) {
-                textEditorInsertAtCursor(s, s.cursor, c);
+                textEditorInsert(s, s.cursor, c);
             } else {
                 if (keyLower === "z" || keyLower === "y") {
                     let shouldUndo = false;
@@ -395,6 +379,7 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
                 } else if (keyLower === "a") {
                     tb.itZero(s.selectionStart);
                     tb.itEnd(s.selectionEnd);
+                    tb.iterate(s.selectionEnd);
                     s.canKeyboardSelect = false;
                     s.canMouseSelect = false;
                 } else {
@@ -415,11 +400,10 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
             } else {
                 // Delete singular letter
                 tb.itCopy(s.selectionStart, s.cursor);
-                tb.iterate(s.cursor);
+                tb.iterateBackwards(s.selectionStart);
                 tb.itCopy(s.selectionEnd, s.cursor);
                 tb.itCopy(s.cursor, s.selectionStart);
                 tb.iterateBackwards(s.cursor);
-
                 textEditorDeleteCurrentSelection(s);
             }
         } else if (key === "ArrowLeft") {
@@ -460,9 +444,9 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
                 iterateToLastNewline(s.cursor);
             }
         } else if (key === "Enter") {
-            textEditorInsertAtCursor(s, s.cursor, "\n");
+            textEditorInsert(s, s.cursor, "\n");
         } else if (key === "Tab") {
-            textEditorInsertAtCursor(s, s.cursor, "\t");
+            textEditorInsert(s, s.cursor, "\t");
         } else if (key === "Shift") {
             if (!isRepeat) {
                 setInitialSelectionCursor(s, true);
@@ -484,9 +468,6 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
         }
 
         if (!tb.itEquals(s._initialCursor, s.cursor)) {
-            // we only want to autoscroll when we've pressed a key. If we don't do this, then we can easily end up in
-            // an infinite loop, where we scroll up one line, but that line is so tall that it brings the cursor so far down the screen
-            // that we then have to scroll down one line, and so on and so forth
             s.isAutoScrolling = true;
         }
 
@@ -501,42 +482,41 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
     }
 }
 
-function autoScrollTextEditor(s: TextEditorState) {
-    if (!s.isAutoScrolling) {
-        return;
-    }
-
-    // TODO: Reimplement
-    
-}
-
 export function newTextEditorState() {
     const buffer = tb.newBuff();
 
     // fields with _ cannot be JSON-serialized
     const state: TextEditorState = {
-        _textAreaElement:    null,
-        shouldFocusTextArea: false,
-        _cursorSpan:         null,
-        hasFocus:            false,
+        _textAreaElement:      null,
+        shouldFocusTextArea:   false,
+        _cursorSpan:           null,
+        _lastRenderedCharSpan: null,
+        _containerElement:     null,
+        hasFocus:              false,
 
         modifiedAt:         0,
-        viewLine:           0,
+        viewLine:           -1,
         wantedScrollAmount: 0,
-        _viewEndLine:       1,
+        viewTotalLines:     1,
+        _cursorLine:        0,
+        _hasCursorLine:     false,
 
-        _renderCursorStart: tb.itNew(buffer),
-        _renderCursor:      tb.itNew(buffer),
-        _tempCursor:        tb.itNew(buffer),
-        _initialCursor:     tb.itNew(buffer),
-        cursor:             tb.itNew(buffer),
-        selectionStart:     tb.itNew(buffer),
-        selectionEnd:       tb.itNew(buffer),
-        selectionAnchor:     tb.itNew(buffer),
-        selectionAnchorEnd:       tb.itNew(buffer),
-        selectionStartedCursor:   tb.itNew(buffer),
+        _renderPosStart:         0,
+        _renderCursorReachedEnd: false,
+        _renderCursorStart:      tb.itNew(buffer),
+        _renderCursorEnd:        tb.itNew(buffer),
+        _renderCursor:           tb.itNew(buffer),
+        _tempCursor:             tb.itNew(buffer),
+        _initialCursor:          tb.itNew(buffer),
+        cursor:                  tb.itNew(buffer),
+        selectionStart:          tb.itNew(buffer),
+        selectionEnd:            tb.itNew(buffer),
+        selectionAnchor:         tb.itNew(buffer),
+        selectionAnchorEnd:      tb.itNew(buffer),
+        selectionStartedCursor:  tb.itNew(buffer),
 
-        isAutoScrolling:   true,
+        isAutoScrolling: false,
+
         hasClick:          false,
         canKeyboardSelect: false,
         canMouseSelect:    false,
@@ -555,7 +535,8 @@ export function newTextEditorState() {
 
         buffer,
     };
-    resetTextEditorState(state);
+
+    textEditorReset(state);
     return state;
 }
 
@@ -574,18 +555,19 @@ function getChar(e: KeyboardEvent) {
     return char;
 }
 
-function resetTextEditorState(s: TextEditorState) {
+function textEditorReset(s: TextEditorState) {
     s.buffer = tb.newBuff();
 
     s._renderCursorStart.buff     = s.buffer;
+    s._renderCursorEnd.buff       = s.buffer;
     s._renderCursor.buff          = s.buffer;
     s._tempCursor.buff            = s.buffer;
     s._initialCursor.buff         = s.buffer;
     s.cursor.buff                 = s.buffer;
-    s.selectionStart.buff         = s.buffer;
-    s.selectionEnd.buff           = s.buffer;
     s.selectionAnchor.buff        = s.buffer;
     s.selectionAnchorEnd.buff     = s.buffer;
+    s.selectionStart.buff         = s.buffer;
+    s.selectionEnd.buff           = s.buffer;
     s.selectionStartedCursor.buff = s.buffer;
 
     s.undoBuffer.length = 0;
@@ -593,11 +575,12 @@ function resetTextEditorState(s: TextEditorState) {
     s.modifiedAt        = 0;
 
     clearSelection(s);
+
+    textEditorSetViewLine(s, 0);
 }
 
-
 export function loadText(s: TextEditorState, text: string) {
-    resetTextEditorState(s);
+    textEditorReset(s);
     tb.buffInsertAt(s.buffer, 0, text);
 }
 
@@ -619,12 +602,36 @@ function setInitialSelectionCursor(s: TextEditorState, keyboard: boolean) {
     }
 }
 
+function textEditorSetViewLine(s: TextEditorState, newViewLine: number): boolean {
+    if (s.viewLine === newViewLine) return false;
+
+    s.viewLine = newViewLine;
+
+    tb.itZero(s._renderCursorStart);
+
+    s._renderPosStart = 0;
+    for (let i = 0; i < s.viewLine; i++) {
+        const count = iterateToNextNewline(s._renderCursorStart);
+        s._renderPosStart += count;
+    }
+
+    tb.iterateBackwardsUnclamped(s._renderCursorStart);
+
+    return true;
+}
+
 // NOTE: this needs to be inside a container
 // with position: relative to correctly position the fake text-area.
-export function imBeginTextEditor(s: TextEditorState, ctrlHeld: boolean, shiftHeld: boolean) {
+export function imBeginTextEditor(
+    s: TextEditorState,
+    container: HTMLElement | null,
+    ctrlHeld: boolean,
+    shiftHeld: boolean
+) {
     s._cursorSpan = null;
     s._handledEvent = false;
     s.inCommandMode = ctrlHeld;
+    s._containerElement = container;
 
     const wasShifting = s.isShifting;
     s.isShifting = shiftHeld;
@@ -634,27 +641,23 @@ export function imBeginTextEditor(s: TextEditorState, ctrlHeld: boolean, shiftHe
     }
 
     // handle scroll input from last frame (??? TODO: Move if needd)
-    let prevViewLine = s.viewLine;
+    let newViewLine = s.viewLine;
     while (s.wantedScrollAmount > 1) {
         s.wantedScrollAmount--;
-        s.viewLine--;
+        newViewLine--;
     }
-    s.viewLine = Math.max(0, s.viewLine);
-
     while (s.wantedScrollAmount < 1) {
         s.wantedScrollAmount++;
-        s.viewLine++;
+        newViewLine++;
     }
+    textEditorSetViewLine(s, newViewLine);
 
-    if (prevViewLine !== s.viewLine) {
-        tb.iterateToLineCol(s._renderCursorStart, s.viewLine, 0);
-    }
-
-    s._renderCursor.pieceIdx = s._renderCursorStart.pieceIdx;
-    s._renderCursor.textIdx = s._renderCursorStart.textIdx;
+    s._renderCursorReachedEnd = false;
+    s._hasCursorLine = false;
+    tb.itCopy(s._renderCursor, s._renderCursorStart);
 
     // using an input to allow hooking into the browser's existing focusing mechanisms.
-    const textAreaRoot = imEl(newTextArea); {
+    const textAreaRoot = imBeginRoot(newTextArea); {
         s._textAreaElement = textAreaRoot;
         s._keyDownEvent = imOn("keydown");
         s._keyUpEvent = imOn("keyup");
@@ -691,6 +694,8 @@ export function imBeginTextEditor(s: TextEditorState, ctrlHeld: boolean, shiftHe
 }
 
 export function imEndTextEditor(s: TextEditorState) {
+    tb.itCopy(s._renderCursorEnd, s._renderCursor);
+
     const offsetTopChanged = imMemo(s._cursorSpan?.offsetTop);
     const offsetLeftChanged = imMemo(s._cursorSpan?.offsetLeft);
     const offsetHeightChanged = imMemo(s._cursorSpan?.offsetHeight);
@@ -708,8 +713,6 @@ export function imEndTextEditor(s: TextEditorState) {
     }
 
     defaultTextEditorKeyboardEventHandler(s);
-
-    autoScrollTextEditor(s);
 
     // TODO: this code should be near where we move the cursor. onCursorMoved() ?
     {
@@ -742,14 +745,61 @@ export function imEndTextEditor(s: TextEditorState) {
             }
         }
     }
+
+
+    if (s.isAutoScrolling) {
+        // Make sure the cursor is still in view. autoscrolling.
+        // Since the user can render anything inside a line, we actually can't make any assumptions about
+        // how tall the line should be. Hence, we scroll by 1 step per frame.
+        // TODO: think of better abstraction.
+
+        if (s._cursorSpan && s._containerElement && s._lastRenderedCharSpan) {
+            const cursorRect = s._cursorSpan.getBoundingClientRect();
+            const containerRect = s._containerElement.getBoundingClientRect();
+
+            const cursorTop = cursorRect.top;
+            const cursorBottom = cursorRect.bottom;
+
+            const containerTop = containerRect.top;
+            const containerBottom = containerRect.bottom;
+
+            const containerSize = containerBottom - containerTop;
+
+            const percentToTop = (cursorBottom - containerTop) / containerSize;
+            const percentToBottom = (containerBottom - cursorTop) / containerSize;
+
+            const scrollThreshold = 0.25;
+
+            let scrolled = false;
+
+            let newViewLine = s.viewLine;
+            if (percentToTop < scrollThreshold) {
+                if (s.viewLine > 0) {
+                    newViewLine--;
+                }
+            } else if (percentToBottom < scrollThreshold) {
+                let canScrollDown = true;
+                if (tb.itIsAtEnd(s._renderCursorEnd)) {
+                    const lastRenderedCharRect = s._lastRenderedCharSpan.getBoundingClientRect();
+                    const lastCharIsFullyVisible = lastRenderedCharRect.bottom < containerBottom;
+                    if (lastCharIsFullyVisible) {
+                        canScrollDown = false;
+                    }
+                }
+
+                if (canScrollDown) {
+                    newViewLine++;
+                }
+            }
+
+            if (!textEditorSetViewLine(s, newViewLine)) {
+                s.isAutoScrolling = false;
+            }
+        }
+    }
 }
 
-export function setCurrentSpan(s: TextEditorState, span: HTMLElement) {
-    // We need to know where to position the fake text area.
-    s._cursorSpan = span;
-}
-
-export function handleTextEditorClickEventForChar(s: TextEditorState, cursor: TextEditorCursor) {
+export function handleTextEditorClickEventForChar(s: TextEditorState, cursor: tb.Iterator) {
     if (elementHasMousePress()) {
         s.hasClick = true;
 
@@ -769,18 +819,21 @@ export function handleTextEditorClickEventForChar(s: TextEditorState, cursor: Te
 }
 
 export function textEditorHasChars(s: TextEditorState): boolean {
-    assert(s.buffer === s._renderCursor.buff);
-    const result = tb.itGet(s._renderCursor);
-    return !!result;
+    if (tb.itIsClear(s._renderCursor)) {
+        return true;
+    }
+
+    return !!tb.itGet(s._renderCursor);
 }
 
 
 export function textEditorGetNextChar(s: TextEditorState): string {
     tb.iterate(s._renderCursor)
-    return tb.itGet(s._renderCursor) ?? "\n";
+    const res = tb.itGet(s._renderCursor);
+    return res ?? "\n";
 }
 
-export function textEditorCursorIsSelected(s: TextEditorState, cursor: TextEditorCursor) {
+export function textEditorCursorIsSelected(s: TextEditorState, cursor: tb.Iterator) {
     return tb.itBefore(s.selectionStart, cursor) && 
            tb.itBefore(cursor, s.selectionEnd);
 }

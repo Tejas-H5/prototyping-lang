@@ -4,7 +4,7 @@ import {
     getCurrentRoot,
     getImMouse,
     imDiv,
-    imList,
+    imBeginList,
     imEnd,
     imEndList,
     imInit,
@@ -66,7 +66,7 @@ export function renderSliderBody(
         const sliderHandleSize = size.height;
 
         // little dots for every step
-        imList(); 
+        imBeginList(); 
         if (s.step) {
             const width = s.end - s.start;
             const count = Math.floor(width / s.step);

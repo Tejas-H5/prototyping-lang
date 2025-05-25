@@ -21,8 +21,8 @@ import { assert } from './utils/assert';
 import {
     elementHasMousePress,
     imDiv,
-    imEl,
-    imList,
+    imBeginRoot,
+    imBeginList,
     imEnd,
     imEndList,
     imInit,
@@ -96,7 +96,7 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
             } imEnd();
             imBeginLayout(ROW | FLEX); {
                 imBeginLayout(COL | FLEX); {
-                    imEl(newH3); {
+                    imBeginRoot(newH3); {
                         imTextSpan("Stack");
                     } imEnd();
 
@@ -124,7 +124,7 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
                             n = interpretResult.stack.length - 1;
                         }
 
-                        imList();
+                        imBeginList();
                         for (let addr = 0; addr <= n; addr++) {
                             const res = interpretResult.stack[addr];
 
@@ -191,7 +191,7 @@ export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInter
                     }
                 } imEnd();
                 imBeginLayout(FLEX | COL); {
-                    imEl(newH3); {
+                    imBeginRoot(newH3); {
                         imTextSpan("Results");
                     } imEnd();
 

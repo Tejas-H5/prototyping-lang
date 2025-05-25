@@ -1,9 +1,14 @@
-type Test = {
+export type TestSuite = {
+    tests: Test[];
+    functionsBeingTested: Function[];
+};
+
+export type Test = {
     code: () => void | Promise<void>;
     name: string;
     status: TestStatus;
     error: any;
-}
+};
 
 export const TEST_STATUS_NOT_RAN = 0;
 export const TEST_STATUS_RUNNING = 1;
@@ -15,39 +20,51 @@ export type TestStatus =
     typeof TEST_STATUS_RAN;
 
 let testsLocked = false;
-const tests: Test[] = [];
+const currentTestSuites: TestSuite[] = [];
 
-/**
- * Pushes a test to the list of tests.
- *
- * ```ts
- * test("sum", () => expect(1 + 1 === 2,  "1 + 1 === 2"))
- * ```
- *
- * You can start the name of a test with 'debug' to run the `debugger` statement for this test automatically.
- * This is useful for when you're working on a test that you know will have an infinite loop, and you aren't able
- * to manually place the breakpoint yourself for whatever reason, i.e that code isn't in the dev tools sources or
- * there is a bug in the dev-tools where breakpoints are only hit the second time they are placed, etc.
- *
- * ```ts
- * test("debug sum", () => expect(1 + 1 === 2,  "1 + 1 === 2"))
- * ```
- *
- */
-export function test(name: string, code: () => void) {
-    if (testsLocked) return;
+export function testSuite(systemsUnderTest: Function[], tests: Test[]) {
+    if (testsLocked) {
+        throw new Error("cant add more tests at this point");
+    }
 
-    tests.push({
-        name,
-        code,
-        status: TEST_STATUS_NOT_RAN,
-        error: null,
+    currentTestSuites.push({
+        functionsBeingTested: systemsUnderTest,
+        tests
     });
 }
 
-export function getTests() {
+export function newTest(name: string, code: () => void): Test {
+    return { name, code, status: TEST_STATUS_NOT_RAN, error: null };
+}
+
+// Can be kidna slow, so it's been moved into it's own function
+export function validateTestSuites(suites: TestSuite[]) {
+    // validate test suites at a time when UI can catch and render the error
+
+    for (const suite of suites) {
+        const functionNames = suite.functionsBeingTested.map(f => f.name);
+        for (const test of suite.tests) {
+            const str = String(test.code);
+
+            let isTesting = false;
+            for (const fnName of functionNames) {
+                if (str.includes(fnName)) {
+                    isTesting = true;
+                    break;
+                }
+            }
+
+            if (!isTesting) {
+                throw new Error(`Test "${test.name}" doesn't test any of these functions: [${functionNames.join(", ")}]. `)
+            }
+        }
+    }
+}
+
+export function getTestSuites() {
     testsLocked = true;
-    return tests;
+
+    return currentTestSuites;
 }
 
 export function runTest(test: Test, debug = false) {

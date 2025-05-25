@@ -25,6 +25,25 @@ export function buffGetLen(b: Buffer): number {
     return len;
 }
 
+// NOTE: use sparingly
+export function itGetPos(it: Iterator): number {
+    const b = it.buff;
+    let pos = 0;
+
+    for (let i = 0; i < it.pieceIdx; i++) {
+        const piece = b.pieces[i];
+        pos += piece.text.length;
+    }
+
+    if (it.pieceIdx < b.pieces.length) {
+        pos += it.textIdx;
+    } else {
+        pos += 1;
+    }
+
+    return pos;
+}
+
 export function buffInsertAt(
     b: Buffer,
     pos: number,
@@ -41,14 +60,10 @@ export function buffInsertAt(
     return it;
 }
 
-export function itInsert(
-    it: Iterator,
-    text: string
-) {
-    if (text === "") return;
+export function itInsert(it: Iterator, text: string): boolean {
+    if (text === "") return false;
 
     const b = it.buff;
-
     itBisect(it);
 
     const{ pieceIdx } = it;
@@ -63,6 +78,7 @@ export function itInsert(
     recomputeLineCount(piece);
 
     b._modified = true;
+    return true;
 }
 
 
@@ -101,10 +117,11 @@ function isValidStartEnd(start: Iterator, end: Iterator) {
     return true;
 }
 
-export function itRemove(start: Iterator, end: Iterator) {
-    if (!isValidStartEnd(start, end)) return;
+export function itRemove(start: Iterator, end: Iterator): boolean {
+    if (!isValidStartEnd(start, end)) return false;
 
     const b = start.buff;
+    b._modified = true;
 
     if (start.pieceIdx === end.pieceIdx) {
         assert(start.pieceIdx < b.pieces.length);
@@ -112,11 +129,11 @@ export function itRemove(start: Iterator, end: Iterator) {
 
         if (start.textIdx === 0 && end.textIdx === piece.text.length) {
             b.pieces.splice(start.pieceIdx, 1);
-            return;
+            return true;
         } 
 
         piece.text.splice(start.textIdx, end.textIdx - start.textIdx);
-        return;
+        return true;
     }
 
     const startPiece = b.pieces[start.pieceIdx]; assert(startPiece);
@@ -145,6 +162,8 @@ export function itRemove(start: Iterator, end: Iterator) {
     }
 
     b.pieces.splice(deletePiecesFrom, deletePiecesTo - deletePiecesFrom + 1);
+
+    return true;
 }
 
 export function itGetTextBetween(start: Iterator, end: Iterator) {
@@ -202,6 +221,9 @@ export function buffToString(b: Buffer) {
  */
 export function itBisect(it: Iterator) {
     const b = it.buff;
+
+    if (itIsClear(it)) itZero(it);
+
     let { pieceIdx, textIdx } = it;
 
     // We are at the start, middle or end of a piece. 
@@ -277,14 +299,17 @@ export function itNew(buff: Buffer): Iterator {
     return { buff, pieceIdx: 0, textIdx: 0 };
 }
 
-export function itFrom(a: Iterator): Iterator {
-    return { ...a };
+export function itFrom(a: Iterator, offset = 0): Iterator {
+    const it = { ...a };
+
+    for (let i = 0; i < offset; i++) {
+        iterate(it);
+    }
+
+    return it;
 }
 
-export function itCopy(
-    dst: Iterator,
-    src: Iterator,
-) {
+export function itCopy(dst: Iterator, src: Iterator) {
     assert(src.buff === dst.buff);
 
     dst.pieceIdx = src.pieceIdx;
@@ -342,11 +367,19 @@ export function itEnd(it: Iterator) {
     }
 }
 
+export function itIsClear(it: Iterator) {
+    return it.pieceIdx === -1;
+}
+
+export function itIsZero(it: Iterator) {
+    return it.pieceIdx <= 0 && it.textIdx <= 0;
+}
+
 /** Returns true if we actually moved */
 export function iterate(it: Iterator): boolean {
     const b = it.buff;
 
-    if (it.pieceIdx === -1) {
+    if (itIsClear(it)) {
         itZero(it);
         return true;
     }
@@ -375,9 +408,19 @@ export function itGet(it: Iterator): string | undefined {
     return piece.text[textIdx];
 }
 
-/** Returns true if we actually moved */
+
 export function iterateBackwards(it: Iterator): boolean {
-    if (it.pieceIdx === -1) return false;
+    if (itIsZero(it)) return false;
+
+    return iterateBackwardsUnclamped(it);
+}
+
+/** 
+ * Returns true if we actually moved.
+ * NOTE: we can actually iterate backwards from 0,0 to pieceIdx=-1,textIdx-1.
+ */
+export function iterateBackwardsUnclamped(it: Iterator): boolean {
+    if (itIsClear(it)) return false;
 
     const b = it.buff;
     if (it.textIdx === 0) {

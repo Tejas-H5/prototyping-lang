@@ -8,7 +8,7 @@ import {
     setClass,
     setStyle,
     imSpan,
-    imEl,
+    imBeginRoot,
     setInnerText,
     imMemoArray,
     setAttr,
@@ -264,7 +264,7 @@ export function imBeginCodeBlock(indent: number) {
 
 
 export function imBeginHeading() {
-    const root = imEl(newH3); {
+    const root = imBeginRoot(newH3); {
         if (imInit()) {
             setStyle("padding", "10px 0");
         }

@@ -21,12 +21,12 @@ import {
     imEndList,
     imInit,
     imMemo,
-    imList,
+    imBeginList,
     imMemoObjectVals,
     imPreventScrollEventPropagation,
     imRef,
     imState,
-    imEl,
+    imBeginRoot,
     imStateInline,
     imTrackSize,
     nextListRoot,
@@ -100,11 +100,11 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
                 imDiv(); {
                     imDiagnosticInfo("Interpreting errors", interpretResult.errors, "No interpreting errors");
 
-                    imEl(newH3); {
+                    imBeginRoot(newH3); {
                         imTextSpan("Instructions");
                     } imEnd();
 
-                    imList(); {
+                    imBeginList(); {
                         nextListRoot();
 
                         imBeginLayout(ROW | GAP); {
@@ -181,7 +181,7 @@ export function renderAppCodeOutput(ctx: GlobalContext) {
             } imEnd();
 
             imBeginLayout(COL | GAP); {
-                imList();
+                imBeginList();
                 for (const eg of CODE_EXAMPLES) {
                     nextListRoot();
                     imBeginButton(); {
@@ -329,7 +329,7 @@ function imParserOutputs(parseResult: ProgramParseResult | undefined) {
                 }
             }
 
-            imList();
+            imBeginList();
             for (let i = 0; i < statements.length; i++) {
                 const statement = statements[i];
                 dfs("Statement " + (i + 1), statement, 0);
@@ -356,7 +356,7 @@ function imDiagnosticInfo(heading: string, info: DiagnosticInfo[], emptyText: st
         } imEnd();
     } imEndIf();
 
-    imList();
+    imBeginList();
     for (const e of info) {
         nextListRoot();
         imDiv(); {
@@ -394,7 +394,7 @@ export function renderProgramResult(res: ProgramResult) {
                 imBeginCodeBlock(0); {
                     imTextSpan("list[", CODE);
                     imBeginCodeBlock(1); {
-                        imList();
+                        imBeginList();
                         for (let i = 0; i < res.values.length; i++) {
                             nextListRoot();
                             renderProgramResult(res.values[i]);
@@ -408,7 +408,7 @@ export function renderProgramResult(res: ProgramResult) {
                 imBeginCodeBlock(0); {
                     imTextSpan("map{", CODE);
                     imBeginCodeBlock(1); {
-                        imList();
+                        imBeginList();
                         for (const [k, val] of res.map) {
                             nextListRoot();
                             imTextSpan(k + "", CODE);
@@ -439,7 +439,7 @@ export function renderProgramResult(res: ProgramResult) {
 
                     imBeginCodeBlock(dim === 0 ? 0 : 1); {
                         imTextSpan("[");
-                        imList(); {
+                        imBeginList(); {
                             const len = res.val.shape[dim];
                             for (let i = 0; i < len; i++) {
                                 // This is because when the 'level' of the list changes, the depth itself changes,
@@ -481,7 +481,7 @@ export function renderFunctionInstructions(interpretResult: ProgramInterpretResu
 
             imBeginCodeBlock(0); {
                 if (imIf() && steps.length > 0) {
-                    imList();
+                    imBeginList();
                     for (let i = 0; i < steps.length; i++) {
                         nextListRoot();
 
@@ -603,7 +603,7 @@ export function imProgramOutputs(
     } imEnd();
     imBeginLayout(COL | GAP); {
         if (imIf() && ctx.state.showGroupedOutput) {
-            imList();
+            imBeginList();
             for (const [step, prints] of outputs.printsGroupedByStep) {
                 nextListRoot();
 
@@ -629,7 +629,7 @@ export function imProgramOutputs(
 
                     if (imIf() && localState.open) {
                         imBeginLayout(); {
-                            imList();
+                            imBeginList();
                             for (const result of prints) {
                                 nextListRoot();
 
@@ -644,7 +644,7 @@ export function imProgramOutputs(
         } else {
             imElse();
 
-            imList();
+            imBeginList();
             for (const result of outputs.prints) {
                 if (!result.visible) continue;
                 nextListRoot();
@@ -654,7 +654,7 @@ export function imProgramOutputs(
         } imEndIf();
     } imEnd();
     imBeginLayout(COL | GAP); {
-        imList();
+        imBeginList();
         for (const [idx, graph] of outputs.graphs) {
             nextListRoot();
 
@@ -692,7 +692,7 @@ export function imProgramOutputs(
         };
         imEndList();
     } imEnd();
-    imList();
+    imBeginList();
     for (const image of outputs.images) {
         nextListRoot();
         const root = imBeginLayout(ROW | GAP); {
@@ -720,7 +720,7 @@ export function imProgramOutputs(
         } imEnd();
     };
     imEndList();
-    imList();
+    imBeginList();
     if (outputs.plots.size > 0) {
         for (const plot of outputs.plotsInOrder) {
             nextListRoot();
@@ -751,7 +751,7 @@ export function imProgramOutputs(
                     }
                 } 
 
-                imList();
+                imBeginList();
                 for (const [expr, count] of exprFrequencies) {
                     nextListRoot();
                     imBeginLayout(ROW | GAP); {
@@ -1227,7 +1227,7 @@ function imBeginCanvasRenderingContext2D() {
     imBeginLayout(RELATIVE | W100 | H100);
 
     const { size } = imTrackSize();
-    const canvasRoot = imEl(newCanvasElement);
+    const canvasRoot = imBeginRoot(newCanvasElement);
 
     const canvas = canvasRoot.root;
     let ctxRef = imRef<[UIRoot<HTMLCanvasElement>, CanvasRenderingContext2D, number, number, number] | null>();
@@ -1698,7 +1698,7 @@ function renderPlot(ctx: GlobalContext, plot: ProgramPlotOutput, program: Progra
                     imTextSpan("Shift + scroll to zoom");
                 } imEnd();
 
-                imList();
+                imBeginList();
                 for (const prob of problems.val) {
                     nextListRoot();
                     imBeginLayout(); {

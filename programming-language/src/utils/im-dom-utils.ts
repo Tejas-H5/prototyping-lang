@@ -4,15 +4,13 @@
 // But in a matter of hours/days, I was able to implement features in this framework that I wasn't able to for months/years in the other one...
 //
 // Conventions:
-// - All immediate mode methods should start with 'im', like imIf, imList, imDiv, imLayout, etc. etc.
-//      I found imBegin() to be too verbose, as things like imBeginList and imBeginIf were being typed A LOT.
-//      If we don't need to use Begin for methods that open a scope, then there needs to be some other way to delineate this.
-//      Or does there?
-//
-// - If this method opens up a scope that must be ended in a specific way, this must be stated in the documentation, 
-//      either with words, or via an example. 
-//      Ideally, if the opening method was imComponent, and we can't just end it with {@link imEnd},
-//      there should be a closing method called imEndComponent.
+// - All immediate mode methods should start with 'im', like imState.
+// - All immediate mode methods that open up a scope that needs to be closed with a second method must start with `imBegin`, 
+//      like `imBeginList()`, `imBeginRoot()`. The finalizers must start with `imEnd`, like `imEndList`, `imEnd`, etc. 
+//      Only make exceptions that reduce the amount that needs to be typed when the functions need to be called A LOT. Examples include:
+//          - The control-flow helpers: `imIf`, `imElseIf`, `imElse`, `imSwitch`, `imTry`, `imCatch`, `imFor`, `imWhile`.
+//          - `imEnd`. Used very often, and since a large number of abstractions end up being just 1 root deep, it can be used
+//          to end a lot of different things.
 
 import { hotAssert } from "./assert";
 
@@ -233,7 +231,7 @@ export function setRenderPoint(p: RenderPoint) {
 
 /**
  * Whenever your app starts rendering, a {@link UIRoot} backed by the DOM root is pushed onto {@link currentStack}.
- * {@link imEl} will create a {@link UIRoot} backed by a custom DOM node, and push it onto {@link currentStack}.
+ * {@link imBeginRoot} will create a {@link UIRoot} backed by a custom DOM node, and push it onto {@link currentStack}.
  * {@link imEnd} will pop a {@link UIRoot} from {@link currentStack}.
  * {@link getCurrentRoot} can be used to get the current UIRoot.
  *
@@ -249,7 +247,7 @@ export function setRenderPoint(p: RenderPoint) {
  *
  * In the first render, any number of things can be rendered. 
  * To be more specific, a 'thing' is an immediate mode state entry. 
- * Only 3 methods can create im-state entries - {@link imEl}, {@link imState}, and {@link imList}.
+ * Only 3 methods can create im-state entries - {@link imBeginRoot}, {@link imState}, and {@link imBeginList}.
  * In every subsequent render, the same number of im-state entries must be 'created' in the same order.
  * This is because in subsequent renders, calls to the im-state functions don't recreate state, but 
  * increment an array index, and retrieve the state they created in the first render.
@@ -292,7 +290,7 @@ export function setRenderPoint(p: RenderPoint) {
  * Then how the heck do we do conditional rendering, or list rendering, AKA anything actually useful?
  * You'll need to take a look at:
  * list rendering:
- *      {@link imList}.
+ *      {@link imBeginList}.
  * conditional rendering helpers (they are just variants on `imList`):
  *      {@link imIf}
  *      {@link imElseIf}
@@ -544,7 +542,7 @@ export type RenderFnArgs<A extends unknown[], T extends ValidElement = ValidElem
  * imEnd();
  * ```
  */
-export function imList(): ListRenderer {
+export function imBeginList(): ListRenderer {
     // Don't access immediate mode state when immediate mode is disabled
     hotAssert(imDisabled === false);
 
@@ -584,7 +582,7 @@ export function imList(): ListRenderer {
  *  } imEndIf();
  * ```
  *
- * Everythig this method does can also be done using {@link imList}, {@link imEndList} and {@link nextListRoot},
+ * Everythig this method does can also be done using {@link imBeginList}, {@link imEndList} and {@link nextListRoot},
  * but you have to type more, and I feel that code doesn't evolve correctly with 
  * that approach. For example, the following code is valid:
  *
@@ -608,7 +606,7 @@ export function imList(): ListRenderer {
  * ```
  */
 export function imIf() {
-    imList();
+    imBeginList();
     nextListRoot();
     return true;
 }
@@ -625,7 +623,7 @@ export function imIf() {
  * ```
  */
 export function imSwitch(key: ValidKey) {
-    imList();
+    imBeginList();
     nextListRoot(key);
 }
 
@@ -651,9 +649,16 @@ export function imEndIf() {
     imEndList();
 }
 
+/** Added these too, because imBeginList is too many characters. */
+export const imFor = imBeginList;
+export const imEndFor = imEndList;
+export const imWhile = imBeginList;
+export const imEndWhile = imEndList;
+
+
 /**
  * Helpers for implementing try-catch.
- * You can also do this with {@link imList}/{@link imEndList} and {@link nextListRoot},
+ * You can also do this with {@link imBeginList}/{@link imEndList} and {@link nextListRoot},
  * but you need to know what you're doing, and it is annoying to remember.
  *
  * ```ts
@@ -686,7 +691,7 @@ export function imEndIf() {
  * ```
  */
 export function imTry(): ListRenderer {
-    const l = imList();
+    const l = imBeginList();
     nextListRoot();
     return l;
 }
@@ -705,7 +710,7 @@ export function imEndTry() {
 
 
 /**
- * Read {@link imList}'s doc first for context and examples.
+ * Read {@link imBeginList}'s doc first for context and examples.
  *
  * You can optionally specify a {@link key}.
  * If a key is present, the same UIRoot that was rendered for that particular key will be re-used. Make sure
@@ -859,7 +864,7 @@ export function getCurrentRoot(): UIRoot {
 
 // You probably don't want to use this, if you can help it
 export function getCurrentListRendererInternal(): ListRenderer {
-    /** Can't call this method without opening a new list renderer (see {@link imList}) */
+    /** Can't call this method without opening a new list renderer (see {@link imBeginList}) */
     hotAssert(currentListRenderer !== undefined)
 
     return currentListRenderer;
@@ -883,8 +888,7 @@ function startRendering(r: UIRoot = appRoot, itemIdx: number, domIdx: number) {
     __beginUiRoot(r, itemIdx, domIdx);
 }
 
-
-export function imEl<E extends ValidElement = ValidElement>(elementSupplier: () => E): UIRoot<E> {
+export function imBeginRoot<E extends ValidElement = ValidElement>(elementSupplier: () => E): UIRoot<E> {
     // Don't access immediate mode state when immediate mode is disabled
     hotAssert(imDisabled === false);
 
@@ -915,7 +919,7 @@ export function imEl<E extends ValidElement = ValidElement>(elementSupplier: () 
 } 
 
 /** 
- * This method pops any element from the global element stack that we created via {@link imEl}.
+ * This method pops any element from the global element stack that we created via {@link imBeginRoot}.
  * This is called `imEnd` instad of `end`, because `end` is a good variable name that we don't want to squat on.
  */
 export function imEnd() {
@@ -1001,7 +1005,7 @@ export function imEndList() {
 
     // NOTE: the main reason why I won't make a third ITEM_COMPONENT_FENCE 
     // to detect an incorrect number of calls to im() and imEnd() methods, is because
-    // most UI components will interlace imList() and imEl() methods frequently enough that
+    // most UI components will interlace imList() and imRoot() methods frequently enough that
     // this assertion here or the one in imEnd() will already catch this bug most of the time.
     const l = getCurrentListRendererInternal();
 
@@ -1064,11 +1068,11 @@ export function newSpan() {
 }
 
 export function imDiv(): UIRoot<HTMLDivElement> {
-    return imEl<HTMLDivElement>(newDiv);
+    return imBeginRoot<HTMLDivElement>(newDiv);
 }
 
 export function imSpan(): UIRoot<HTMLSpanElement> {
-    return imEl<HTMLSpanElement>(newSpan);
+    return imBeginRoot<HTMLSpanElement>(newSpan);
 }
 
 export function imTextSpan(text: string) {
@@ -1124,6 +1128,15 @@ export function imArray<T>(): T[] {
     return imState(newArray);
 }
 
+function newStringBuilder(): {
+    text: string;
+} {
+    return { text: "" }
+}
+
+export function imStringRef() {
+    return imState(newStringBuilder);
+}
 
 function newMap<K, V>() {
     return new Map<K, V>();

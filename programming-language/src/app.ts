@@ -33,7 +33,7 @@ import {
     elementHasMousePress,
     enableIm,
     getImKeys,
-    imList,
+    imBeginList,
     imEnd,
     imEndList,
     imInit,
@@ -198,7 +198,7 @@ export function renderApp() {
                             imTextSpan("The errors just keep occuring !!! Apologies.");
                         } imEnd();
 
-                        imList();
+                        imBeginList();
                         for (const [err, count] of errors) {
                             nextListRoot();
                             imBeginLayout(); {

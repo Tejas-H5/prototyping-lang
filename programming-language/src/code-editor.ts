@@ -9,14 +9,11 @@ import {
     textEditorGetNextChar,
     textEditorHasChars,
     textEditorHasSelection,
-    textEditorInsert,
     textEditorRemove,
-    textEditorSetSelection,
     TextEditorState,
     handleTextEditorMouseScrollEvent,
     iterateToLastNewline,
     iterateToNextNewline,
-    TextEditorCursor,
 } from 'src/utils/text-editor';
 import * as tb from "src/utils/text-edit-buffer";
 import { imProgramOutputs } from './code-output';
@@ -72,13 +69,12 @@ import { cnApp } from './styling';
 import {
     disableIm,
     enableIm,
-    imList,
+    imBeginList,
     imSpan,
     imEnd,
     imEndList,
     imInit,
     imMemo,
-    imMemoArray,
     imRef,
     imState,
     imStateInline,
@@ -96,25 +92,25 @@ import { max } from './utils/math-utils';
 import { isWhitespace } from './utils/text-utils';
 import { assert } from './utils/assert';
 import { cn } from './utils/cn';
-import {
-    buffGetLen,
-    buffToString
-} from './utils/text-edit-buffer';
 
 
 const UNANIMOUSLY_DECIDED_TAB_SIZE = 4;
+
+// Do not leak this abstraction out of this file...
+// Other subsystems should not care about 'text editor cursor tb editor' or watever.
+type TextEditorCursor = tb.Iterator;
 
 type CodeEditorState = {
     lastMaxLine: number;
     isFinding: boolean;
     allFindResults: Range[];
     currentFindResultIdx: number;
-    cursorBeforeFind: number;
+    cursorBeforeFind: TextEditorCursor | null;
 }
 
 export type Range = {
-    start: number;
-    end: number;
+    start: TextEditorCursor;
+    end:   TextEditorCursor;
 }
 
 
@@ -124,7 +120,7 @@ function newCodeEditorState(): CodeEditorState {
         isFinding: false,
         allFindResults: [],
         currentFindResultIdx: -1,
-        cursorBeforeFind: 0,
+        cursorBeforeFind: null,
     };
 }
 
@@ -142,7 +138,7 @@ function lPad(str: string, num: number): string {
 const renderDiagnostics = (diagnostics: DiagnosticInfo[], col: string, line: number) => {
     // NOTE: we're currently looping over this for every line.
     // if it becomes too slow, may need to do something about it.
-    imList();
+    imBeginList();
     for (const err of diagnostics) {
         if (err.pos.line !== line) {
             continue
@@ -204,7 +200,7 @@ function imAutocomplete(lastIdentifier: string) {
 
             setStyle("border", "1px solid black");
 
-            imList();
+            imBeginList();
             let i = 0;
             for (const v of results) {
                 i++;
@@ -217,7 +213,7 @@ function imAutocomplete(lastIdentifier: string) {
                     setStyle("border", "1px solid black");
                     imTextSpan(v.name);
                     imTextSpan("(");
-                    imList();
+                    imBeginList();
                     for (let i = 0; i < v.args.length; i++) {
                         const arg = v.args[i];
                         nextListRoot();
@@ -278,16 +274,18 @@ function getStringRepr(bufferChar: string, isWhitespace: boolean) {
 
 type SimpleTextEditorState = { 
     editorState: TextEditorState;
+    container: HTMLElement | null;
 };
 
 function newSimpleTextEditorState(): SimpleTextEditorState {
     return {
         editorState: newTextEditorState(),
+        container: null,
     };
 }
 
-function imBeginSimpleTextInput(s: SimpleTextEditorState, ctrlHeld: boolean, shiftHeld: boolean) {
-    imBeginTextEditor(s.editorState, ctrlHeld, shiftHeld);
+function imSimpleTextInput(s: SimpleTextEditorState, ctrlHeld: boolean, shiftHeld: boolean) {
+    imBeginTextEditor(s.editorState, s.container, ctrlHeld, shiftHeld);
 }
 
 function imEndSimpleTextInput(s: SimpleTextEditorState) {
@@ -297,11 +295,11 @@ function imEndSimpleTextInput(s: SimpleTextEditorState) {
 // A simpler text editor that can be used for simpler text inputs
 function imSimpleTextInputBody(s: SimpleTextEditorState) {
     imBeginLayout(COL); {
-        imList();
+        imBeginList();
         while (textEditorHasChars(s.editorState)) {
             nextListRoot();
             imBeginLayout(ROW); {
-                imList();
+                imBeginList();
                 while (textEditorHasChars(s.editorState)) {
                     nextListRoot();
                     const textSpan = imSpan(); {
@@ -429,38 +427,27 @@ function deIndentSelection(targetEditor: TextEditorState) {
         return;
     }
 
-    const [start, end] = getSelectionRangeExtendedToLines(targetEditor);
-    if (end <= start) {
-        return;
-    }
-    const text = buffToString(targetEditor.buffer);
-    const slice = text.slice(start, end);
+    iterateToLastNewline(targetEditor.selectionStart);
+    iterateToNextNewline(targetEditor.selectionEnd);
 
-    const updatedSlice: string[] = [];
-    let whitespaceRemaining = UNANIMOUSLY_DECIDED_TAB_SIZE;
-    for (let i = 0; i < slice.length; i++) {
-        const c = slice[i];
+    const cursors: TextEditorCursor[] = [];
 
-        if (c === "\n") {
-            whitespaceRemaining = UNANIMOUSLY_DECIDED_TAB_SIZE;
-        } else if (whitespaceRemaining) {
-            if (c === "\t") {
-                whitespaceRemaining = 0;
-                continue;
-            } else if (c === " ") {
-                whitespaceRemaining--;
-                continue;
-            } else {
-                whitespaceRemaining = 0;
-            }
+    const it = tb.itFrom(targetEditor.selectionStart);
+    while (!tb.itEquals(it, targetEditor.selectionEnd)) {
+        const char = tb.itGet(it);
+        if (char === "\n") {
+            cursors.push(tb.itFrom(it));
         }
 
-        updatedSlice.push(c);
+        tb.iterate(it);
     }
 
-    textEditorRemove(targetEditor, start, end - start);
-    textEditorInsert(targetEditor, start, updatedSlice.join(""));
-    textEditorSetSelection(targetEditor, start, start + updatedSlice.length);
+    tb.itBisectAll(cursors);
+    for (const c of cursors) {
+        const c1 = tb.itFrom(c);
+        tb.iterate(c1);
+        textEditorRemove(targetEditor, c, c1);
+    }
 }
 
 
@@ -485,8 +472,7 @@ function handleCodeEditorEvents(s: CodeEditorState, targetEditor: TextEditorStat
                 handled = true;
 
                 if (s.currentFindResultIdx >= 0 && s.currentFindResultIdx < s.allFindResults.length) {
-                    targetEditor._cursorPos = s.allFindResults[s.currentFindResultIdx].start;
-                    targetEditor.isAutoScrolling = true;
+                    tb.itCopy(targetEditor.cursor, s.allFindResults[s.currentFindResultIdx].start);
                 }
             }
         }
@@ -544,7 +530,7 @@ function handleCodeEditorEvents(s: CodeEditorState, targetEditor: TextEditorStat
         if (eventSource.inCommandMode && eventSource.keyLower === "f") {
             eventSource._keyDownEvent.preventDefault();
             s.isFinding = true;
-            s.cursorBeforeFind = targetEditor._cursorPos;
+            s.cursorBeforeFind = tb.itFrom(targetEditor.cursor);
         }
     }
 }
@@ -571,46 +557,57 @@ export function imAppCodeEditor(ctx: GlobalContext) {
     }
 
     if (imMemo(finderState.editorState.modifiedAt)) {
-        let numResults = 0;
-        const text = buffToString(editorState.buffer);
-        const queryText = buffToString(finderState.editorState.buffer);
-        if (queryText && queryText.length > 0) {
-            const len = buffGetLen(editorState.buffer);
-            for (let i = 0; i < len; i++) {
-                if (textEditorCheckIfQueryIsAtPos(text, queryText, i)) {
-                    if (numResults === s.allFindResults.length) {
-                        s.allFindResults.push({ start: 0, end: 0 });
-                    }
+        const it = tb.itNew(editorState.buffer);
+        const queryText = tb.buffToString(finderState.editorState.buffer);
 
-                    s.allFindResults[numResults].start = i;
-                    s.allFindResults[numResults].end = i + queryText.length - 1;   // inclusive range
-                    numResults++;
+        s.allFindResults.length = 0;
+        let firstMatchIdx: number | undefined;
+        if (queryText && queryText.length > 0) {
+            // loop goes from cursor -> end, then start -> cursor.
+            // that way, `firstMatchIdx` is correct.
+
+            tb.itCopy(it, editorState.cursor);
+            while (!tb.itIsAtEnd(it)) {
+                if (tb.itQuery(it, queryText)) {
+                    s.allFindResults.push({
+                        start: tb.itFrom(it),
+                        end: tb.itFrom(it, queryText.length),
+                    });
+                    if (!firstMatchIdx) firstMatchIdx = s.allFindResults.length - 1;
                 }
+                tb.iterate(it);
+            }
+
+            tb.itZero(it);
+            while (!tb.itEquals(it, editorState.cursor)) {
+                if (tb.itQuery(it, queryText)) {
+                    s.allFindResults.push({
+                        start: tb.itFrom(it),
+                        end: tb.itFrom(it, queryText.length),
+                    });
+                    if (!firstMatchIdx) firstMatchIdx = s.allFindResults.length - 1;
+                }
+                tb.iterate(it);
             }
         }
-        // we do a little object pooling
-        s.allFindResults.length = numResults;
-        if (numResults > 0) {
+
+        if (firstMatchIdx !== undefined) {
             // move cursor to the result that is closest to it
-
-            let minIdx = 0;
-            let minDistance = Math.abs(s.allFindResults[0].start - s.cursorBeforeFind);
-            for (let i = 1; i < s.allFindResults.length; i++) {
-                const res = s.allFindResults[i];
-                const dist = Math.abs(res.start - s.cursorBeforeFind);
-                if (dist < minDistance) {
-                    minDistance = dist;
-                    minIdx = i;
-                }
-            }
-
-            s.currentFindResultIdx = minIdx;
-            editorState._cursorPos = s.allFindResults[minIdx].start;
-            editorState.isAutoScrolling = true;
+            s.currentFindResultIdx = firstMatchIdx;
         }
     } 
 
-    imBeginScrollContainer(H100 | CODE | COL |  RELATIVE, true).root; {
+    
+    const modifiedAtChanged = imMemo(editorState.modifiedAt);
+    if (modifiedAtChanged) {
+        ctx.state.text = tb.buffToString(editorState.buffer);
+        ctx.astStart = 1;
+        ctx.astEnd = 5;
+        hasSelection = tb.itIsClear(editorState.selectionStart);
+        ctx.textCursorIdx = tb.itGetPos(editorState.cursor);
+    } 
+
+    const container = imBeginScrollContainer(H100 | CODE | COL |  RELATIVE, true).root; {
         if (imInit()) {
             setInset("10px");
             setClass(cnApp.bgFocus);
@@ -621,12 +618,6 @@ export function imAppCodeEditor(ctx: GlobalContext) {
         if (imMemo(ctx.lastLoaded)) {
             loadText(editorState, state.text);
         } 
-
-        ctx.astStart = 1;
-        ctx.astEnd = 5;
-        hasSelection = editorState.selectionStart !== -1;
-
-        ctx.textCursorIdx = editorState._cursorPos;
 
         const astTraverserRef = imRef<ResumeableAstTraverser | null>();
         if (imMemo(lastParseResult)) {
@@ -642,19 +633,27 @@ export function imAppCodeEditor(ctx: GlobalContext) {
         }
 
         // TODO: only render the stuff that is onscreen
-        imBeginTextEditor(editorState, ctx.input.keyboard.ctrlHeld, ctx.input.keyboard.shiftHeld); {
-            imList();
-            while (textEditorHasChars(editorState)) {
-                const lineIdx = editorState._renderCursor.line + 1;
-
+        imBeginTextEditor(
+            editorState,
+            container,
+            ctx.input.keyboard.ctrlHeld,
+            ctx.input.keyboard.shiftHeld
+        ); {
+            let lineIdx = editorState.viewLine;
+            let pos = editorState._renderPosStart;
+            let renderedLine = false;
+            imBeginList(); 
+            while (textEditorHasChars(editorState) || !renderedLine) {
+                renderedLine = true;
                 nextListRoot(lineIdx);
                 const line = imBeginLayout(COL); {
-
                     imBeginLayout(COL); {
                         imBeginLayout(ROW | FLEX); {
                             const lineText = imRef<string>();
                             
-                            if (imMemoArray(lineIdx, s.lastMaxLine) || lineText.val === null) {
+                            const lineChanged = imMemo(lineIdx);
+                            const lastMaxLineChanged = imMemo(s.lastMaxLine);
+                            if (lineChanged || lastMaxLineChanged || lineText.val === null) {
                                 const numDigits = Math.ceil(Math.log10(s.lastMaxLine + 1));
                                 lineText.val = lPad("" + lineIdx, numDigits) + " ";
                             }
@@ -668,18 +667,19 @@ export function imAppCodeEditor(ctx: GlobalContext) {
                             imBeginLayout(COL | FLEX); {
                                 // Actual text line
                                 imBeginLayout(ROW); {
-                                    imList();
+                                    imBeginList();
                                     while (textEditorHasChars(editorState)) {
                                         nextListRoot();
 
                                         const actualC = textEditorGetNextChar(editorState);
+                                        pos++;
 
                                         let astNode: ProgramExpression | undefined;
                                         if (astTraverserRef.val && lastParseResult) {
                                             astNode = getAstNodeForTextPos(
                                                 astTraverserRef.val,
                                                 lastParseResult,
-                                                editorState._renderCursor.pos,
+                                                pos,
                                             );
                                         }
 
@@ -688,11 +688,11 @@ export function imAppCodeEditor(ctx: GlobalContext) {
 
                                         const textSpan = imSpan(); {
                                             setInnerText(c);
-                                            handleTextEditorClickEventForChar(editorState, editorState._renderCursor.pos);
+                                            handleTextEditorClickEventForChar(editorState, editorState._renderCursor);
 
                                             let isFindResult = false;
                                             if (s.isFinding) {
-                                                const i = editorState._renderCursor.pos;
+                                                const i = editorState._renderCursor;
                                                 for (const range of s.allFindResults) {
                                                     if (range.start <= i && i <= range.end) {
                                                         isFindResult = true;
@@ -702,12 +702,16 @@ export function imAppCodeEditor(ctx: GlobalContext) {
 
                                             const hasFocus = editorState.hasFocus || finderState.editorState.hasFocus;
 
-                                            const isSelected = hasFocus && textEditorCursorIsSelected(editorState, editorState._renderCursor.pos);
-                                            const isCursor = hasFocus && editorState._renderCursor.pos === editorState._cursorPos;
+                                            const isSelected = hasFocus && textEditorCursorIsSelected(editorState, editorState._renderCursor);
+                                            const isCursor = hasFocus && tb.itEquals(editorState._renderCursor, editorState.cursor);
                                             if (isCursor) {
-                                                editorState._cursorSpan = textSpan.root;
-                                                ctx.textCursorLine = lineIdx;
+                                                ctx.textCursorLine         = lineIdx;
+                                                editorState._cursorSpan    = textSpan.root;
+                                                editorState._cursorLine    = lineIdx;
+                                                editorState._hasCursorLine = true;
                                             }
+                                            editorState._lastRenderedCharSpan = textSpan.root;
+
 
                                             const isSelectedChanged = imMemo(isSelected);
                                             const isCursorChanged = imMemo(isCursor);
@@ -773,7 +777,7 @@ export function imAppCodeEditor(ctx: GlobalContext) {
 
                                     // flex element handles events for the entire newline
                                     imBeginLayout(FLEX); {
-                                        handleTextEditorClickEventForChar(editorState, editorState._renderCursor.pos);
+                                        handleTextEditorClickEventForChar(editorState, editorState._renderCursor);
                                     } imEnd();
                                 } imEnd();
 
@@ -816,7 +820,7 @@ export function imAppCodeEditor(ctx: GlobalContext) {
                         const outputs = lastInterpreterResult?.outputs;
                         const inputs = outputs?.uiInputsPerLine?.get(lineIdx);
                         if (imIf() && inputs) {
-                            imList();
+                            imBeginList();
                             for (const ui of inputs) {
                                 nextListRoot();
 
@@ -870,10 +874,12 @@ export function imAppCodeEditor(ctx: GlobalContext) {
                 if (isPartiallyOffscreen(rect)) {
                     break;
                 }
+
+                lineIdx++;
             }
             imEndList();
 
-            s.lastMaxLine = editorState._renderCursor.line + 1;
+            s.lastMaxLine = lineIdx + 1;
 
             handleCodeEditorEvents(s, editorState, editorState);
 
@@ -882,18 +888,13 @@ export function imAppCodeEditor(ctx: GlobalContext) {
         } imEndTextEditor(editorState);
 
 
-        const modifiedAtChanged = imMemo(editorState.modifiedAt);
-        if (modifiedAtChanged) {
-            state.text = buffToString(editorState.buffer);
-        } 
-
         // Empty space below the lines should just handle click events for the end of the line
         imBeginLayout(FLEX); {
-            handleTextEditorClickEventForChar(editorState, editorState._renderCursor.pos);
+            handleTextEditorClickEventForChar(editorState, editorState._renderCursor);
         } imEnd();
 
         if (imIf() && s.isFinding) {
-            imBeginLayout(ROW | PRE | ABSOLUTE | OPAQUE); {
+            imBeginLayout(ROW | PRE | ABSOLUTE | OPAQUE).root; {
                 if (imInit()) {
                     setAttr("style", "bottom: 0; left: 0; right: 0");
                 }
@@ -902,7 +903,7 @@ export function imAppCodeEditor(ctx: GlobalContext) {
                     imTextSpan("Find: ");
                 } imEnd();
 
-                imBeginSimpleTextInput(
+                imSimpleTextInput(
                     finderState,
                     ctx.input.keyboard.ctrlHeld,
                     ctx.input.keyboard.shiftHeld
@@ -910,7 +911,7 @@ export function imAppCodeEditor(ctx: GlobalContext) {
                     imSimpleTextInputBody(finderState);
                     handleCodeEditorEvents(
                         s,
-                        editorState,
+                       editorState,
                         finderState.editorState
                     );
                 } imEndSimpleTextInput(finderState)
@@ -918,10 +919,11 @@ export function imAppCodeEditor(ctx: GlobalContext) {
         } imEndIf();
         // Empty space below the lines should just handle click events for the end of the line
         imBeginLayout(FLEX); {
-            handleTextEditorClickEventForChar(editorState, editorState._renderCursor.pos);
+            handleTextEditorClickEventForChar(editorState, editorState._renderCursor);
         } imEnd();
     } imEnd();
 }
+
 
 export function textEditorCheckIfQueryIsAtPos(
     buffer: string,

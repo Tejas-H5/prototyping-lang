@@ -3,7 +3,7 @@ import { cn, newCssBuilder } from "src/utils/cn";
 import { execCommand } from "src/utils/depracated-dom-api-wrappers";
 import {
     imDiv,
-    imEl,
+    imBeginRoot,
     imEnd,
     imState,
     imInit,
@@ -115,7 +115,7 @@ export function imEditableTextArea({
             } imEnd();
 
             if (imIf() && isEditing) {
-                const textArea = imEl(newTextArea).root; {
+                const textArea = imBeginRoot(newTextArea).root; {
                     if (textAreaRef) {
                         textAreaRef.val = textArea;
                     }
