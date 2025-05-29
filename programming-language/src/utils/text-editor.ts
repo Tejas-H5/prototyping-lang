@@ -54,15 +54,19 @@ export function iterateToNextNewline(cursor: tb.Iterator) {
 }
 
 function moveDown(s: TextEditorState) {
-    const count = iterateToLastNewline(s.cursor);
-    iterateToNextNewline(s.cursor);
+    const { pieceIdx, textIdx } = s.cursor;
+    const currentLineOffset = iterateToLastNewline(s.cursor);
+    tb.itCopyValues(s.cursor, pieceIdx, textIdx);
 
-    let count2 = 0;
-    while (tb.iterate(s.cursor) && tb.itGet(s.cursor) !== "\n") {
-        count2++;
-        if (count === count2) break;
+    if (tb.itGet(s.cursor) !== "\n") {
+        iterateToNextNewline(s.cursor);
     }
-    tb.iterate(s.cursor);
+
+    let nextLineOffset = 0;
+    while (tb.iterate(s.cursor) && tb.itGet(s.cursor) !== "\n") {
+        if (currentLineOffset === nextLineOffset) break;
+        nextLineOffset++;
+    }
 }
 
 function clearSelection(s: TextEditorState) {
@@ -74,9 +78,26 @@ function clearSelection(s: TextEditorState) {
 }
 
 function moveUp(s: TextEditorState) {
-    // get current offset
+    const currentLineOffset = iterateToLastNewline(s.cursor);
+    if (tb.itIsZero(s.cursor)) {
+        return;
+    }
+
     tb.iterateBackwards(s.cursor);
     iterateToLastNewline(s.cursor);
+
+    let nextLineOffset = 0;
+    if (tb.itIsZero(s.cursor)) {
+        nextLineOffset = 1;
+    }
+
+    while (nextLineOffset <= currentLineOffset) {
+        if (tb.iterate(s.cursor) && tb.itGet(s.cursor) !== "\n") {
+            nextLineOffset++;
+            continue;
+        }
+        break;
+    }
 }
 
 function moveToEndOfThisWord(s: TextEditorState) {
@@ -176,24 +197,32 @@ function pushToUndoBuffer(s: TextEditorState, edit: TextEdit) {
 function applyOrRevertUndoStep(s: TextEditorState, step: TextEdit, apply: boolean) {
     s.isUndoing = true;
 
-    if (step.insert) {
-        if (apply) {
-            tb.buffInsertAt(s.buffer, step.pos, step.str);
+    tb.beginEditing(s.buffer); {
+
+        if (step.insert) {
+            if (apply) {
+                tb.buffInsertAt(s.buffer, step.pos, step.str);
+            } else {
+                tb.buffRemoveAt(s.buffer, step.pos, step.str.length);
+            }
         } else {
-            tb.buffRemoveStartLen(s.buffer, step.pos, step.str.length);
+            if (apply) {
+                tb.buffRemoveAt(s.buffer, step.pos, step.str.length);
+            } else {
+                tb.buffInsertAt(s.buffer, step.pos, step.str);
+            }
         }
-    } else {
-        if (apply) {
-            tb.buffRemoveStartLen(s.buffer, step.pos, step.str.length);
-        } else {
-            tb.buffInsertAt(s.buffer, step.pos, step.str);
-        }
-    }
+
+    } tb.endEditing(s.buffer) 
 
     s.isUndoing = false;
 }
 
-function traverseUndoBuffer(s: TextEditorState, forwards: boolean, withinTime = 100) {
+function traverseUndoBuffer(
+    s: TextEditorState,
+    forwards: boolean,
+    withinTime = 100
+) {
     if (s.undoBuffer.length === 0) return;
 
     if (forwards) {
@@ -228,37 +257,43 @@ function traverseUndoBuffer(s: TextEditorState, forwards: boolean, withinTime = 
         } 
     }
 }
+
 export function textEditorInsert(s: TextEditorState, cursor: tb.Iterator, str: string) {
-    if (!tb.itInsert(cursor, str)) return;
+    tb.beginEditing(s.buffer); {
+        if (tb.itInsert(cursor, str)) {
+            const pos = tb.itGetPos(cursor);
+            s.modifiedAt = Date.now();
 
-    const pos = tb.itGetPos(cursor);
-    s.modifiedAt = Date.now();
-
-    pushToUndoBuffer(s, { 
-        time: s.modifiedAt, 
-        pos,
-        insert: true, 
-        str: str 
-    });
+            pushToUndoBuffer(s, {
+                time: s.modifiedAt,
+                pos,
+                insert: true,
+                str: str
+            });
+        }
+    } tb.endEditing(s.buffer);
 }
 
 export function textEditorRemove(s: TextEditorState, start: tb.Iterator, end: tb.Iterator) {
     const removed = tb.itGetTextBetween(start, end);
     if (!removed) return;
-    if (!tb.itRemove(start, end)) return;
 
-    s.modifiedAt = Date.now();
-    const startPos = tb.itGetPos(start);
+    tb.beginEditing(s.buffer); {
+        if (tb.itRemove(start, end)) {
+            s.modifiedAt = Date.now();
+            const startPos = tb.itGetPos(start);
 
-    tb.itCopy(s.cursor, start);
-    tb.iterateBackwards(s.cursor);
+            tb.itCopy(s.cursor, start);
+            tb.iterateBackwards(s.cursor);
 
-    pushToUndoBuffer(s, { 
-        time: s.modifiedAt, 
-        pos: startPos,
-        insert: false,
-        str: removed
-    });
+            pushToUndoBuffer(s, {
+                time: s.modifiedAt,
+                pos: startPos,
+                insert: false,
+                str: removed
+            });
+        }
+    } tb.endEditing(s.buffer);
 }
 
 export function textEditorSetSelection(s: TextEditorState, start: tb.Iterator, end: tb.Iterator) {
@@ -434,14 +469,23 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
             if (s.inCommandMode) {
                 while (tb.iterate(s.cursor)) { };
             } else {
-                iterateToNextNewline(s.cursor);
+                if (tb.itGet(s.cursor) !== "\n") {
+                    iterateToNextNewline(s.cursor);
+                }
             }
         } else if (key === "Home") {
             if (s.inCommandMode) {
                 s.cursor.pieceIdx = 0;
                 s.cursor.textIdx = 0;
             } else {
-                iterateToLastNewline(s.cursor);
+                if (!tb.itIsZero(s.cursor)) {
+                    tb.iterateBackwards(s.cursor);
+                    if (tb.itGet(s.cursor) !== "\n") {
+                        iterateToLastNewline(s.cursor);
+                    } 
+
+                    tb.iterate(s.cursor);
+                }
             }
         } else if (key === "Enter") {
             textEditorInsert(s, s.cursor, "\n");
@@ -503,17 +547,17 @@ export function newTextEditorState() {
 
         _renderPosStart:         0,
         _renderCursorReachedEnd: false,
-        _renderCursorStart:      tb.itNew(buffer),
-        _renderCursorEnd:        tb.itNew(buffer),
-        _renderCursor:           tb.itNew(buffer),
-        _tempCursor:             tb.itNew(buffer),
-        _initialCursor:          tb.itNew(buffer),
-        cursor:                  tb.itNew(buffer),
-        selectionStart:          tb.itNew(buffer),
-        selectionEnd:            tb.itNew(buffer),
-        selectionAnchor:         tb.itNew(buffer),
-        selectionAnchorEnd:      tb.itNew(buffer),
-        selectionStartedCursor:  tb.itNew(buffer),
+        _renderCursorStart:      tb.itNewPermanent(buffer),
+        _renderCursorEnd:        tb.itNewPermanent(buffer),
+        _renderCursor:           tb.itNewPermanent(buffer),
+        _tempCursor:             tb.itNewPermanent(buffer),
+        _initialCursor:          tb.itNewPermanent(buffer),
+        cursor:                  tb.itNewPermanent(buffer),
+        selectionStart:          tb.itNewPermanent(buffer),
+        selectionEnd:            tb.itNewPermanent(buffer),
+        selectionAnchor:         tb.itNewPermanent(buffer),
+        selectionAnchorEnd:      tb.itNewPermanent(buffer),
+        selectionStartedCursor:  tb.itNewPermanent(buffer),
 
         isAutoScrolling: false,
 
@@ -717,10 +761,7 @@ export function imEndTextEditor(s: TextEditorState) {
     // TODO: this code should be near where we move the cursor. onCursorMoved() ?
     {
         const canStartSelecting = s.canKeyboardSelect || s.canMouseSelect;
-        if (
-            canStartSelecting && !s.isSelecting &&
-            !tb.itEquals(s.cursor, s.selectionStartedCursor)
-        ) {
+        if (canStartSelecting && !s.isSelecting) {
             tb.itCopy(s.selectionAnchor, s.cursor);
             if (tb.itGet(s.selectionStartedCursor) === "\n" && tb.itBefore(s.cursor, s.selectionStartedCursor)) {
                 // dont want to start on newlines when selecting backwards. This is always an accident
@@ -732,6 +773,8 @@ export function imEndTextEditor(s: TextEditorState) {
             tb.itCopy(s.selectionEnd,       s.selectionAnchor);
 
             s.isSelecting = true;
+            s.canKeyboardSelect = false;
+            s.canMouseSelect = false;
         }
 
         if (s.isSelecting) {
@@ -834,6 +877,6 @@ export function textEditorGetNextChar(s: TextEditorState): string {
 }
 
 export function textEditorCursorIsSelected(s: TextEditorState, cursor: tb.Iterator) {
-    return tb.itBefore(s.selectionStart, cursor) && 
+    return (tb.itEquals(s.selectionStart, cursor) || tb.itBefore(s.selectionStart, cursor)) && 
            tb.itBefore(cursor, s.selectionEnd);
 }

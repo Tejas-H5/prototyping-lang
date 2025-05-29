@@ -1,13 +1,17 @@
-export type TestSuite = {
-    tests: Test[];
-    functionsBeingTested: Function[];
+import { assert } from "./assert";
+
+export type TestSuite<T> = {
+    name: string;
+    ctxFn: () => T;
+    tests: Test<T>[];
 };
 
-export type Test = {
-    code: () => void | Promise<void>;
+export type Test<T> = {
+    code: (ctx: T) => void | Promise<void>;
     name: string;
     status: TestStatus;
     error: any;
+    suite?: TestSuite<T>;
 };
 
 export const TEST_STATUS_NOT_RAN = 0;
@@ -20,45 +24,34 @@ export type TestStatus =
     typeof TEST_STATUS_RAN;
 
 let testsLocked = false;
-const currentTestSuites: TestSuite[] = [];
+const currentTestSuites: TestSuite<unknown>[] = [];
 
-export function testSuite(systemsUnderTest: Function[], tests: Test[]) {
+export function testSuite<T>(name: string, ctxFn: () => T, tests: Test<T>[]) {
     if (testsLocked) {
         throw new Error("cant add more tests at this point");
     }
 
-    currentTestSuites.push({
-        functionsBeingTested: systemsUnderTest,
+    const suite: TestSuite<T> = {
+        name,
+        ctxFn,
         tests
-    });
-}
+    };
 
-export function newTest(name: string, code: () => void): Test {
-    return { name, code, status: TEST_STATUS_NOT_RAN, error: null };
-}
-
-// Can be kidna slow, so it's been moved into it's own function
-export function validateTestSuites(suites: TestSuite[]) {
-    // validate test suites at a time when UI can catch and render the error
-
-    for (const suite of suites) {
-        const functionNames = suite.functionsBeingTested.map(f => f.name);
-        for (const test of suite.tests) {
-            const str = String(test.code);
-
-            let isTesting = false;
-            for (const fnName of functionNames) {
-                if (str.includes(fnName)) {
-                    isTesting = true;
-                    break;
-                }
-            }
-
-            if (!isTesting) {
-                throw new Error(`Test "${test.name}" doesn't test any of these functions: [${functionNames.join(", ")}]. `)
-            }
-        }
+    for (const test of tests) {
+        assert(!test.suite);
+        test.suite = suite;
     }
+
+    currentTestSuites.push(suite as TestSuite<unknown>);
+}
+
+export function newTest<T>(name: string, code: (ctx: T) => void): Test<T> {
+    return {
+        name,
+        code,
+        status: TEST_STATUS_NOT_RAN,
+        error: null
+    };
 }
 
 export function getTestSuites() {
@@ -67,7 +60,9 @@ export function getTestSuites() {
     return currentTestSuites;
 }
 
-export function runTest(test: Test, debug = false) {
+export function runTest<T>(test: Test<T>, debug = false) {
+    assert(test.suite);
+
     if (test.status === TEST_STATUS_RUNNING) {
         // TODO: terminate this test, and rerun it. I don't know how to terminate a test that has a while (true) {} in it though.
         console.warn("This test is already running");
@@ -79,12 +74,14 @@ export function runTest(test: Test, debug = false) {
     test.error = null;
 
     try {
+        const ctx = test.suite.ctxFn();
+
         if (debug) {
             debugger;
         }
 
         // Step into this function call to debug your test
-        const res = test.code();
+        const res = test.code(ctx);
 
         if (res instanceof Promise) {
             isPromise = true;
@@ -119,6 +116,30 @@ export function expectEqual<T>(a: T, b: T, message?: string) {
             errorMessage += " - " + message;
         }
         throw new Error(errorMessage);
+    }
+}
+
+export function powerSetTests<T>(firstTests: Test<T>[], secondTests: Test<T>[]): Test<T>[] {
+    const powerSet: Test<T>[] = [];
+
+    for (const tj of secondTests) {
+        for (const ti of firstTests) {
+            powerSet.push(newTest(`(${ti.name}) x (${tj.name})`, (ctx) => {
+                ti.code(ctx);
+                tj.code(ctx);
+            }));
+        }
+    }
+
+    return powerSet;
+}
+
+export function forEachRange(n: number, len: number, fn: (pos: number, len: number) => void) {
+    assert(len <= n);
+    for (let l = 1; l <= len; l++) {
+        for (let i = 0; i < n - l + 1; i++) {
+            fn(i, l);
+        }
     }
 }
 

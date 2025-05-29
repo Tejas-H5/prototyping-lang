@@ -348,50 +348,48 @@ function imSimpleTextInputBody(s: SimpleTextEditorState) {
 
 // toggles '//' on/off for the selected lines
 function toggleSelectionLineComment(targetEditor: TextEditorState) {
-    const comment = "// ";
-    const comment2 = "//";
+    tb.beginEditing(targetEditor.buffer); {
 
-    if (!tb.itGet(targetEditor.selectionStart)) iterateToLastNewline(targetEditor.selectionStart);
-    if (!tb.itGet(targetEditor.selectionEnd)) iterateToNextNewline(targetEditor.selectionEnd);
+        iterateToLastNewline(targetEditor.selectionStart);
+        iterateToNextNewline(targetEditor.selectionEnd);
 
-    const cursors: TextEditorCursor[] = [];
+        const cursors: TextEditorCursor[] = [];
 
-    const start = tb.itFrom(targetEditor.selectionStart);
-    const end = tb.itFrom(targetEditor.selectionEnd);
-    assert(tb.itBefore(targetEditor.selectionStart, targetEditor.selectionEnd));
-    while (!tb.itEquals(start, end)) {
-        if (tb.itQuery(start, comment) || tb.itQuery(start, comment2)) {
-            cursors.push(tb.itFrom(start));
+        const start = tb.itNewTempFrom(targetEditor.selectionStart);
+        const end = tb.itNewTempFrom(targetEditor.selectionEnd);
+        assert(tb.itBefore(targetEditor.selectionStart, targetEditor.selectionEnd));
+        while (!tb.itEquals(start, end)) {
+            if (tb.itQuery(start, "//")) {
+                cursors.push(tb.itNewTempFrom(start));
+            }
+
+            tb.iterate(start);
         }
 
-        tb.iterate(start);
-    }
+        if (cursors.length === 0) {
+            // We didn't have any comments to delete. Let's create some comments instead
 
-    if (cursors.length > 0) {
-        return;
-    }
+            tb.itCopy(start, targetEditor.selectionStart);
+            tb.itCopy(end, targetEditor.selectionEnd);
+            while (!tb.itEquals(start, end)) {
+                if (tb.itIsZero(start) || tb.itQuery(start, "\n")) {
+                    const pos = tb.itNewTempFrom(start);
+                    cursors.push(pos);
+                }
 
-    // We didn't have any comments to delete. Let's create some comments instead
+                tb.iterate(start);
+            }
 
-    tb.itCopy(start, targetEditor.selectionStart);
-    tb.itCopy(end, targetEditor.selectionEnd);
-    while (!tb.itEquals(start, end)) {
-        if (tb.itQuery(start, "\n")) {
-            const pos = tb.itFrom(start);
-            // one after the newline
-            tb.iterate(pos);
-            cursors.push(pos);
+            if (cursors.length > 0) {
+                for (const c of cursors) {
+                    tb.itInsert(c, "// ");
+                }
+            }
+        } else {
+            // TODO: delete comments
         }
 
-        tb.iterate(start);
-    }
-
-    if (cursors.length > 0) {
-        tb.itBisectAll(cursors);
-        for (const c of cursors) {
-            tb.itInsert(c, "// ");
-        }
-    }
+    } tb.endEditing(targetEditor.buffer);
 }
 
 function indentSelection(targetEditor: TextEditorState) {
@@ -399,27 +397,30 @@ function indentSelection(targetEditor: TextEditorState) {
         return;
     }
 
-    const cursors: TextEditorCursor[] = [];
+    const buffer = targetEditor.buffer;
+    tb.beginEditing(buffer); {
+        const cursors: TextEditorCursor[] = [];
 
-    const start = tb.itFrom(targetEditor.selectionStart);
-    const end = tb.itFrom(targetEditor.selectionEnd);
-    while (!tb.itEquals(start, end)) {
-        if (tb.itQuery(start, "\n")) {
-            const pos = tb.itFrom(start);
-            // one after the newline
-            tb.iterate(pos);
-            cursors.push(pos);
+        const start = tb.itNewTempFrom(targetEditor.selectionStart);
+        const end = tb.itNewTempFrom(targetEditor.selectionEnd);
+        while (!tb.itEquals(start, end)) {
+            if (tb.itQuery(start, "\n")) {
+                const pos = tb.itNewTempFrom(start);
+                // one after the newline
+                tb.iterate(pos);
+                tb.itBisect(pos);
+                cursors.push(pos);
+            }
+
+            tb.iterate(start);
         }
 
-        tb.iterate(start);
-    }
-
-    if (cursors.length > 0) {
-        tb.itBisectAll(cursors);
-        for (const c of cursors) {
-            tb.itInsert(c, "\t");
+        if (cursors.length > 0) {
+            for (const c of cursors) {
+                tb.itInsert(c, "\t");
+            }
         }
-    }
+    } tb.endEditing(buffer);
 }
 
 function deIndentSelection(targetEditor: TextEditorState) {
@@ -432,19 +433,18 @@ function deIndentSelection(targetEditor: TextEditorState) {
 
     const cursors: TextEditorCursor[] = [];
 
-    const it = tb.itFrom(targetEditor.selectionStart);
+    const it = tb.itNewTempFrom(targetEditor.selectionStart);
     while (!tb.itEquals(it, targetEditor.selectionEnd)) {
         const char = tb.itGet(it);
         if (char === "\n") {
-            cursors.push(tb.itFrom(it));
+            cursors.push(tb.itNewTempFrom(it));
         }
 
         tb.iterate(it);
     }
 
-    tb.itBisectAll(cursors);
     for (const c of cursors) {
-        const c1 = tb.itFrom(c);
+        const c1 = tb.itNewTempFrom(c);
         tb.iterate(c1);
         textEditorRemove(targetEditor, c, c1);
     }
@@ -530,7 +530,7 @@ function handleCodeEditorEvents(s: CodeEditorState, targetEditor: TextEditorStat
         if (eventSource.inCommandMode && eventSource.keyLower === "f") {
             eventSource._keyDownEvent.preventDefault();
             s.isFinding = true;
-            s.cursorBeforeFind = tb.itFrom(targetEditor.cursor);
+            s.cursorBeforeFind = tb.itNewTempFrom(targetEditor.cursor);
         }
     }
 }
@@ -541,6 +541,54 @@ function filterString(text: string, query: string) {
     return text.includes(query);
 }
 
+
+function recomputeAllFindResults(
+    s: CodeEditorState,
+    editorState: TextEditorState,
+    finderState: SimpleTextEditorState,
+) {
+    tb.beginEditing(editorState.buffer); {
+        const it = tb.itNewTemp(editorState.buffer);
+        const queryText = tb.buffToString(finderState.editorState.buffer);
+
+        s.allFindResults.length = 0;
+        let firstMatchIdx: number | undefined;
+        if (queryText && queryText.length > 0) {
+            // loop goes from cursor -> end, then start -> cursor.
+            // that way, `firstMatchIdx` is correct.
+
+            tb.itCopy(it, editorState.cursor);
+            while (!tb.itIsAtEnd(it)) {
+                if (tb.itQuery(it, queryText)) {
+                    s.allFindResults.push({
+                        start: tb.itNewTempFrom(it),
+                        end: tb.itNewTempFrom(it, queryText.length),
+                    });
+                    if (!firstMatchIdx) firstMatchIdx = s.allFindResults.length - 1;
+                }
+                tb.iterate(it);
+            }
+
+            tb.itZero(it);
+            while (!tb.itEquals(it, editorState.cursor)) {
+                if (tb.itQuery(it, queryText)) {
+                    s.allFindResults.push({
+                        start: tb.itNewTempFrom(it),
+                        end: tb.itNewTempFrom(it, queryText.length),
+                    });
+                    if (!firstMatchIdx) firstMatchIdx = s.allFindResults.length - 1;
+                }
+                tb.iterate(it);
+            }
+        }
+
+        if (firstMatchIdx !== undefined) {
+            // move cursor to the result that is closest to it
+            s.currentFindResultIdx = firstMatchIdx;
+        }
+
+    } tb.endEditing(editorState.buffer);
+}
 
 export function imAppCodeEditor(ctx: GlobalContext) {
     const { state, lastInterpreterResult, lastParseResult } = ctx;
@@ -557,47 +605,9 @@ export function imAppCodeEditor(ctx: GlobalContext) {
     }
 
     if (imMemo(finderState.editorState.modifiedAt)) {
-        const it = tb.itNew(editorState.buffer);
-        const queryText = tb.buffToString(finderState.editorState.buffer);
-
-        s.allFindResults.length = 0;
-        let firstMatchIdx: number | undefined;
-        if (queryText && queryText.length > 0) {
-            // loop goes from cursor -> end, then start -> cursor.
-            // that way, `firstMatchIdx` is correct.
-
-            tb.itCopy(it, editorState.cursor);
-            while (!tb.itIsAtEnd(it)) {
-                if (tb.itQuery(it, queryText)) {
-                    s.allFindResults.push({
-                        start: tb.itFrom(it),
-                        end: tb.itFrom(it, queryText.length),
-                    });
-                    if (!firstMatchIdx) firstMatchIdx = s.allFindResults.length - 1;
-                }
-                tb.iterate(it);
-            }
-
-            tb.itZero(it);
-            while (!tb.itEquals(it, editorState.cursor)) {
-                if (tb.itQuery(it, queryText)) {
-                    s.allFindResults.push({
-                        start: tb.itFrom(it),
-                        end: tb.itFrom(it, queryText.length),
-                    });
-                    if (!firstMatchIdx) firstMatchIdx = s.allFindResults.length - 1;
-                }
-                tb.iterate(it);
-            }
-        }
-
-        if (firstMatchIdx !== undefined) {
-            // move cursor to the result that is closest to it
-            s.currentFindResultIdx = firstMatchIdx;
-        }
+        recomputeAllFindResults(s, editorState, finderState);
     } 
 
-    
     const modifiedAtChanged = imMemo(editorState.modifiedAt);
     if (modifiedAtChanged) {
         ctx.state.text = tb.buffToString(editorState.buffer);

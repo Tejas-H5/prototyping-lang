@@ -2,382 +2,238 @@ import {
     expectEqual,
     expectNotNull,
     newTest,
+    powerSetTests,
+    Test,
     testSuite,
+    forEachRange,
 } from "./testing";
 import {
     newBuff,
-    itNew,
     buffInsertAt,
     iterate,
     iterateBackwards,
     buffToString,
     itGet,
-    buffRemoveStartLen,
+    buffRemoveAt,
     itClear,
     itInsert,
-    iterateBackwardsUnclamped
+    iterateBackwardsUnclamped,
+    endEditing,
+    beginEditing,
+    itNewPermanent,
+    Buffer,
+    itNewTemp,
+    itNewTempFrom,
+    itRemove,
+    itBisect
 } from "./text-edit-buffer";
 
+function generateInsertionTests() {
+    const expectedText = "abc";
 
-testSuite([
-    itInsert,
-    buffInsertAt, 
-    buffRemoveStartLen,
-    iterate,
-    iterateBackwards
-], [
-    newTest("insertion at -1", () => {
-        const buff = newBuff();
-        const it = itNew(buff);
-        itClear(it);
-        itInsert(it, "a");
+    // Each insertion pattern may result in a different internal representation. 
+    // they should all represent the text "abc".
+    return [
+        newTest("insertion one by one at the end", (buff: Buffer) => {
+            buffInsertAt(buff, 0, "a");
+            buffInsertAt(buff, 1, "b");
+            buffInsertAt(buff, 2, "c");
 
-        const text = buffToString(buff);
+            expectEqual(buffToString(buff), expectedText);
+        }),
+        newTest("insertion one by one at the start", (buff: Buffer) => {
+            buffInsertAt(buff, 0, "c");
+            buffInsertAt(buff, 0, "b");
+            buffInsertAt(buff, 0, "a");
 
-        expectEqual(text, "a");
-        expectEqual(buff.pieces, [{ text: ["a"], numNewlines: 0 }]);
-        expectEqual(it!.pieceIdx, 1);
-        expectEqual(it!.textIdx, 0);
+            expectEqual(buffToString(buff), expectedText);
+        }),
+        newTest("insertion one by one zig zag 1", (buff: Buffer) => {
+            buffInsertAt(buff, 0, "b");
+            buffInsertAt(buff, 0, "a");
+            buffInsertAt(buff, 2, "c");
+
+            expectEqual(buffToString(buff), expectedText);
+        }),
+        newTest("insertion one by one zig zag 2", (buff: Buffer) => {
+            buffInsertAt(buff, 0, "b");
+            buffInsertAt(buff, 1, "c");
+            buffInsertAt(buff, 0, "a");
+
+            expectEqual(buffToString(buff), expectedText);
+        }),
+    ];
+}
+
+function generateInsertAndRemoveTests() {
+    const expectedText = "abc";
+    const insertionTests = generateInsertionTests();
+
+    // There are also quite a lot of ways to remove text, each resulting in a different
+    // internal representation.
+    const postInsertRemovalTests: Test<Buffer>[] = [];
+
+    const n = expectedText.length;
+    forEachRange(n, n, (pos, windowSize) => {
+        const testName = `remove ${windowSize} at ${pos}`;
+        const expectedRemoval = expectedText.substring(pos, pos + windowSize);
+        postInsertRemovalTests.push(newTest(testName, (buff) => {
+            const removed = buffRemoveAt(buff, pos, windowSize);
+            expectEqual(expectedRemoval, removed);
+            expectEqual(buffToString(buff), expectedText.substring(0, pos) + expectedText.substring(pos + windowSize));
+        }));
+    });
+
+    return [
+        // insertion tests
+        ...insertionTests,
+        // removal tests
+        ...powerSetTests(insertionTests, postInsertRemovalTests),
+    ];
+}
+
+function generateCursorMovingTests(): Test<Buffer>[] {
+    const tests: Test<Buffer>[] = [];
+
+    const expectedText = "abc";
+    for (let pos = 0; pos < 3;  pos++) {
+        const char = expectedText[pos];
+
+        tests.push(
+            newTest(`Cursors stay on their character when inserting before | pos ${pos}`, (buff: Buffer) => {
+                const it0 = itNewTemp(buff);
+                const it1 = itNewPermanent(buff);
+                for (let i = 0; i < pos; i++) {
+                    iterate(it0);
+                    iterate(it1);
+                }
+
+                expectEqual(itGet(it0), char);
+                expectEqual(itGet(it1), char);
+
+                buffInsertAt(buff, pos, "#");
+
+                expectEqual(itGet(it0), char);
+                expectEqual(itGet(it1), char);
+            })
+        );
+
+        tests.push(
+            newTest(`Cursors stay on their character when inserting on | pos ${pos}`, (buff: Buffer) => {
+                const it0 = itNewTemp(buff);
+                const it1 = itNewPermanent(buff);
+                for (let i = 0; i < pos; i++) {
+                    iterate(it0);
+                    iterate(it1);
+                }
+
+                expectEqual(itGet(it0), char);
+                expectEqual(itGet(it1), char);
+
+                buffInsertAt(buff, pos, "#");
+
+                expectEqual(itGet(it0), char);
+                expectEqual(itGet(it1), char);
+            })
+        );
+
+        tests.push(
+            newTest(`Cursors stay on their character when inserting after | pos ${pos}`, (buff: Buffer) => {
+                const it0 = itNewTemp(buff);
+                const it1 = itNewPermanent(buff);
+                for (let i = 0; i < pos; i++) {
+                    iterate(it0);
+                    iterate(it1);
+                }
+
+                expectEqual(itGet(it0), char);
+                expectEqual(itGet(it1), char);
+
+                buffInsertAt(buff, pos, "#");
+
+                expectEqual(itGet(it0), char);
+                expectEqual(itGet(it1), char);
+            })
+        );
+    }
+
+    return tests;
+}
+
+
+testSuite("Text edit buffer", () => {
+    const buff = newBuff();
+    beginEditing(buff);
+    return buff;
+}, [
+    newTest(`Bisect test`, (buff: Buffer) => {
+        // NOTE: This tests the internals of the thing. don't have too many such tests
+        const it0 = itNewTemp(buff);
+        iterate(it0);
+        itBisect(it0);
+        expectEqual(it0.textIdx, 0);
+        expectEqual(it0.pieceIdx, 1);
     }),
-    newTest("insertion at 0", () => {
-        const buff = newBuff();
-        const it = buffInsertAt(buff, 0, "a");
+    ...generateInsertAndRemoveTests(),
+    ...powerSetTests(generateInsertionTests(), generateCursorMovingTests()),
+    ...powerSetTests(generateInsertionTests(), [
+        newTest(`Multi-insert`, (buff: Buffer) => {
+            const it0 = itNewTemp(buff);
+            const it1 = itNewTemp(buff);
+            iterate(it1);
 
-        const text = buffToString(buff);
+            itInsert(it0, "//");
+            itInsert(it1, "//");
 
-        expectEqual(text, "a");
-        expectEqual(buff.pieces, [{ text: ["a"], numNewlines: 0 }]);
-        expectEqual(it!.pieceIdx, 1);
-        expectEqual(it!.textIdx, 0);
-    }),
-    newTest("insertion after existing insertion", () => {
-        const buff = newBuff();
-        buffInsertAt(buff, 0, "a");
-        const it = buffInsertAt(buff, 1, "b");
-        const text = buffToString(buff);
+            const result = buffToString(buff);
+            expectEqual(result, "//a//bc");
+        }),
+        newTest(`Multi-insert at the end`, (buff: Buffer) => {
+            const it0 = itNewTemp(buff);
+            iterate(it0);
+            const it1 = itNewTemp(buff);
+            iterate(it1);
+            iterate(it1);
 
-        expectEqual(text, "ab");
-        expectEqual(buff.pieces, [{ text: ["a", "b"], numNewlines: 0 }]);
-        expectEqual(it!.pieceIdx, 1);
-        expectEqual(it!.textIdx, 0);
-    }),
-    newTest("insertion before existing insertion", () => {
-        const buff = newBuff();
-        buffInsertAt(buff, 0, "a");
-        const it = buffInsertAt(buff, 0, "b");
+            itInsert(it0, "//");
+            itInsert(it1, "//");
 
-        const text = buffToString(buff);
+            const result = buffToString(buff);
+            expectEqual(result, "a//b//c");
+        }),
+        newTest(`Multi-remove`, (buff: Buffer) => {
+            const it0 = itNewTemp(buff);
+            const it0End = itNewTempFrom(it0);
+            iterate(it0End);
 
-        expectEqual(text, "ba");
-        expectEqual(buff.pieces, [{ text: ["b"], numNewlines: 0 }, { text: ["a"], numNewlines: 0 }]);
-        expectEqual(it!.pieceIdx, 1);
-        expectEqual(it!.textIdx, 0);
-    }),
-    newTest("insertion between segment", () => {
-        const buff = newBuff();
-        buffInsertAt(buff, 0, "ac");
-        const it = buffInsertAt(buff, 1, "b");
-        const text = buffToString(buff);
+            const it1 = itNewTemp(buff);
+            iterate(it1);
+            const it1End = itNewTempFrom(it1);
+            iterate(it1End);
 
-        expectEqual(text, "abc");
-        expectEqual(buff.pieces, [
-            { text: ["a", "b"], numNewlines: 0 },
-            { text: ["c"], numNewlines: 0 },
-        ]);
-        expectEqual(it!.pieceIdx, 1);
-        expectEqual(it!.textIdx, 0);
-    }),
-    newTest("Offset by one: insertion after existing insertion", () => {
-        const buff = newBuff();
-        buffInsertAt(buff, 0, " a");
-        const it = buffInsertAt(buff, 2, "b");
-        const text = buffToString(buff);
-        expectEqual(text, " ab");
-        expectEqual(buff.pieces, [
-            { text: [" ", "a", "b"], numNewlines: 0 },
-        ]);
-        expectEqual(it!.pieceIdx, 1);
-        expectEqual(it!.textIdx, 0);
-    }),
-    newTest("Offset by one: insertion before existing insertion", () => {
-        const buff = newBuff();
-        buffInsertAt(buff, 0, " a");
-        const it = buffInsertAt(buff, 1, "b");
-        const text = buffToString(buff);
+            itRemove(it0, it0End);
+            itRemove(it1, it1End);
 
-        expectEqual(text, " ba");
-        expectEqual(buff.pieces, [
-            { text: [" ", "b"], numNewlines: 0 },
-            { text: ["a"], numNewlines: 0 },
-        ]);
-        expectEqual(it!.pieceIdx, 1);
-        expectEqual(it!.textIdx, 0);
-    }),
-    newTest("Offset by one: insertion between segment", () => {
-        const buff = newBuff();
-        buffInsertAt(buff, 0, " ac");
-        const it = buffInsertAt(buff, 2, "b");
-        const text = buffToString(buff);
+            const result = buffToString(buff);
+            expectEqual(result, "c");
+        }),
+        newTest(`Multi-remove at end`, (buff: Buffer) => {
+            const it0 = itNewTemp(buff);
+            iterate(it0);
+            const it0End = itNewTempFrom(it0);
+            iterate(it0End);
 
-        expectEqual(text, " abc");
-        expectEqual(buff.pieces, [
-            { text: [" ", "a", "b"], numNewlines: 0 },
-            { text: ["c"], numNewlines: 0 },
-        ]);
-        expectEqual(it!.pieceIdx, 1);
-        expectEqual(it!.textIdx, 0);
-    }),
-    newTest("Remove one from one", () => {
-        const buff = newBuff();
-        buffInsertAt(buff, 0, "a");
-        const removed = buffRemoveStartLen(buff, 0, 1);
-        const text = buffToString(buff);
+            const it1 = itNewTemp(buff);
+            iterate(it1);
+            iterate(it1);
+            const it1End = itNewTempFrom(it1);
+            iterate(it1End);
 
-        expectEqual(text, "");
-        expectEqual(buff.pieces, [{ "text": [], numNewlines: 0 }]);
-        expectEqual(removed, "a")
-    }),
-    newTest("Remove one from the start", () => {
-        const buff = newBuff();
-        buffInsertAt(buff, 0, "ab");
-        const removed = buffRemoveStartLen(buff, 0, 1);
-        const text = buffToString(buff);
+            itRemove(it0, it0End);
+            itRemove(it1, it1End);
 
-        expectEqual(text, "b");
-        expectEqual(buff.pieces, [{ "text": ["b"], numNewlines: 0 }]);
-        expectEqual(removed, "a")
-    }),
-    newTest("Remove one from the end", () => {
-        const buff = newBuff();
-        buffInsertAt(buff, 0, "ab");
-        const removed = buffRemoveStartLen(buff, 1, 1);
-        const text = buffToString(buff);
-
-        expectEqual(text, "a");
-        expectEqual(buff.pieces, [{ "text": ["a"], numNewlines: 0 }]);
-        expectEqual(removed, "b")
-    }),
-    newTest("Remove one from the end with 3", () => {
-        const buff = newBuff();
-        buffInsertAt(buff, 0, "abc");
-        const removed = buffRemoveStartLen(buff, 2, 1);
-        const text = buffToString(buff);
-
-        expectEqual(text, "ab");
-        expectEqual(buff.pieces, [{ "text": ["a", "b"], numNewlines: 0 }]);
-        expectEqual(removed, "c")
-    }),
-    newTest("Remove one from the middle with 3", () => {
-        const buff = newBuff();
-        // Shouldn't this also split a piece into two???
-        // TODO: come back to this
-        buffInsertAt(buff, 0, "abc");
-        const removed = buffRemoveStartLen(buff, 1, 1);
-        const text = buffToString(buff);
-
-        expectEqual(text, "ac");
-        expectEqual(buff.pieces, [{ "text": ["a", "c"], numNewlines: 0 }]);
-        expectEqual(removed, "b")
-    }),
-    newTest("Remove first piece", () => {
-        const buff = newBuff();
-        buff._modified = true;
-        buff.pieces = [
-            { text: ["a"], numNewlines: 0 },
-            { text: ["b"], numNewlines: 0 },
-            { text: ["c"], numNewlines: 0 },
-        ];
-        const removed = buffRemoveStartLen(buff, 0, 1);
-        const text = buffToString(buff);
-
-        expectEqual(text, "bc");
-        expectEqual(buff.pieces, [
-            { text: ["b"], numNewlines: 0 },
-            { text: ["c"], numNewlines: 0 },
-        ]);
-        expectEqual(removed, "a")
-    }),
-    newTest("Remove middle piece", () => {
-        const buff = newBuff();
-        buff._modified = true;
-        buff.pieces = [
-            { text: ["a"], numNewlines: 0 },
-            { text: ["b"], numNewlines: 0 },
-            { text: ["c"], numNewlines: 0 },
-        ];
-
-        const removed = buffRemoveStartLen(buff, 1, 1);
-        const text = buffToString(buff);
-
-        expectEqual(text, "ac");
-        expectEqual(buff.pieces, [
-            { text: ["a"], numNewlines: 0 },
-            { text: ["c"], numNewlines: 0 },
-        ]);
-        expectEqual(removed, "b")
-    }),
-    newTest("Remove last piece", () => {
-        const buff = newBuff();
-        buff._modified = true;
-        buff.pieces = [
-            { text: ["a"], numNewlines: 0 },
-            { text: ["b"], numNewlines: 0 },
-            { text: ["c"], numNewlines: 0 },
-        ];
-        const removed = buffRemoveStartLen(buff, 2, 1);
-        const text = buffToString(buff);
-
-        expectEqual(text, "ab");
-        expectEqual(buff.pieces, [
-            { text: ["a"], numNewlines: 0 },
-            { text: ["b"], numNewlines: 0 },
-        ]);
-        expectEqual(removed, "c");
-    }),
-    newTest("Remove 0 -> 1", () => {
-        const buff = newBuff();
-        buff._modified = true;
-        buff.pieces = [
-            { text: ["a"], numNewlines: 0 },
-            { text: ["b"], numNewlines: 0 },
-            { text: ["c"], numNewlines: 0 },
-        ];
-        const removed = buffRemoveStartLen(buff, 0, 2);
-        const text = buffToString(buff);
-
-        expectEqual(text, "c");
-        expectEqual(buff.pieces, [
-            { text: ["c"], numNewlines: 0 },
-        ]);
-        expectEqual(removed, "ab");
-    }),
-    newTest("Remove 1 -> 2", () => {
-        const buff = newBuff();
-        buff._modified = true;
-        buff.pieces = [
-            { text: ["a"], numNewlines: 0 },
-            { text: ["b"], numNewlines: 0 },
-            { text: ["c"], numNewlines: 0 },
-        ];
-        const removed = buffRemoveStartLen(buff, 1, 2);
-        const text = buffToString(buff);
-
-        expectEqual(text, "a");
-        expectEqual(buff.pieces, [
-            { text: ["a"], numNewlines: 0 },
-        ]);
-        expectEqual(removed, "bc");
-    }),
-    newTest("Iterate forwards", () => {
-        const buff = newBuff();
-        buff.pieces = [
-            { text: "abc \n".split(""), numNewlines: 0 },
-            { text: "d e\n".split(""), numNewlines: 0 },
-            { text: " ".split(""), numNewlines: 0 },
-            { text: "d ".split(""), numNewlines: 0 },
-        ];
-        buff._modified = true;
-
-        const expectedText = "abc \nd e\n d ";
-        expectEqual(buffToString(buff), expectedText);
-
-        const it = itNew(buff);
-        const chars: string[] = [];
-        for (let i = 0; i <= expectedText.length; i++) {
-            const char = itGet(it);
-            iterate(it);
-            if (i !== expectedText.length) {
-                expectNotNull(char, "" + i);
-                chars.push(char);
-            } else {
-                expectEqual(char, undefined);
-            }
-        }
-
-        const text = chars.join("");
-        expectEqual(text, expectedText);
-    }),
-    newTest("Iterate forwards from -1", () => {
-        const buff = newBuff();
-        buff.pieces = [
-            { text: ["a"], numNewlines: 0 },
-        ];
-        buff._modified = true;
-
-        const it = itNew(buff);
-        itClear(it);
-        expectEqual(it, { buff, pieceIdx: -1, textIdx: -1 });
-
-        iterate(it);
-        expectEqual(it, { buff, pieceIdx: 0, textIdx: 0 });
-
-    }),
-
-    newTest("Iterate backwards", () => {
-        const buff = newBuff();
-        buff.pieces = [
-            { text: "abc \n".split(""), numNewlines: 0 },
-            { text: "d e\n".split(""), numNewlines: 0 },
-            { text: " ".split(""), numNewlines: 0 },
-            { text: "d ".split(""), numNewlines: 0 },
-        ];
-        buff._modified = true;
-
-        const expectedText = "abc \nd e\n d ";
-        expectEqual(buffToString(buff), expectedText);
-
-        const it = itNew(buff);
-        for (let i = 0; i < expectedText.length; i++) {
-            iterate(it); // assumed working
-        }
-
-        const chars: string[] = [];
-        for (let i = 0; i <= expectedText.length; i++) {
-            const result = iterateBackwards(it);
-            const char = itGet(it);
-            if (i === expectedText.length) {
-                expectEqual(result, false);
-                expectEqual(char, "a");
-            } else {
-                expectNotNull(char, "" + i);
-                chars.push(char);
-            }
-        }
-
-        const text = chars.join("");
-        expectEqual(text, [...expectedText].reverse().join(""));
-    }),
-    newTest("Iterate backwards unclamped", () => {
-        const buff = newBuff();
-        buff.pieces = [
-            { text: "abc \n".split(""), numNewlines: 0 },
-            { text: "d e\n".split(""), numNewlines: 0 },
-            { text: " ".split(""), numNewlines: 0 },
-            { text: "d ".split(""), numNewlines: 0 },
-        ];
-        buff._modified = true;
-
-        const expectedText = "abc \nd e\n d ";
-        expectEqual(buffToString(buff), expectedText);
-
-        const it = itNew(buff);
-        for (let i = 0; i < expectedText.length; i++) {
-            iterate(it); // assumed working
-        }
-
-        const chars: string[] = [];
-        for (let i = 0; i <= expectedText.length; i++) {
-            iterateBackwardsUnclamped(it);
-            const char = itGet(it);
-            if (i === expectedText.length) {
-                expectEqual(char, undefined);
-            } else {
-                expectNotNull(char, "" + i);
-                chars.push(char);
-            }
-        }
-
-        const text = chars.join("");
-        expectEqual(text, [...expectedText].reverse().join(""));
-    }),
+            const result = buffToString(buff);
+            expectEqual(result, "a");
+        }),
+    ]),
 ]);

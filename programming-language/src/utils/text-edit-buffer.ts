@@ -1,3 +1,4 @@
+import { filterInPlace } from "./array-utils";
 import { assert } from "./assert";
 
 // You'll want to namespace-import this. The names were all getting way too long.
@@ -9,11 +10,30 @@ type Piece = {
     numNewlines: number;
 };
 
+// NOTE: modifying this structure outside of the API is done at your own peril
 export type Buffer = {
     pieces: Piece[];
+
+    // permanent cursors
+    _cursors: Iterator[];
+
+    // transient cursors
+    _tempCursors: Iterator[];
+    _isEditing: boolean;
+
     _modified: boolean;
     _text: string;
 };
+
+export function beginEditing(b: Buffer) {
+    assert(!b._isEditing);
+    b._isEditing = true;
+}
+
+export function endEditing(b: Buffer) {
+    b._isEditing = false;
+    b._tempCursors.length = 0;
+}
 
 export function buffGetLen(b: Buffer): number {
     let len = 0;
@@ -44,14 +64,10 @@ export function itGetPos(it: Iterator): number {
     return pos;
 }
 
-export function buffInsertAt(
-    b: Buffer,
-    pos: number,
-    text: string
-): Iterator | undefined {
+export function buffInsertAt(b: Buffer, pos: number, text: string): Iterator | undefined {
     if (text === "") return;
 
-    const it = itNew(b);
+    const it = itNewTemp(b);
     for (let i = 0; i < pos; i++) {
         iterate(it);
     }
@@ -81,20 +97,22 @@ export function itInsert(it: Iterator, text: string): boolean {
     return true;
 }
 
-
-export function buffRemoveStartLen(b: Buffer, pos: number, num: number) {
-    const start = itNew(b);
+export function buffRemoveAt(b: Buffer, pos: number, num: number): string {
+    const start = itNewTemp(b);
     for (let i = 0; i < pos; i++) {
         iterate(start);
     }
 
-    const end = itFrom(start);
+    const end = itNewTemp(b);
+    itCopy(end, start);
     for (let i = 0; i < num; i++) {
         iterate(end);
     }
 
     const removed = itGetTextBetween(start, end);
-    if (!removed) return "";
+    if (!removed) {
+        return "";
+    }
 
     itRemove(start, end);
 
@@ -109,7 +127,7 @@ export function itEquals(
     return a.pieceIdx === b.pieceIdx && a.textIdx === b.textIdx;
 }
 
-function isValidStartEnd(start: Iterator, end: Iterator) {
+function isValidAndNonZeroRange(start: Iterator, end: Iterator) {
     if (itEquals(start, end)) return false;
     if (itBefore(end, start)) return false;
     if (!itGet(start)) return false;
@@ -118,69 +136,70 @@ function isValidStartEnd(start: Iterator, end: Iterator) {
 }
 
 export function itRemove(start: Iterator, end: Iterator): boolean {
-    if (!isValidStartEnd(start, end)) return false;
+    if (!isValidAndNonZeroRange(start, end)) return false;
 
     const b = start.buff;
     b._modified = true;
 
-    if (start.pieceIdx === end.pieceIdx) {
-        assert(start.pieceIdx < b.pieces.length);
-        const piece = b.pieces[start.pieceIdx];
+    if (!itIsZero(start)) {
+        itBisect(start);
+    }
+    itBisect(end);
 
-        if (start.textIdx === 0 && end.textIdx === piece.text.length) {
-            b.pieces.splice(start.pieceIdx, 1);
-            return true;
-        } 
+    const pieceIdxFrom = start.pieceIdx;
+    const numDeleted = end.pieceIdx - start.pieceIdx;
+    b.pieces.splice(pieceIdxFrom, numDeleted)
 
-        piece.text.splice(start.textIdx, end.textIdx - start.textIdx);
-        return true;
+    // Update cursors for remove
+    {
+        // We need to copy these, as they too are items in one of these cursor arrays
+        // TODO: optimize
+        const start1 = { ...start };
+        const end1 = { ...end };
+
+        filterInPlace(b._cursors, c => {
+            if (itBefore(end1, c) || itEquals(end1, c)) {
+                c.pieceIdx -= numDeleted;
+                return true;
+            }
+
+            return itBefore(c, start1);
+        });
+
+        // NOTE: this is just a copy-paste from above
+        filterInPlace(b._tempCursors, c => {
+            if (itBefore(end1, c) || itEquals(end1, c)) {
+                c.pieceIdx -= numDeleted;
+                return true;
+            }
+
+            return itBefore(c, start1);
+        });
     }
 
-    const startPiece = b.pieces[start.pieceIdx]; assert(startPiece);
-
-    const deleteStartPiece = start.textIdx === 0;
-    let deleteEndPiece = false;
-    if (end.pieceIdx !== b.pieces.length) {
-        const endPiece = b.pieces[end.pieceIdx]; assert(endPiece);
-        deleteEndPiece = end.textIdx === endPiece.text.length;
-    }
-
-    let deletePiecesFrom = start.pieceIdx;
-    let deletePiecesTo = end.pieceIdx;
-
-    if (!deleteStartPiece) {
-        deletePiecesFrom++;
-        startPiece.text.length = start.textIdx;
-    }
-
-    if (!deleteEndPiece) {
-        deletePiecesTo--;
-        if (end.pieceIdx !== b.pieces.length) {
-            const endPiece = b.pieces[end.pieceIdx]; assert(endPiece);
-            endPiece.text.splice(0, end.textIdx);
-        }
-    }
-
-    b.pieces.splice(deletePiecesFrom, deletePiecesTo - deletePiecesFrom + 1);
 
     return true;
 }
 
 export function itGetTextBetween(start: Iterator, end: Iterator) {
-    if (!isValidStartEnd(start, end)) return;
+    if (!isValidAndNonZeroRange(start, end)) return;
 
     assert(start.buff === end.buff);
 
     const text: string[] = [];
 
-    const it = itFrom(start);
-    while (!itEquals(end, it)) {
-        const char = itGet(it);
-        iterate(it)
+    const { pieceIdx, textIdx } = start;
+
+    while (!itEquals(end, start)) {
+        const char = itGet(start);
 
         if (!char) break;
         text.push(char);
+
+        if (!iterate(start)) break;
     }
+
+    itCopyValues(start, pieceIdx, textIdx);
 
     return text.join("");
 }
@@ -203,6 +222,30 @@ export function buffToString(b: Buffer) {
     return b._text;
 }
 
+function updateCursorsForBisect(b: Buffer, pieceIdx: number, textIdx: number) {
+    for (let i = 0; i < b._cursors.length; i++) {
+        const c = b._cursors[i];
+        if (c.pieceIdx < pieceIdx) continue;
+        if (c.pieceIdx === pieceIdx) {
+            if (c.textIdx < textIdx) continue;
+            c.textIdx -= textIdx;
+        }
+        c.pieceIdx += 1;
+    }
+
+    // NOTE: just edit the above, and copy-paste here
+    for (let i = 0; i < b._tempCursors.length; i++) {
+        const c = b._tempCursors[i];
+        if (c.pieceIdx < pieceIdx) continue;
+        if (c.pieceIdx === pieceIdx) {
+            if (c.textIdx < textIdx) continue;
+            c.textIdx -= textIdx;
+        }
+        c.pieceIdx += 1;
+    }
+}
+
+
 /**
  * Bisects the datastructure where this iterator is, such that it is now pointing at the end
  * of the current segment. This allows us to insert things into this piece without invalidating 
@@ -224,7 +267,7 @@ export function itBisect(it: Iterator) {
 
     if (itIsClear(it)) itZero(it);
 
-    let { pieceIdx, textIdx } = it;
+    const { pieceIdx, textIdx } = it;
 
     // We are at the start, middle or end of a piece. 
     // We either need to insert onto the end of this piece, the previous piece, or 
@@ -235,11 +278,11 @@ export function itBisect(it: Iterator) {
             // we are at the start, abd we don't want to call unshift on the piece text itself.
             // instead, let's just insert a new piece here, and start appending to that.
             const piece = { text: [], numNewlines: 0 };
-            textIdx = 0;
-            pieceIdx = 1;
             b.pieces.unshift(piece);
+            updateCursorsForBisect(b, pieceIdx, textIdx);
         } else {
             // Do nothing. we are at the start of a piece.
+            // We may even be at pieceIdx === buff.pieces.length.
         }
     } else {
         // This can only be the case when textIdx === 0, which is handled above.
@@ -256,24 +299,8 @@ export function itBisect(it: Iterator) {
 
         const nextPiece: Piece = { text: nextPieceText, numNewlines: 0 };
         recomputeLineCount(nextPiece);
-
         b.pieces.splice(pieceIdx + 1, 0, nextPiece);
-        pieceIdx = pieceIdx + 1;
-        textIdx = 0;
-    }
-
-    it.pieceIdx = pieceIdx;
-    it.textIdx = textIdx;
-}
-
-/**
- * creating a bisection for every iterator will put each iterator on it's own piece,
- * so that we can insert at all of them at once.
- * This code assumes that each iterator is in a different place.
- */
-export function itBisectAll(iterators: Iterator[]) {
-    for (const it of iterators) {
-        itBisect(it);
+        updateCursorsForBisect(b, pieceIdx, textIdx);
     }
 }
 
@@ -285,7 +312,15 @@ function recomputeLineCount(piece: Piece) {
 }
 
 export function newBuff(): Buffer {
-    return { pieces: [], _modified: false, _text: "" };
+    return {
+        pieces: [],
+        _cursors: [],
+        _tempCursors: [],
+        _isEditing: false,
+
+        _modified: false,
+        _text: ""
+    };
 }
 
 export type Iterator = {
@@ -294,19 +329,35 @@ export type Iterator = {
     textIdx: number;
 };
 
-
-export function itNew(buff: Buffer): Iterator {
-    return { buff, pieceIdx: 0, textIdx: 0 };
+/** Creates a permanent cursor that won't be cleaned up ever */
+export function itNewPermanent(buff: Buffer): Iterator {
+    const it: Iterator = { buff, pieceIdx: 0, textIdx: 0 };
+    buff._cursors.push(it);
+    return it;
 }
 
-export function itFrom(a: Iterator, offset = 0): Iterator {
-    const it = { ...a };
+/** Creates a temporary cursor that gets cleaned up when we finish editing */
+export function itNewTemp(buff: Buffer): Iterator {
+    assert(buff._isEditing);
+    const it: Iterator = { buff, pieceIdx: 0, textIdx: 0 };
+    buff._tempCursors.push(it);
+    return it;
+}
+
+export function itNewTempFrom(it: Iterator, offset = 0) {
+    const copy = itNewTemp(it.buff);
+    copy.pieceIdx = it.pieceIdx;
+    copy.textIdx = it.textIdx;
 
     for (let i = 0; i < offset; i++) {
-        iterate(it);
+        iterate(copy);
     }
 
-    return it;
+    for (let i = 0; i > offset; i--) {
+        iterateBackwards(copy);
+    }
+
+    return copy;
 }
 
 export function itCopy(dst: Iterator, src: Iterator) {
@@ -314,6 +365,11 @@ export function itCopy(dst: Iterator, src: Iterator) {
 
     dst.pieceIdx = src.pieceIdx;
     dst.textIdx = src.textIdx;
+}
+
+export function itCopyValues(dst: Iterator, pieceIdx: number, textIdx: number) {
+    dst.pieceIdx = pieceIdx;
+    dst.textIdx = textIdx;
 }
 
 export function itBefore(a: Iterator, b: Iterator) {
@@ -394,6 +450,8 @@ export function iterate(it: Iterator): boolean {
         it.textIdx = 0;
         it.pieceIdx++;
     }
+
+    assert(it.textIdx < piece.text.length);
 
     return true;
 }
@@ -520,3 +578,4 @@ export function itQuery(it: Iterator, query: string) {
 
     return matched;
 }
+

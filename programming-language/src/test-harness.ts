@@ -44,7 +44,6 @@ import {
     TEST_STATUS_RAN,
     TEST_STATUS_RUNNING,
     TestSuite,
-    validateTestSuites
 } from "./utils/testing";
 
 // User tests
@@ -52,8 +51,8 @@ import {
 import "src/utils/text-edit-buffer.test";
 
 function newTestHarnessState(): {
-    suites: TestSuite[];
-    tests: Test[];
+    suites: TestSuite<any>[];
+    tests: Test<any>[];
     runAllStaggered: {
         running: boolean;
         idx: number;
@@ -134,14 +133,6 @@ export function imTestHarness() {
                             }
                         }
                     } imEnd();
-
-                    imBeginButton(); {
-                        imTextSpan("Validate test suites");
-
-                        if (elementHasMousePress()) {
-                            validateTestSuites(s.suites);
-                        }
-                    } imEnd();
                 } imEnd();
 
                 imBeginScrollContainer(COL); {
@@ -150,14 +141,7 @@ export function imTestHarness() {
                         const tests = suite.tests;
                         nextListRoot();
 
-                        imBeginLayout(H3); {
-                            const sRef = imStringRef();
-                            if (imMemo(suite.functionsBeingTested)) {
-                                sRef.text = suite.functionsBeingTested.map(f => f.name).join(", ");
-                            }
-
-                            imTextSpan(sRef.text);
-                        } imEnd();
+                        imBeginLayout(H3); imTextSpan(suite.name); imEnd();
 
                         imBeginLayout(COL); {
                             imBeginList();
