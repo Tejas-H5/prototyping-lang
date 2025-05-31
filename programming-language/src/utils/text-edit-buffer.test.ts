@@ -25,7 +25,9 @@ import {
     itNewTemp,
     itNewTempFrom,
     itRemove,
-    itBisect
+    itBisect,
+    iterateAmount,
+    itGetPos
 } from "./text-edit-buffer";
 
 function generateInsertionTests() {
@@ -236,4 +238,18 @@ testSuite("Text edit buffer", () => {
             expectEqual(result, "a");
         }),
     ]),
+    ...powerSetTests(generateInsertionTests(), (() => {
+        const tests: Test<Buffer>[] = [];
+
+        for (let i = 0; i < 3; i++) {
+            tests.push(newTest(`getPos ${i}`, (buff: Buffer) => {
+                const it = itNewTemp(buff);
+                iterateAmount(it, i);
+                const pos = itGetPos(it);
+                expectEqual(pos, i);
+            }));
+        }
+
+        return tests;
+    })()),
 ]);

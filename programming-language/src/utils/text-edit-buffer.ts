@@ -10,6 +10,7 @@ type Piece = {
     numNewlines: number;
 };
 
+
 // NOTE: modifying this structure outside of the API is done at your own peril
 export type Buffer = {
     pieces: Piece[];
@@ -25,8 +26,21 @@ export type Buffer = {
     _text: string;
 };
 
+function itAssertIsValid(c: Iterator) {
+    // Check that this iterator was actually from it's buffer, and not a shallow copy
+    const b = c.buff;
+    assert(c.idx !== -1);
+    assert(
+        (c.idx < b._tempCursors.length && b._tempCursors[c.idx] === c) ||
+        (c.idx < b._cursors.length && b._cursors[c.idx] === c)
+    );
+}
+
 export function beginEditing(b: Buffer) {
-    assert(!b._isEditing);
+    if (b._isEditing) {
+        endEditing(b);
+    }
+
     b._isEditing = true;
 }
 
@@ -45,21 +59,18 @@ export function buffGetLen(b: Buffer): number {
     return len;
 }
 
-// NOTE: use sparingly
 export function itGetPos(it: Iterator): number {
     const b = it.buff;
     let pos = 0;
+
+    // TODO: make more efficient if needed
 
     for (let i = 0; i < it.pieceIdx; i++) {
         const piece = b.pieces[i];
         pos += piece.text.length;
     }
 
-    if (it.pieceIdx < b.pieces.length) {
-        pos += it.textIdx;
-    } else {
-        pos += 1;
-    }
+    pos += it.textIdx;
 
     return pos;
 }
@@ -77,6 +88,8 @@ export function buffInsertAt(b: Buffer, pos: number, text: string): Iterator | u
 }
 
 export function itInsert(it: Iterator, text: string): boolean {
+    itAssertIsValid(it);
+
     if (text === "") return false;
 
     const b = it.buff;
@@ -128,6 +141,8 @@ export function itEquals(
 }
 
 function isValidAndNonZeroRange(start: Iterator, end: Iterator) {
+    itAssertIsValid(start);
+    itAssertIsValid(end);
     if (itEquals(start, end)) return false;
     if (itBefore(end, start)) return false;
     if (!itGet(start)) return false;
@@ -158,6 +173,8 @@ export function itRemove(start: Iterator, end: Iterator): boolean {
         const end1 = { ...end };
 
         filterInPlace(b._cursors, c => {
+            if (itEquals(c, start1)) return true;
+            c.idx = -1;
             if (itBefore(end1, c) || itEquals(end1, c)) {
                 c.pieceIdx -= numDeleted;
                 return true;
@@ -165,9 +182,12 @@ export function itRemove(start: Iterator, end: Iterator): boolean {
 
             return itBefore(c, start1);
         });
+        reindex(b._cursors);
 
         // NOTE: this is just a copy-paste from above
         filterInPlace(b._tempCursors, c => {
+            if (itEquals(c, start1)) return true;
+            c.idx = -1;
             if (itBefore(end1, c) || itEquals(end1, c)) {
                 c.pieceIdx -= numDeleted;
                 return true;
@@ -175,10 +195,17 @@ export function itRemove(start: Iterator, end: Iterator): boolean {
 
             return itBefore(c, start1);
         });
+        reindex(b._tempCursors);
     }
 
 
     return true;
+}
+
+function reindex(iterators: Iterator[]) {
+    for (let i = 0; i < iterators.length; i++) {
+        iterators[i].idx = i;
+    }
 }
 
 export function itGetTextBetween(start: Iterator, end: Iterator) {
@@ -263,6 +290,8 @@ function updateCursorsForBisect(b: Buffer, pieceIdx: number, textIdx: number) {
  * for an iterator to fall off the end of one piece and not be on the next piece.
  */
 export function itBisect(it: Iterator) {
+    itAssertIsValid(it);
+
     const b = it.buff;
 
     if (itIsClear(it)) itZero(it);
@@ -323,15 +352,23 @@ export function newBuff(): Buffer {
     };
 }
 
+/** 
+ * Iterators are something you get by calling {@link itNewPermanent} or {@link itNewTemp}.
+ * They are kept up to date when you insert or remove using other iterators.
+ * Don't attempt to create them yourself. Or if you do, you need to remember
+ * to append them to the _tempCursors or _cursors arrays.
+ */
 export type Iterator = {
     buff: Buffer;
     pieceIdx: number;
     textIdx: number;
+    idx: number;
 };
 
 /** Creates a permanent cursor that won't be cleaned up ever */
 export function itNewPermanent(buff: Buffer): Iterator {
-    const it: Iterator = { buff, pieceIdx: 0, textIdx: 0 };
+    const it: Iterator = { buff, pieceIdx: 0, textIdx: 0, idx: -1, };
+    it.idx = buff._cursors.length;
     buff._cursors.push(it);
     return it;
 }
@@ -339,7 +376,8 @@ export function itNewPermanent(buff: Buffer): Iterator {
 /** Creates a temporary cursor that gets cleaned up when we finish editing */
 export function itNewTemp(buff: Buffer): Iterator {
     assert(buff._isEditing);
-    const it: Iterator = { buff, pieceIdx: 0, textIdx: 0 };
+    const it: Iterator = { buff, pieceIdx: 0, textIdx: 0, idx: -1 };
+    it.idx = buff._tempCursors.length;
     buff._tempCursors.push(it);
     return it;
 }
@@ -349,22 +387,28 @@ export function itNewTempFrom(it: Iterator, offset = 0) {
     copy.pieceIdx = it.pieceIdx;
     copy.textIdx = it.textIdx;
 
-    for (let i = 0; i < offset; i++) {
-        iterate(copy);
-    }
-
-    for (let i = 0; i > offset; i--) {
-        iterateBackwards(copy);
-    }
+    iterateAmount(it, offset);
 
     return copy;
 }
 
-export function itCopy(dst: Iterator, src: Iterator) {
+export function iterateAmount(it: Iterator, offset: number) {
+    for (let i = 0; i < offset; i++) {
+        iterate(it);
+    }
+
+    for (let i = 0; i > offset; i--) {
+        iterateBackwards(it);
+    }
+}
+
+export function itCopy(dst: Iterator, src: Iterator, offset = 0) {
     assert(src.buff === dst.buff);
 
     dst.pieceIdx = src.pieceIdx;
     dst.textIdx = src.textIdx;
+
+    iterateAmount(dst, offset);
 }
 
 export function itCopyValues(dst: Iterator, pieceIdx: number, textIdx: number) {

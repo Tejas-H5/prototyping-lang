@@ -14,6 +14,12 @@ import {
     handleTextEditorMouseScrollEvent,
     iterateToLastNewline,
     iterateToNextNewline,
+    textEditorMoveToStartOfLine,
+    textEditorInsert,
+    textEditorInsertInternal,
+    textEditorRemoveInternal,
+    textEditorMoveToEndOfLine,
+    textEditorClearSelection,
 } from 'src/utils/text-editor';
 import * as tb from "src/utils/text-edit-buffer";
 import { imProgramOutputs } from './code-output';
@@ -348,48 +354,71 @@ function imSimpleTextInputBody(s: SimpleTextEditorState) {
 
 // toggles '//' on/off for the selected lines
 function toggleSelectionLineComment(targetEditor: TextEditorState) {
+    let hadSelection = true;
+    if (!textEditorHasSelection(targetEditor)) {
+        hadSelection = false;
+        tb.itCopy(targetEditor.selectionStart, targetEditor.cursor);
+        tb.itCopy(targetEditor.selectionEnd, targetEditor.cursor);
+    }
+    
+
     tb.beginEditing(targetEditor.buffer); {
+        textEditorMoveToStartOfLine(targetEditor.selectionStart);
+        textEditorMoveToEndOfLine(targetEditor.selectionEnd);
 
-        iterateToLastNewline(targetEditor.selectionStart);
-        iterateToNextNewline(targetEditor.selectionEnd);
+        let hasComments = false;
 
-        const cursors: TextEditorCursor[] = [];
-
-        const start = tb.itNewTempFrom(targetEditor.selectionStart);
-        const end = tb.itNewTempFrom(targetEditor.selectionEnd);
         assert(tb.itBefore(targetEditor.selectionStart, targetEditor.selectionEnd));
-        while (!tb.itEquals(start, end)) {
-            if (tb.itQuery(start, "//")) {
-                cursors.push(tb.itNewTempFrom(start));
-            }
 
-            tb.iterate(start);
+        const it = tb.itNewTempFrom(targetEditor.selectionStart);
+        while (!tb.itEquals(it, targetEditor.selectionEnd)) {
+            if (tb.itQuery(it, "//")) {
+                hasComments = true;
+                break;
+            }
+            tb.iterate(it);
         }
 
-        if (cursors.length === 0) {
-            // We didn't have any comments to delete. Let's create some comments instead
-
-            tb.itCopy(start, targetEditor.selectionStart);
-            tb.itCopy(end, targetEditor.selectionEnd);
-            while (!tb.itEquals(start, end)) {
-                if (tb.itIsZero(start) || tb.itQuery(start, "\n")) {
-                    const pos = tb.itNewTempFrom(start);
-                    cursors.push(pos);
+        tb.itCopy(it, targetEditor.selectionStart);
+        if (hasComments) {
+            // Remove the comments
+            
+            const end = tb.itNewTempFrom(it);
+            while (!tb.itEquals(it, targetEditor.selectionEnd)) {
+                if (tb.itQuery(it, "//")) {
+                    tb.itCopy(end, it, 2);
+                    textEditorRemoveInternal(targetEditor, it, end);
                 }
-
-                tb.iterate(start);
-            }
-
-            if (cursors.length > 0) {
-                for (const c of cursors) {
-                    tb.itInsert(c, "// ");
-                }
+                tb.iterate(it);
             }
         } else {
-            // TODO: delete comments
+            // We didn't have any comments to delete. Let's create some comments instead
+
+            while (!tb.itEquals(it, targetEditor.selectionEnd)) {
+                let insert = false;
+                if (tb.itQuery(it, "\n")) {
+                    tb.iterate(it);
+                    insert = true;
+                } else if (tb.itEquals(targetEditor.selectionStart, it)) {
+                    insert = true;
+                }
+
+                if (insert) {
+                    textEditorInsertInternal(targetEditor, it, "//");
+                }
+
+                tb.iterate(it);
+            }
+
+            textEditorMoveToStartOfLine(targetEditor.selectionStart);
+            textEditorMoveToEndOfLine(targetEditor.selectionEnd);
         }
 
     } tb.endEditing(targetEditor.buffer);
+
+    if (!hadSelection) {
+        textEditorClearSelection(targetEditor);
+    }
 }
 
 function indentSelection(targetEditor: TextEditorState) {

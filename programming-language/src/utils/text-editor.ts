@@ -34,7 +34,7 @@ export function textEditorDeleteCurrentSelection(s: TextEditorState) {
     textEditorRemove(s, s.selectionStart, s.selectionEnd);
     tb.iterate(s.cursor);
 
-    clearSelection(s);
+    textEditorClearSelection(s);
 }
 
 export function iterateToLastNewline(cursor: tb.Iterator) {
@@ -69,7 +69,7 @@ function moveDown(s: TextEditorState) {
     }
 }
 
-function clearSelection(s: TextEditorState) {
+export function textEditorClearSelection(s: TextEditorState) {
     tb.itClear(s.selectionStart);
     tb.itClear(s.selectionEnd);
 
@@ -77,7 +77,7 @@ function clearSelection(s: TextEditorState) {
     s.canKeyboardSelect = false;
 }
 
-function moveUp(s: TextEditorState) {
+export function moveUp(s: TextEditorState) {
     const currentLineOffset = iterateToLastNewline(s.cursor);
     if (tb.itIsZero(s.cursor)) {
         return;
@@ -100,7 +100,7 @@ function moveUp(s: TextEditorState) {
     }
 }
 
-function moveToEndOfThisWord(s: TextEditorState) {
+export function moveToEndOfThisWord(s: TextEditorState) {
     // get off whitespace
     while (tb.iterate(s.cursor) && isWhitespace(tb.itGet(s.cursor))) {}
 
@@ -108,7 +108,7 @@ function moveToEndOfThisWord(s: TextEditorState) {
     while (tb.iterate(s.cursor) && !isWhitespace(tb.itGet(s.cursor))) {}
 }
 
-function moveToStartOfLastWord(s: TextEditorState) {
+export function moveToStartOfLastWord(s: TextEditorState) {
     if (!tb.iterateBackwards(s.cursor)) return;
 
     // get off whitespace
@@ -236,7 +236,7 @@ function traverseUndoBuffer(
 
                 s.undoBufferIdx++;
 
-                clearSelection(s);
+                textEditorClearSelection(s);
                 applyOrRevertUndoStep(s, step, true);
             }
         } 
@@ -249,10 +249,10 @@ function traverseUndoBuffer(
                     break;
                 }
 
-                s.undoBufferIdx--;
-
-                clearSelection(s);
+                textEditorClearSelection(s);
                 applyOrRevertUndoStep(s, step, false);
+
+                s.undoBufferIdx--;
             }
         } 
     }
@@ -260,40 +260,46 @@ function traverseUndoBuffer(
 
 export function textEditorInsert(s: TextEditorState, cursor: tb.Iterator, str: string) {
     tb.beginEditing(s.buffer); {
-        if (tb.itInsert(cursor, str)) {
-            const pos = tb.itGetPos(cursor);
-            s.modifiedAt = Date.now();
-
-            pushToUndoBuffer(s, {
-                time: s.modifiedAt,
-                pos,
-                insert: true,
-                str: str
-            });
-        }
+        textEditorInsertInternal(s, cursor, str);
     } tb.endEditing(s.buffer);
 }
 
+export function textEditorInsertInternal(s: TextEditorState, cursor: tb.Iterator, str: string) {
+    const pos = tb.itGetPos(cursor);
+
+    if (!tb.itInsert(cursor, str)) return; 
+
+    s.modifiedAt = Date.now();
+
+    pushToUndoBuffer(s, {
+        time: s.modifiedAt,
+        pos,
+        insert: true,
+        str: str
+    });
+}
+
 export function textEditorRemove(s: TextEditorState, start: tb.Iterator, end: tb.Iterator) {
+    tb.beginEditing(s.buffer); {
+        textEditorRemoveInternal(s, start, end);
+    } tb.endEditing(s.buffer);
+}
+
+export function textEditorRemoveInternal(s: TextEditorState, start: tb.Iterator, end: tb.Iterator) {
     const removed = tb.itGetTextBetween(start, end);
     if (!removed) return;
 
-    tb.beginEditing(s.buffer); {
-        if (tb.itRemove(start, end)) {
-            s.modifiedAt = Date.now();
-            const startPos = tb.itGetPos(start);
+    const startPos = tb.itGetPos(start);
+    if (!tb.itRemove(start, end)) return;
 
-            tb.itCopy(s.cursor, start);
-            tb.iterateBackwards(s.cursor);
+    s.modifiedAt = Date.now();
 
-            pushToUndoBuffer(s, {
-                time: s.modifiedAt,
-                pos: startPos,
-                insert: false,
-                str: removed
-            });
-        }
-    } tb.endEditing(s.buffer);
+    pushToUndoBuffer(s, {
+        time: s.modifiedAt,
+        pos: startPos,
+        insert: false,
+        str: removed
+    });
 }
 
 export function textEditorSetSelection(s: TextEditorState, start: tb.Iterator, end: tb.Iterator) {
@@ -316,6 +322,26 @@ export function handleTextEditorMouseScrollEvent(s: TextEditorState) {
             const n = Math.max(mouse.scrollWheel / 50);
             textEditorScroll(s, n);
         } 
+    }
+}
+
+
+export function textEditorMoveToEndOfLine(cursor: tb.Iterator) {
+    if (tb.itGet(cursor) !== "\n") {
+        iterateToNextNewline(cursor);
+    }
+}
+
+export function textEditorMoveToStartOfLine(cursor: tb.Iterator) {
+    if (tb.itIsZero(cursor)) return;
+
+    tb.iterateBackwards(cursor);
+    if (tb.itGet(cursor) !== "\n") {
+        iterateToLastNewline(cursor);
+    }
+
+    if (!tb.itIsZero(cursor)) {
+        tb.iterate(cursor);
     }
 }
 
@@ -396,7 +422,7 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
                         const selectedText = tb.itGetTextBetween(s.selectionStart, s.selectionEnd);
                         if (selectedText) {
                             copyToClipboard(selectedText).then(() => {
-                                clearSelection(s);
+                                textEditorClearSelection(s);
                             });
                         }
                     } else {
@@ -469,23 +495,14 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
             if (s.inCommandMode) {
                 while (tb.iterate(s.cursor)) { };
             } else {
-                if (tb.itGet(s.cursor) !== "\n") {
-                    iterateToNextNewline(s.cursor);
-                }
+                textEditorMoveToEndOfLine(s.cursor)
             }
         } else if (key === "Home") {
             if (s.inCommandMode) {
                 s.cursor.pieceIdx = 0;
                 s.cursor.textIdx = 0;
             } else {
-                if (!tb.itIsZero(s.cursor)) {
-                    tb.iterateBackwards(s.cursor);
-                    if (tb.itGet(s.cursor) !== "\n") {
-                        iterateToLastNewline(s.cursor);
-                    } 
-
-                    tb.iterate(s.cursor);
-                }
+                textEditorMoveToStartOfLine(s.cursor);
             }
         } else if (key === "Enter") {
             textEditorInsert(s, s.cursor, "\n");
@@ -497,7 +514,7 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
             }
         } else if (key === "Escape") {
             if (textEditorHasSelection(s)) {
-                clearSelection(s);
+                textEditorClearSelection(s);
             } else {
                 handled = false;
             }
@@ -602,23 +619,23 @@ function getChar(e: KeyboardEvent) {
 function textEditorReset(s: TextEditorState) {
     s.buffer = tb.newBuff();
 
-    s._renderCursorStart.buff     = s.buffer;
-    s._renderCursorEnd.buff       = s.buffer;
-    s._renderCursor.buff          = s.buffer;
-    s._tempCursor.buff            = s.buffer;
-    s._initialCursor.buff         = s.buffer;
-    s.cursor.buff                 = s.buffer;
-    s.selectionAnchor.buff        = s.buffer;
-    s.selectionAnchorEnd.buff     = s.buffer;
-    s.selectionStart.buff         = s.buffer;
-    s.selectionEnd.buff           = s.buffer;
-    s.selectionStartedCursor.buff = s.buffer;
+    s._renderCursorStart     = tb.itNewPermanent(s.buffer);
+    s._renderCursorEnd       = tb.itNewPermanent(s.buffer);
+    s._renderCursor          = tb.itNewPermanent(s.buffer);
+    s._tempCursor            = tb.itNewPermanent(s.buffer);
+    s._initialCursor         = tb.itNewPermanent(s.buffer);
+    s.cursor                 = tb.itNewPermanent(s.buffer);
+    s.selectionAnchor        = tb.itNewPermanent(s.buffer);
+    s.selectionAnchorEnd     = tb.itNewPermanent(s.buffer);
+    s.selectionStart         = tb.itNewPermanent(s.buffer);
+    s.selectionEnd           = tb.itNewPermanent(s.buffer);
+    s.selectionStartedCursor = tb.itNewPermanent(s.buffer);
 
     s.undoBuffer.length = 0;
     s.undoBufferIdx     = -1;
     s.modifiedAt        = 0;
 
-    clearSelection(s);
+    textEditorClearSelection(s);
 
     textEditorSetViewLine(s, 0);
 }
@@ -847,7 +864,7 @@ export function handleTextEditorClickEventForChar(s: TextEditorState, cursor: tb
         s.hasClick = true;
 
         // single click, clear selection
-        clearSelection(s);
+        textEditorClearSelection(s);
     }
 
     if (s.hasClick && elementHasMouseDown(false)) {
