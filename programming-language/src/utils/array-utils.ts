@@ -25,3 +25,10 @@ export function groupBy<K, V>(dst: Map<K, V[]>, values: V[], keyFn: (val: V) => 
     }
 }
 
+
+export function incSafetyCounter(safety: number, val: number): number {
+    if (safety > val) {
+        throw new Error("Safety counter was hit!");
+    }
+    return safety + 1;
+}

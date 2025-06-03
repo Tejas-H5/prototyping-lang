@@ -1,6 +1,8 @@
+import * as tb from "src/utils/text-edit-buffer";
 import {
     defaultTextEditorKeyboardEventHandler,
     handleTextEditorClickEventForChar,
+    handleTextEditorMouseScrollEvent,
     imBeginTextEditor,
     imEndTextEditor,
     loadText,
@@ -9,19 +11,12 @@ import {
     textEditorGetNextChar,
     textEditorHasChars,
     textEditorHasSelection,
-    textEditorRemove,
-    TextEditorState,
-    handleTextEditorMouseScrollEvent,
-    iterateToLastNewline,
-    iterateToNextNewline,
-    textEditorMoveToStartOfLine,
-    textEditorInsert,
     textEditorInsertInternal,
-    textEditorRemoveInternal,
     textEditorMoveToEndOfLine,
-    textEditorClearSelection,
+    textEditorMoveToStartOfLine,
+    textEditorRemoveInternal,
+    TextEditorState
 } from 'src/utils/text-editor';
-import * as tb from "src/utils/text-edit-buffer";
 import { imProgramOutputs } from './code-output';
 import { renderSliderBody } from './components/slider';
 import {
@@ -72,32 +67,32 @@ import {
 import { GlobalContext, rerun } from './state';
 import "./styling";
 import { cnApp } from './styling';
+import { assert } from './utils/assert';
+import { cn } from './utils/cn';
 import {
     disableIm,
     enableIm,
     imBeginList,
-    imSpan,
     imEnd,
+    imEndIf,
     imEndList,
+    imEndSwitch,
+    imIf,
     imInit,
     imMemo,
     imRef,
+    imSpan,
     imState,
     imStateInline,
+    imSwitch,
     nextListRoot,
     setAttr,
     setClass,
     setInnerText,
-    setStyle,
-    imIf,
-    imEndIf,
-    imSwitch,
-    imEndSwitch
+    setStyle
 } from './utils/im-dom-utils';
 import { max } from './utils/math-utils';
 import { isWhitespace } from './utils/text-utils';
-import { assert } from './utils/assert';
-import { cn } from './utils/cn';
 
 
 const UNANIMOUSLY_DECIDED_TAB_SIZE = 4;
@@ -353,130 +348,103 @@ function imSimpleTextInputBody(s: SimpleTextEditorState) {
 }
 
 // toggles '//' on/off for the selected lines
+// TODO: fix edge cases that arise due to blank lines
 function toggleSelectionLineComment(targetEditor: TextEditorState) {
-    let hadSelection = true;
-    if (!textEditorHasSelection(targetEditor)) {
-        hadSelection = false;
-        tb.itCopy(targetEditor.selectionStart, targetEditor.cursor);
-        tb.itCopy(targetEditor.selectionEnd, targetEditor.cursor);
-    }
-    
+    let deletedComments = false;
 
     tb.beginEditing(targetEditor.buffer); {
-        textEditorMoveToStartOfLine(targetEditor.selectionStart);
-        textEditorMoveToEndOfLine(targetEditor.selectionEnd);
+        const [start, end] = getCurentRangeCursors(targetEditor);
 
-        let hasComments = false;
+        const it = tb.itNewTempFrom(start);
+        const temp = tb.itNewTempFrom(start);
+        const temp2 = tb.itNewTempFrom(start);
 
-        assert(tb.itBefore(targetEditor.selectionStart, targetEditor.selectionEnd));
-
-        const it = tb.itNewTempFrom(targetEditor.selectionStart);
-        while (!tb.itEquals(it, targetEditor.selectionEnd)) {
-            if (tb.itQuery(it, "//")) {
-                hasComments = true;
-                break;
+        while (!tb.itEquals(it, end)) {
+            if (isStartOfLine(it, temp) && tb.itQuery(it, "//")) {
+                tb.itCopy(temp2, it, "//".length);
+                textEditorRemoveInternal(targetEditor, it, temp2);
+                deletedComments = true;
             }
+
             tb.iterate(it);
         }
-
-        tb.itCopy(it, targetEditor.selectionStart);
-        if (hasComments) {
-            // Remove the comments
-            
-            const end = tb.itNewTempFrom(it);
-            while (!tb.itEquals(it, targetEditor.selectionEnd)) {
-                if (tb.itQuery(it, "//")) {
-                    tb.itCopy(end, it, 2);
-                    textEditorRemoveInternal(targetEditor, it, end);
-                }
-                tb.iterate(it);
-            }
-        } else {
-            // We didn't have any comments to delete. Let's create some comments instead
-
-            while (!tb.itEquals(it, targetEditor.selectionEnd)) {
-                let insert = false;
-                if (tb.itQuery(it, "\n")) {
-                    tb.iterate(it);
-                    insert = true;
-                } else if (tb.itEquals(targetEditor.selectionStart, it)) {
-                    insert = true;
-                }
-
-                if (insert) {
-                    textEditorInsertInternal(targetEditor, it, "//");
-                }
-
-                tb.iterate(it);
-            }
-
-            textEditorMoveToStartOfLine(targetEditor.selectionStart);
-            textEditorMoveToEndOfLine(targetEditor.selectionEnd);
-        }
-
     } tb.endEditing(targetEditor.buffer);
 
-    if (!hadSelection) {
-        textEditorClearSelection(targetEditor);
+    if (deletedComments) {
+        return;
     }
+
+    tb.beginEditing(targetEditor.buffer); {
+        const [start, end] = getCurentRangeCursors(targetEditor);
+
+        const it = tb.itNewTempFrom(start);
+        const temp = tb.itNewTempFrom(start);
+
+        while (!tb.itEquals(it, end)) {
+            if (isStartOfLine(it, temp)) {
+                textEditorInsertInternal(targetEditor, it, "//");
+            } 
+
+            tb.iterate(it);
+        }
+    } tb.endEditing(targetEditor.buffer);
+}
+
+function getCurentRangeCursors(s: TextEditorState) {
+    let start, end;
+    if (textEditorHasSelection(s)) {
+        start = tb.itNewTempFrom(s.selectionStart);
+        end = tb.itNewTempFrom(s.selectionEnd);
+    } else {
+        start = tb.itNewTempFrom(s.cursor);
+        end = tb.itNewTempFrom(s.cursor);
+    }
+
+    textEditorMoveToStartOfLine(start);
+    textEditorMoveToEndOfLine(end);
+
+    return [start, end] as const;
 }
 
 function indentSelection(targetEditor: TextEditorState) {
-    if (!textEditorHasSelection(targetEditor)) {
-        return;
-    }
+    tb.beginEditing(targetEditor.buffer); {
+        const [start, end] = getCurentRangeCursors(targetEditor);
 
-    const buffer = targetEditor.buffer;
-    tb.beginEditing(buffer); {
-        const cursors: TextEditorCursor[] = [];
+        const it = tb.itNewTempFrom(start);
+        const temp = tb.itNewTempFrom(start);
 
-        const start = tb.itNewTempFrom(targetEditor.selectionStart);
-        const end = tb.itNewTempFrom(targetEditor.selectionEnd);
-        while (!tb.itEquals(start, end)) {
-            if (tb.itQuery(start, "\n")) {
-                const pos = tb.itNewTempFrom(start);
-                // one after the newline
-                tb.iterate(pos);
-                tb.itBisect(pos);
-                cursors.push(pos);
-            }
+        while (!tb.itEquals(it, end)) {
+            if (isStartOfLine(it, temp)) {
+                textEditorInsertInternal(targetEditor, it, "\t");
+            } 
 
-            tb.iterate(start);
+            tb.iterate(it);
         }
-
-        if (cursors.length > 0) {
-            for (const c of cursors) {
-                tb.itInsert(c, "\t");
-            }
-        }
-    } tb.endEditing(buffer);
+    } tb.endEditing(targetEditor.buffer);
 }
 
 function deIndentSelection(targetEditor: TextEditorState) {
-    if (!textEditorHasSelection(targetEditor)) {
-        return;
-    }
+    tb.beginEditing(targetEditor.buffer); {
+        const [start, end] = getCurentRangeCursors(targetEditor);
 
-    iterateToLastNewline(targetEditor.selectionStart);
-    iterateToNextNewline(targetEditor.selectionEnd);
+        const it = tb.itNewTempFrom(start);
+        const temp = tb.itNewTempFrom(start);
+        const temp2 = tb.itNewTempFrom(start);
 
-    const cursors: TextEditorCursor[] = [];
+        while (!tb.itEquals(it, end)) {
+            if (isStartOfLine(it, temp) && tb.itGet(it) === "\t") {
+                tb.itCopy(temp2, it, 1);
+                textEditorRemoveInternal(targetEditor, it, temp2);
+            }
 
-    const it = tb.itNewTempFrom(targetEditor.selectionStart);
-    while (!tb.itEquals(it, targetEditor.selectionEnd)) {
-        const char = tb.itGet(it);
-        if (char === "\n") {
-            cursors.push(tb.itNewTempFrom(it));
+            tb.iterate(it);
         }
+    } tb.endEditing(targetEditor.buffer);
 
-        tb.iterate(it);
-    }
+}
 
-    for (const c of cursors) {
-        const c1 = tb.itNewTempFrom(c);
-        tb.iterate(c1);
-        textEditorRemove(targetEditor, c, c1);
-    }
+function isStartOfLine(it: tb.Iterator, temp: tb.Iterator): boolean {
+    return tb.itIsZero(it) || tb.itGetRelative(it, temp, -1) === "\n"
 }
 
 
@@ -689,7 +657,7 @@ export function imAppCodeEditor(ctx: GlobalContext) {
                     imBeginLayout(COL); {
                         imBeginLayout(ROW | FLEX); {
                             const lineText = imRef<string>();
-                            
+
                             const lineChanged = imMemo(lineIdx);
                             const lastMaxLineChanged = imMemo(s.lastMaxLine);
                             if (lineChanged || lastMaxLineChanged || lineText.val === null) {

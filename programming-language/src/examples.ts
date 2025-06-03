@@ -10,7 +10,7 @@ export const CODE_EXAMPLES: CodeExample[] = [
     {
         name: "Large text",
         code: 
-        `as;f;askdf;lasdfkdjfajd;ak;jf\n`.repeat(40),
+        `as;f;askdf;lasdfkdjfajd;ak;jf\n`.repeat(1000),
     },
     {
         name: "Plotting",

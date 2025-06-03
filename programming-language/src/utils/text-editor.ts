@@ -24,10 +24,8 @@ export function textEditorHasSelection(s: TextEditorState) {
     return s.selectionStart.pieceIdx !== -1 && s.selectionEnd.pieceIdx !== -1;
 }
 
-export function textEditorDeleteCurrentSelection(s: TextEditorState) {
-    if (!textEditorHasSelection(s)) {
-        return;
-    }
+export function textEditorDeleteSelection(s: TextEditorState) {
+    if (!textEditorHasSelection(s)) return;
 
     tb.itCopy(s.cursor, s.selectionStart);
     tb.iterateBackwards(s.cursor);
@@ -72,9 +70,6 @@ function moveDown(s: TextEditorState) {
 export function textEditorClearSelection(s: TextEditorState) {
     tb.itClear(s.selectionStart);
     tb.itClear(s.selectionEnd);
-
-    s.isSelecting = false;
-    s.canKeyboardSelect = false;
 }
 
 export function moveUp(s: TextEditorState) {
@@ -170,14 +165,15 @@ export type TextEditorState = {
     selectionEnd:            tb.Iterator;
     selectionStartedCursor:  tb.Iterator;
 
+    isMouseSelecting:    boolean;
+    isKeyboardSelecting: boolean;
+
     isAutoScrolling: boolean;
 
     hasFocus:          boolean;
     hasClick:          boolean;
-    canKeyboardSelect: boolean;
-    canMouseSelect:    boolean;
-    isSelecting:       boolean;
     isShifting:        boolean;
+
 }
 
 function pushToUndoBuffer(s: TextEditorState, edit: TextEdit) {
@@ -285,6 +281,13 @@ export function textEditorRemove(s: TextEditorState, start: tb.Iterator, end: tb
     } tb.endEditing(s.buffer);
 }
 
+export function textEditorRemoveLen(s: TextEditorState, start: tb.Iterator, len: number) {
+    tb.beginEditing(s.buffer); {
+        const end = tb.itNewTempFrom(start, len);
+        textEditorRemoveInternal(s, start, end);
+    } tb.endEditing(s.buffer);
+}
+
 export function textEditorRemoveInternal(s: TextEditorState, start: tb.Iterator, end: tb.Iterator) {
     const removed = tb.itGetTextBetween(start, end);
     if (!removed) return;
@@ -305,10 +308,6 @@ export function textEditorRemoveInternal(s: TextEditorState, start: tb.Iterator,
 export function textEditorSetSelection(s: TextEditorState, start: tb.Iterator, end: tb.Iterator) {
     tb.itMin(s.selectionStart, start, end);
     tb.itMax(s.selectionStart, start, end);
-    
-    // TODO: ??? not sure why .
-    s.canKeyboardSelect = false;
-    s.canMouseSelect = false;
 }
 
 export function textEditorScroll(s: TextEditorState, amount: number) {
@@ -355,7 +354,6 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
     const mouse = getImMouse();
     if (!mouse.leftMouseButton) {
         s.hasClick = false;
-        s.canMouseSelect = false;
     }
 
     const keyDownEvent = s._keyDownEvent;
@@ -379,7 +377,7 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
 
         if (c) {
             if (!s.inCommandMode) {
-                textEditorInsert(s, s.cursor, c);
+                insertAtCursor(s, c);
             } else {
                 if (keyLower === "z" || keyLower === "y") {
                     let shouldUndo = false;
@@ -413,7 +411,7 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
                         const selectedText = tb.itGetTextBetween(s.selectionStart, s.selectionEnd);
                         if (selectedText) {
                             copyToClipboard(selectedText).then(() => {
-                                textEditorDeleteCurrentSelection(s);
+                                textEditorDeleteSelection(s);
                             });
                         }
                     }
@@ -430,42 +428,36 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
                     }
                 } else if (keyLower === "v") {
                     readFromClipboard().then(clipboardText => {
-                        if (textEditorHasSelection(s)) {
-                            textEditorDeleteCurrentSelection(s);
-                            textEditorInsert(s, s.cursor, clipboardText);
-                        } else {
-                            textEditorInsert(s, s.cursor, clipboardText);
-                        }
+                        insertAtCursor(s, clipboardText);
                     });
                 } else if (keyLower === "a") {
                     tb.itZero(s.selectionStart);
                     tb.itEnd(s.selectionEnd);
                     tb.iterate(s.selectionEnd);
-                    s.canKeyboardSelect = false;
-                    s.canMouseSelect = false;
                 } else {
                     handled = false;
                 }
             }
         } else if (key === "Backspace" || key === "Delete") {
-            // TODO: DELETE should keep the cursor in the same place.
-
             if (textEditorHasSelection(s)) {
-                textEditorDeleteCurrentSelection(s);
+                textEditorDeleteSelection(s);
             } else if (s.inCommandMode) {
-                // Delete word
-                tb.itCopy(s.selectionEnd, s.cursor);
-                moveToStartOfLastWord(s);
-                tb.itCopy(s.selectionStart, s.cursor);
-                textEditorDeleteCurrentSelection(s);
+                if (key === "Backspace") {
+                    tb.itCopy(s.selectionEnd, s.cursor);
+                    moveToStartOfLastWord(s);
+                    tb.itCopy(s.selectionStart, s.cursor);
+                } else {
+                    tb.itCopy(s.selectionStart, s.cursor);
+                    moveToEndOfThisWord(s);
+                    tb.itCopy(s.selectionEnd, s.cursor);
+                }
+
+                textEditorDeleteSelection(s);
             } else {
-                // Delete singular letter
-                tb.itCopy(s.selectionStart, s.cursor);
-                tb.iterateBackwards(s.selectionStart);
-                tb.itCopy(s.selectionEnd, s.cursor);
-                tb.itCopy(s.cursor, s.selectionStart);
-                tb.iterateBackwards(s.cursor);
-                textEditorDeleteCurrentSelection(s);
+                if (key === "Backspace") {
+                    tb.iterateBackwards(s.cursor);
+                }
+                textEditorRemoveLen(s, s.cursor, 1);
             }
         } else if (key === "ArrowLeft") {
             if (s.inCommandMode) {
@@ -505,12 +497,12 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
                 textEditorMoveToStartOfLine(s.cursor);
             }
         } else if (key === "Enter") {
-            textEditorInsert(s, s.cursor, "\n");
+            insertAtCursor(s, "\n");
         } else if (key === "Tab") {
-            textEditorInsert(s, s.cursor, "\t");
+            insertAtCursor(s, "\t");
         } else if (key === "Shift") {
             if (!isRepeat) {
-                setInitialSelectionCursor(s, true);
+                tb.itCopy(s.selectionStartedCursor, s.cursor);
             }
         } else if (key === "Escape") {
             if (textEditorHasSelection(s)) {
@@ -523,13 +515,19 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
         }
 
         const modified = lastModified !== s.modifiedAt;
+        const movedCursor = !tb.itEquals(s._initialCursor, s.cursor);
+
         if (modified) {
-            // Typing a capital letter with Shift + key shouldn't start selecting words...
-            s.canKeyboardSelect = false;
+            s.isAutoScrolling = true;
         }
 
-        if (!tb.itEquals(s._initialCursor, s.cursor)) {
-            s.isAutoScrolling = true;
+        if (!modified && movedCursor && s.isShifting) {
+            if (!s.isKeyboardSelecting) {
+                s.isKeyboardSelecting = true;
+                textEditorStartSelection(s, s._initialCursor);
+            } 
+
+            textEditorExtendSelection(s, s.cursor);
         }
 
         if (handled) {
@@ -541,6 +539,11 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
     if (keyUpEvent) {
         s._keyUpEvent =  null;
     }
+}
+
+function insertAtCursor(s: TextEditorState, str: string) {
+    textEditorDeleteSelection(s);
+    textEditorInsert(s, s.cursor, str);
 }
 
 export function newTextEditorState() {
@@ -576,12 +579,12 @@ export function newTextEditorState() {
         selectionAnchorEnd:      tb.itNewPermanent(buffer),
         selectionStartedCursor:  tb.itNewPermanent(buffer),
 
+        isMouseSelecting:    false,
+        isKeyboardSelecting: false,
+
         isAutoScrolling: false,
 
         hasClick:          false,
-        canKeyboardSelect: false,
-        canMouseSelect:    false,
-        isSelecting:       false,
 
         isShifting:    false,
         inCommandMode: false,
@@ -642,25 +645,11 @@ function textEditorReset(s: TextEditorState) {
 
 export function loadText(s: TextEditorState, text: string) {
     textEditorReset(s);
-    tb.buffInsertAt(s.buffer, 0, text);
+    textEditorInsertInternal(s, s.cursor, text);
 }
 
 export type TextEditorInlineHint = {
     component: (line: number) => void;
-}
-
-function setInitialSelectionCursor(s: TextEditorState, keyboard: boolean) {
-    if (keyboard) {
-        if (!s.canKeyboardSelect) {
-            s.canKeyboardSelect = true;
-            tb.itCopy(s.selectionStartedCursor, s.cursor);
-        }
-    } else {
-        if (!s.canMouseSelect) {
-            s.canMouseSelect = true;
-            tb.itCopy(s.selectionStartedCursor, s.cursor);
-        }
-    }
 }
 
 function textEditorSetViewLine(s: TextEditorState, newViewLine: number): boolean {
@@ -681,6 +670,33 @@ function textEditorSetViewLine(s: TextEditorState, newViewLine: number): boolean
     return true;
 }
 
+function textEditorStartSelection(s: TextEditorState, cursor: tb.Iterator) {
+    tb.itCopy(s.selectionAnchor, cursor);
+    if (
+        tb.itGet(s.selectionStartedCursor) === "\n" && 
+        tb.itBefore(cursor, s.selectionStartedCursor)
+    ) {
+        // dont want to start on newlines when selecting backwards. This is always an accident
+        tb.iterateBackwards(s.selectionAnchor);
+    }
+
+    tb.itCopy(s.selectionAnchorEnd, s.selectionAnchor);
+    tb.itCopy(s.selectionStart,     s.selectionAnchor);
+    tb.itCopy(s.selectionEnd,       s.selectionAnchor);
+}
+
+// TODO: handle potential aliasing bugs
+function textEditorExtendSelection(s: TextEditorState, cursor: tb.Iterator) {
+    tb.itCopy(s.selectionAnchorEnd, cursor);
+    if (tb.itBefore(s.selectionAnchorEnd, s.selectionAnchor)) {
+        tb.itCopy(s.selectionStart, s.selectionAnchorEnd);
+        tb.itCopy(s.selectionEnd, s.selectionAnchor);
+    } else {
+        tb.itCopy(s.selectionEnd, s.selectionAnchorEnd);
+        tb.itCopy(s.selectionStart, s.selectionAnchor);
+    }
+}
+
 // NOTE: this needs to be inside a container
 // with position: relative to correctly position the fake text-area.
 export function imBeginTextEditor(
@@ -696,9 +712,14 @@ export function imBeginTextEditor(
 
     const wasShifting = s.isShifting;
     s.isShifting = shiftHeld;
+    const mouse = getImMouse();
 
-    if (wasShifting && !shiftHeld) {
-        s.isSelecting = false;
+    if (s.isMouseSelecting && !mouse.lastClickedElement) {
+        s.isMouseSelecting = false;
+    }
+
+    if (s.isKeyboardSelecting && !s.isShifting) {
+        s.isKeyboardSelecting = false;
     }
 
     // handle scroll input from last frame (??? TODO: Move if needd)
@@ -747,8 +768,6 @@ export function imBeginTextEditor(
             if (!s.hasFocus) {
                 s._textAreaElement.root.focus();
                 s.hasFocus = true;
-                s.canMouseSelect = false;
-                s.canKeyboardSelect = false;
             }
         }
     } imEnd();
@@ -756,6 +775,9 @@ export function imBeginTextEditor(
 
 export function imEndTextEditor(s: TextEditorState) {
     tb.itCopy(s._renderCursorEnd, s._renderCursor);
+
+    // NOTE: code that is in the rendering pass should be moved
+    // out of the rendering pass unless there is no other way to do it.
 
     const offsetTopChanged = imMemo(s._cursorSpan?.offsetTop);
     const offsetLeftChanged = imMemo(s._cursorSpan?.offsetLeft);
@@ -774,37 +796,6 @@ export function imEndTextEditor(s: TextEditorState) {
     }
 
     defaultTextEditorKeyboardEventHandler(s);
-
-    // TODO: this code should be near where we move the cursor. onCursorMoved() ?
-    {
-        const canStartSelecting = s.canKeyboardSelect || s.canMouseSelect;
-        if (canStartSelecting && !s.isSelecting) {
-            tb.itCopy(s.selectionAnchor, s.cursor);
-            if (tb.itGet(s.selectionStartedCursor) === "\n" && tb.itBefore(s.cursor, s.selectionStartedCursor)) {
-                // dont want to start on newlines when selecting backwards. This is always an accident
-                tb.iterateBackwards(s.selectionAnchor);
-            }
-
-            tb.itCopy(s.selectionAnchorEnd, s.selectionAnchor);
-            tb.itCopy(s.selectionStart,     s.selectionAnchor);
-            tb.itCopy(s.selectionEnd,       s.selectionAnchor);
-
-            s.isSelecting = true;
-            s.canKeyboardSelect = false;
-            s.canMouseSelect = false;
-        }
-
-        if (s.isSelecting) {
-            tb.itCopy(s.selectionAnchorEnd, s.cursor);
-            if (tb.itBefore(s.selectionAnchorEnd, s.selectionAnchor)) {
-                tb.itCopy(s.selectionStart, s.selectionAnchorEnd);
-                tb.itCopy(s.selectionEnd, s.selectionAnchor);
-            } else {
-                tb.itCopy(s.selectionEnd, s.selectionAnchorEnd);
-                tb.itCopy(s.selectionStart, s.selectionAnchor);
-            }
-        }
-    }
 
 
     if (s.isAutoScrolling) {
@@ -864,7 +855,9 @@ export function handleTextEditorClickEventForChar(s: TextEditorState, cursor: tb
         s.hasClick = true;
 
         // single click, clear selection
-        textEditorClearSelection(s);
+        s.isMouseSelecting = true;
+        tb.itCopy(s.cursor, cursor);
+        textEditorStartSelection(s, s.cursor);
     }
 
     if (s.hasClick && elementHasMouseDown(false)) {
@@ -872,7 +865,7 @@ export function handleTextEditorClickEventForChar(s: TextEditorState, cursor: tb
         
         // we probably wanted to start selecting from here
         tb.itCopy(s.cursor, cursor);
-        setInitialSelectionCursor(s, false);
+        textEditorExtendSelection(s, s.cursor);
 
         s.shouldFocusTextArea = true;
     }

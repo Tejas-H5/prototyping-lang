@@ -37,10 +37,7 @@ function itAssertIsValid(c: Iterator) {
 }
 
 export function beginEditing(b: Buffer) {
-    if (b._isEditing) {
-        endEditing(b);
-    }
-
+    assert(!b._isEditing);
     b._isEditing = true;
 }
 
@@ -387,7 +384,7 @@ export function itNewTempFrom(it: Iterator, offset = 0) {
     copy.pieceIdx = it.pieceIdx;
     copy.textIdx = it.textIdx;
 
-    iterateAmount(it, offset);
+    iterateAmount(copy, offset);
 
     return copy;
 }
@@ -420,6 +417,10 @@ export function itBefore(a: Iterator, b: Iterator) {
     if (a.pieceIdx < b.pieceIdx) return true;
     if (a.pieceIdx === b.pieceIdx) return a.textIdx < b.textIdx;
     return false;
+}
+
+export function itBeforeOrEqual(a: Iterator, b: Iterator) {
+    return itEquals(a, b) || itBefore(a, b);
 }
 
 export function itMin(src: Iterator, a: Iterator, b: Iterator) {
@@ -498,6 +499,11 @@ export function iterate(it: Iterator): boolean {
     assert(it.textIdx < piece.text.length);
 
     return true;
+}
+
+export function itGetRelative(it: Iterator, temp: Iterator, offset: number): string | undefined {
+    itCopy(temp, it, offset);
+    return itGet(temp);
 }
 
 export function itGet(it: Iterator): string | undefined {
@@ -606,11 +612,16 @@ export function iterateToLineCol(
     return i;
 }
 
+export function itQueryRelative(it: Iterator, temp: Iterator, query: string, offset: number) {
+    itCopy(temp, it, offset);
+    return itQuery(temp, query);
+}
+
 export function itQuery(it: Iterator, query: string) {
     const { textIdx, pieceIdx } = it;
 
     let i = 0;
-    while (itGet(it) === query[i]) {
+    while (i < query.length && itGet(it) === query[i]) {
         iterate(it);
         i++;
     }

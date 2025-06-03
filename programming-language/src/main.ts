@@ -11,6 +11,9 @@ import { getImKeys, imEndIf, imIf, imState, initializeImDomUtils } from './utils
 import { imTestHarness } from "./test-harness.ts";
 import { IS_PROD } from "./env.ts";
 
+// const TESTING_ENABLED = !IS_PROD;
+const TEST_HARNESS_ENABLED = true;
+
 let isTesting = false;
 
 function imRoot() {
@@ -18,7 +21,7 @@ function imRoot() {
 
     startFpsCounter(fps);
 
-    if (!IS_PROD) {
+    if (TEST_HARNESS_ENABLED) {
         const keys = getImKeys();
         if (keys.keyDown) {
             const key = keys.keyDown.key;
@@ -35,7 +38,7 @@ function imRoot() {
 
     imFpsCounterOutput(fps);
 
-    if (!IS_PROD) {
+    if (TEST_HARNESS_ENABLED) {
         if (imIf() && isTesting) {
             imTestHarness();
         } imEndIf();

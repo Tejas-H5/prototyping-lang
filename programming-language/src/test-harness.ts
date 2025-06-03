@@ -73,8 +73,7 @@ export function imTestHarness() {
 
     const errorRef = imRef<any>();
 
-    const l = imTry();
-    try {
+    const l = imTry(); try {
         if (imInit()) {
             s.suites = getTestSuites();
             s.tests = s.suites.flatMap(s => s.tests);
