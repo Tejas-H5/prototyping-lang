@@ -9,7 +9,6 @@ import {
 import "./styling.ts";
 import { getImKeys, imEndIf, imIf, imState, initializeImDomUtils } from './utils/im-dom-utils.ts';
 import { imTestHarness } from "./test-harness.ts";
-import { IS_PROD } from "./env.ts";
 
 // const TESTING_ENABLED = !IS_PROD;
 const TEST_HARNESS_ENABLED = true;

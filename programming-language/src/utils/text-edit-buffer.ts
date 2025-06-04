@@ -1,4 +1,3 @@
-import { filterInPlace } from "./array-utils";
 import { assert } from "./assert";
 
 // You'll want to namespace-import this. The names were all getting way too long.
@@ -15,10 +14,8 @@ type Piece = {
 export type Buffer = {
     pieces: Piece[];
 
-    // permanent cursors
-    _cursors: Iterator[];
+    cursors: Iterator[];
 
-    // transient cursors
     _tempCursors: Iterator[];
     _isEditing: boolean;
 
@@ -32,7 +29,7 @@ function itAssertIsValid(c: Iterator) {
     assert(c.idx !== -1);
     assert(
         (c.idx < b._tempCursors.length && b._tempCursors[c.idx] === c) ||
-        (c.idx < b._cursors.length && b._cursors[c.idx] === c)
+        (c.idx < b.cursors.length && b.cursors[c.idx] === c)
     );
 }
 
@@ -169,40 +166,30 @@ export function itRemove(start: Iterator, end: Iterator): boolean {
         const start1 = { ...start };
         const end1 = { ...end };
 
-        filterInPlace(b._cursors, c => {
-            if (itEquals(c, start1)) return true;
-            c.idx = -1;
-            if (itBefore(end1, c) || itEquals(end1, c)) {
-                c.pieceIdx -= numDeleted;
-                return true;
+        for (let i = 0; i < b.cursors.length; i++) {
+            const c = b.cursors[i];
+            if (itEquals(c, start1)) continue;
+            if (itBefore(end1, c) || itEquals(end1, c)) { 
+                c.pieceIdx -= numDeleted; 
+                continue; 
             }
+            if (!itBefore(c, start1)) itClear(c);
+        }
 
-            return itBefore(c, start1);
-        });
-        reindex(b._cursors);
-
-        // NOTE: this is just a copy-paste from above
-        filterInPlace(b._tempCursors, c => {
-            if (itEquals(c, start1)) return true;
-            c.idx = -1;
-            if (itBefore(end1, c) || itEquals(end1, c)) {
-                c.pieceIdx -= numDeleted;
-                return true;
+        // NOTE: this is just a copypaste from above
+        for (let i = 0; i < b._tempCursors.length; i++) {
+            const c = b._tempCursors[i];
+            if (itEquals(c, start1)) continue;
+            if (itBefore(end1, c) || itEquals(end1, c)) { 
+                c.pieceIdx -= numDeleted; 
+                continue; 
             }
-
-            return itBefore(c, start1);
-        });
-        reindex(b._tempCursors);
+            if (!itBefore(c, start1)) itClear(c);
+        }
     }
 
 
     return true;
-}
-
-function reindex(iterators: Iterator[]) {
-    for (let i = 0; i < iterators.length; i++) {
-        iterators[i].idx = i;
-    }
 }
 
 export function itGetTextBetween(start: Iterator, end: Iterator) {
@@ -247,8 +234,8 @@ export function buffToString(b: Buffer) {
 }
 
 function updateCursorsForBisect(b: Buffer, pieceIdx: number, textIdx: number) {
-    for (let i = 0; i < b._cursors.length; i++) {
-        const c = b._cursors[i];
+    for (let i = 0; i < b.cursors.length; i++) {
+        const c = b.cursors[i];
         if (c.pieceIdx < pieceIdx) continue;
         if (c.pieceIdx === pieceIdx) {
             if (c.textIdx < textIdx) continue;
@@ -340,7 +327,7 @@ function recomputeLineCount(piece: Piece) {
 export function newBuff(): Buffer {
     return {
         pieces: [],
-        _cursors: [],
+        cursors: [],
         _tempCursors: [],
         _isEditing: false,
 
@@ -365,8 +352,8 @@ export type Iterator = {
 /** Creates a permanent cursor that won't be cleaned up ever */
 export function itNewPermanent(buff: Buffer): Iterator {
     const it: Iterator = { buff, pieceIdx: 0, textIdx: 0, idx: -1, };
-    it.idx = buff._cursors.length;
-    buff._cursors.push(it);
+    it.idx = buff.cursors.length;
+    buff.cursors.push(it);
     return it;
 }
 

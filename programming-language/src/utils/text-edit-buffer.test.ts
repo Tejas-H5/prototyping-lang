@@ -1,33 +1,28 @@
 import {
     expectEqual,
-    expectNotNull,
+    forEachRange,
     newTest,
     powerSetTests,
     Test,
-    testSuite,
-    forEachRange,
+    testSuite
 } from "./testing";
 import {
-    newBuff,
-    buffInsertAt,
-    iterate,
-    iterateBackwards,
-    buffToString,
-    itGet,
-    buffRemoveAt,
-    itClear,
-    itInsert,
-    iterateBackwardsUnclamped,
-    endEditing,
     beginEditing,
-    itNewPermanent,
     Buffer,
+    buffInsertAt,
+    buffRemoveAt,
+    buffToString,
+    itBisect,
+    iterate,
+    iterateAmount,
+    itGet,
+    itGetPos,
+    itInsert,
+    itNewPermanent,
     itNewTemp,
     itNewTempFrom,
     itRemove,
-    itBisect,
-    iterateAmount,
-    itGetPos
+    newBuff
 } from "./text-edit-buffer";
 
 function generateInsertionTests() {

@@ -14,7 +14,6 @@ import {
     imMemo
 } from 'src/utils/im-dom-utils';
 import { isWhitespace } from "src/utils/text-utils";
-import { assert } from "./assert";
 import * as tb from "./text-edit-buffer";
 
 // TODO: the user of this 'library' like code shouldn't need to actually use the im-dom-utils framework.
@@ -212,6 +211,7 @@ function applyOrRevertUndoStep(s: TextEditorState, step: TextEdit, apply: boolea
     } tb.endEditing(s.buffer) 
 
     s.isUndoing = false;
+    s.modifiedAt = Date.now();
 }
 
 function traverseUndoBuffer(
@@ -643,9 +643,21 @@ function textEditorReset(s: TextEditorState) {
     textEditorSetViewLine(s, 0);
 }
 
-export function loadText(s: TextEditorState, text: string) {
-    textEditorReset(s);
-    textEditorInsertInternal(s, s.cursor, text);
+export function loadText(s: TextEditorState, text: string): boolean {
+    const existingText = tb.buffToString(s.buffer);
+    if (existingText === text) return false;
+
+    tb.beginEditing(s.buffer); {
+        const start = tb.itNewTemp(s.buffer);
+        const end = tb.itNewTemp(s.buffer);
+        tb.itEnd(end);
+        
+        textEditorRemoveInternal(s, start, end);
+        textEditorInsertInternal(s, s.cursor, text);
+
+    } tb.endEditing(s.buffer);
+
+    return true;
 }
 
 export type TextEditorInlineHint = {
@@ -728,7 +740,7 @@ export function imBeginTextEditor(
         s.wantedScrollAmount--;
         newViewLine--;
     }
-    while (s.wantedScrollAmount < 1) {
+    while (s.wantedScrollAmount < -1) {
         s.wantedScrollAmount++;
         newViewLine++;
     }

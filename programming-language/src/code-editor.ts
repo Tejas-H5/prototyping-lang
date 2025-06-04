@@ -601,6 +601,12 @@ export function imAppCodeEditor(ctx: GlobalContext) {
         editorState.shouldFocusTextArea = true;
     }
 
+    if (imMemo(state.text)) {
+        if (loadText(editorState, state.text))  {
+            loadText(finderState.editorState, "")
+        }
+    } 
+
     if (imMemo(finderState.editorState.modifiedAt)) {
         recomputeAllFindResults(s, editorState, finderState);
     } 
@@ -621,10 +627,6 @@ export function imAppCodeEditor(ctx: GlobalContext) {
             setStyle("userSelect", "none");
             setStyle("cursor", "text");
         }
-
-        if (imMemo(ctx.lastLoaded)) {
-            loadText(editorState, state.text);
-        } 
 
         const astTraverserRef = imRef<ResumeableAstTraverser | null>();
         if (imMemo(lastParseResult)) {
@@ -679,7 +681,6 @@ export function imAppCodeEditor(ctx: GlobalContext) {
                                         nextListRoot();
 
                                         const actualC = textEditorGetNextChar(editorState);
-                                        pos++;
 
                                         let astNode: ProgramExpression | undefined;
                                         if (astTraverserRef.val && lastParseResult) {
@@ -688,6 +689,7 @@ export function imAppCodeEditor(ctx: GlobalContext) {
                                                 lastParseResult,
                                                 pos,
                                             );
+                                            pos++;
                                         }
 
                                         const ws = isWhitespace(actualC);
