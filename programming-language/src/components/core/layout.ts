@@ -151,7 +151,7 @@ export const TABLE = 8 as DisplayTypeInstance;
 export const TABLE_ROW = 9 as DisplayTypeInstance;
 export const TABLE_CELL = 10 as DisplayTypeInstance;
 
-type DisplayType = 
+export type DisplayType = 
     typeof BLOCK |
     typeof INLINE_BLOCK |
     typeof ROW |
@@ -240,24 +240,6 @@ export function imJustify(c: ImCache, alignment = CENTER) {
     if (imMemo(c, alignment)) {
         elSetStyle(c, "justifyContent", getAlignment(alignment));
     }
-}
-
-// TODO: should this really be in core/layout?
-const cnButton = (() => {
-    const transiton = `0.1s linear`;
-    return cssb.cn(`button`, [
-        ` { cursor: pointer; user-select: none; background-color: ${cssVars.bg}; color: ${cssVars.fg}; transition: background-color ${transiton}, color ${transiton}; }`,
-        `.toggled { background-color: ${cssVars.fg}; color: ${cssVars.bg}; }`,
-        `:hover { background-color: ${cssVars.fg}; color: ${cssVars.bg}; }`,
-        `.toggled:hover { background-color: ${cssVars.bg}; color: ${cssVars.fg}; }`,
-        `:active { background-color: ${cssVars.mg}; color: ${cssVars.fg}; }`,
-        `.toggled:active { background-color: ${cssVars.mg}; color: ${cssVars.fg}; }`,
-    ]);
-})();
-
-export function imButton(c: ImCache, toggled = false) {
-    if (isFirstishRender(c)) elSetClass(c, cnButton);
-    if (imMemo(c, toggled)) elSetClass(c, "toggled", toggled);
 }
 
 export function imScrollOverflow(c: ImCache, vScroll = true, hScroll = false) {

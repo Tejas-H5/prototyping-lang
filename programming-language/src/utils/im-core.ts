@@ -1,5 +1,4 @@
 // IM-CORE 1.0
-// TODO: update to latest. cant update till we git-commit, so we can address the diff properly.
 
 import { assert } from "src/utils/assert";
 
@@ -100,11 +99,11 @@ export function inlineTypeId<T = undefined>(fn: Function) {
 // Can be any valid object reference. Or string, but avoid string if you can - string comparisons are slower than object comparisons
 export type ValidKey = string | number | Function | object | boolean | null | unknown;
 
-export const USE_EVENT_LOOP = 1 << 0;
+export const USE_MANUAL_RERENDERING = 1 << 0;
 export const USE_ANIMATION_FRAME = 1 << 1;
 
 /**
- * If you want to avoid requestAnimationFrame, then pass in the {@link USE_EVENT_LOOP} flag instead
+ * If you want to avoid requestAnimationFrame, then pass in the {@link USE_MANUAL_RERENDERING} flag instead
  * of the default {@link USE_ANIMATION_FRAME} flag.
  *  - You'll need to manually call c[CACHE_RERENDER_FN]() whenever any state anywhere changes.
  *  - Methods that previously reported a deltaTime will report a constant 0.0333_ instead.
@@ -138,7 +137,7 @@ export function imCacheBegin(
             }
         };
 
-        if (flags & USE_EVENT_LOOP) {
+        if (flags & USE_MANUAL_RERENDERING) {
             c[CACHE_ANIMATION_TIME] = 0;
             c[CACHE_ANIMATION_DELTA_TIME_SECONDS] = 1 / 30;
             c[CACHE_ANIMATE_FN] = noOp;
@@ -214,6 +213,7 @@ const INTERNAL_TYPE_ARRAY_BLOCK = 3;
 const INTERNAL_TYPE_KEYED_BLOCK = 4;
 const INTERNAL_TYPE_TRY_BLOCK = 5;
 const INTERNAL_TYPE_CACHE = 6;
+const INTERNAL_TYPE_SWITCH_BLOCK = 7;
 
 export function imCacheEntriesBegin<T>(
     c: ImCache,
@@ -585,11 +585,13 @@ export function imIfEnd(c: ImCache) {
  * Use if-else + imIf/imIfElse/imIfEnd instead.
  */
 export function imSwitch(c: ImCache, key: ValidKey) {
+    __imBlockDerivedBegin(c, INTERNAL_TYPE_SWITCH_BLOCK);
     __imBlockKeyedBegin(c, key);
 }
 
 export function imSwitchEnd(c: ImCache) {
     __imBlockDerivedEnd(c, INTERNAL_TYPE_KEYED_BLOCK);
+    __imBlockDerivedEnd(c, INTERNAL_TYPE_SWITCH_BLOCK);
 }
 
 function __imBlockArrayBegin(c: ImCache) {

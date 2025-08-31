@@ -1,13 +1,14 @@
+import { imButtonIsClicked } from './app-components/im-button';
 import { imCode } from './app-styling';
-import { imProgramOutputs, imFunctionInstructions, imProgramResult, getFunctionName } from './code-output';
-import { BLOCK, COL, imButton, imFlex, imGap, imLayout, imLayoutEnd, imPadding, NA, PX, ROW } from './components/core/layout';
+import { getFunctionName, imFunctionInstructions, imProgramOutputs, imProgramResult } from './code-output';
+import { BLOCK, COL, imFlex, imGap, imLayout, imLayoutEnd, imPadding, NA, PX, ROW } from './components/core/layout';
 import { imScrollContainerBegin, newScrollContainer } from './components/scroll-container';
 import { getCurrentCallstack, ProgramInterpretResult, stepProgram } from './program-interpreter';
 import { GlobalContext, startDebugging } from './state';
 import "./styling";
 import { assert } from './utils/assert';
-import { ImCache, imFor, imForEnd, imGet, imIf, imIfElse, imIfEnd, imSet, imState, inlineTypeId, isFirstishRender } from './utils/im-core';
-import { EL_H3, elHasMouseDown, elSetStyle, imElBegin, imElEnd, imStr, imStrFmt } from './utils/im-dom';
+import { ImCache, imFor, imForEnd, imGet, imIf, imIfElse, imIfEnd, imSet, imState, inlineTypeId } from './utils/im-core';
+import { EL_H3, imElBegin, imElEnd, imStr, imStrFmt } from './utils/im-dom';
 
 
 export function imDebugger(
@@ -24,31 +25,22 @@ export function imDebugger(
         });
 
         imLayout(c, ROW); imGap(c, 5, PX); {
-            imLayout(c, BLOCK); imFlex(c); imButton(c); {
-                imStr(c, "Stop debugging");
-                if (elHasMouseDown(c, ctx.ev)) {
-                    ctx.isDebugging = false;
-                }
-            } imLayoutEnd(c);
+            if (imButtonIsClicked(c, ctx.ev, "Stop debugging")) {
+                ctx.isDebugging = false;
+            }
 
-            imLayout(c, BLOCK); imFlex(c); imButton(c); {
-                imStr(c, "Step");
-                if (elHasMouseDown(c, ctx.ev)) {
-                    const result = stepProgram(interpretResult);
-                    if (!result) {
-                        message.val = "Program complete! you can stop debugging now.";
-                    }
+            if (imButtonIsClicked(c, ctx.ev, "Step")) {
+                const result = stepProgram(interpretResult);
+                if (!result) {
+                    message.val = "Program complete! you can stop debugging now.";
                 }
-            } imLayoutEnd(c);
+            }
 
-            imLayout(c, BLOCK); imFlex(c); imButton(c); {
-                imStr(c, "Reset");
-                if (elHasMouseDown(c, ctx.ev)) {
-                    assert(ctx.lastParseResult !== undefined);
-                    startDebugging(ctx);
-                    message.val = "";
-                }
-            } imLayoutEnd(c);
+            if (imButtonIsClicked(c, ctx.ev, "Reset")) {
+                assert(ctx.lastParseResult !== undefined);
+                startDebugging(ctx);
+                message.val = "";
+            }
         } imLayoutEnd(c);
 
         if (imIf(c) && message.val) {
@@ -62,11 +54,9 @@ export function imDebugger(
         imLayout(c, COL); imFlex(c); {
             imLayout(c, COL); imFlex(c); {
                 if (imIf(c) && cs) {
-                    imLayout(c, BLOCK); {
-                        imElBegin(c, EL_H3); imStrFmt(c, cs.fn, getFunctionName); imElEnd(c, EL_H3);
+                    imElBegin(c, EL_H3); imStrFmt(c, cs.fn, getFunctionName); imElEnd(c, EL_H3);
 
-                        imFunctionInstructions(c, interpretResult, cs.code);
-                    } imLayoutEnd(c);
+                    imFunctionInstructions(c, interpretResult, cs.code);
                 } imIfEnd(c)
             } imLayoutEnd(c);
             imLayout(c, ROW); imFlex(c); {
@@ -167,7 +157,7 @@ function imProgramStack(
                     } else {
                         imIfElse(c);
                         imStr(c, "null");
-                    } imIfElse(c);
+                    } imIfEnd(c);
                 } imLayoutEnd(c);
             } imLayoutEnd(c);
         } imLayoutEnd(c);

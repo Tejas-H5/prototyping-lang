@@ -68,7 +68,6 @@ import { GlobalContext, rerun } from './state';
 import "./styling";
 import { cnApp, cssVars } from './styling';
 import { assert } from './utils/assert';
-import { cn } from './utils/cssb';
 import {
     ImCache,
     imFor,
@@ -97,6 +96,7 @@ import {
 } from "./utils/im-dom";
 import { max } from './utils/math-utils';
 import { isWhitespace } from './utils/text-utils';
+import { cn } from "./components/core/stylesheets";
 
 
 const UNANIMOUSLY_DECIDED_TAB_SIZE = 4;
@@ -333,7 +333,7 @@ function imSimpleTextInputBody(c: ImCache, ev: ImGlobalEventSystem, s: SimpleTex
                         const isSelectedChanged = imMemo(c, isSelected);
                         const isCursorChanged   = imMemo(c, isCursor);
                         if (isSelectedChanged || isCursorChanged) {
-                            elSetClass(c, cnApp.inverted, isSelected || isCursor);
+                            elSetClass(c, cn.inverted, isSelected || isCursor);
                         } 
 
                         const wsChanged = imMemo(c, ws);
@@ -532,7 +532,7 @@ function handleCodeEditorEvents(ev: ImGlobalEventSystem, s: CodeEditorState, tar
         if (eventSource.inCommandMode && eventSource.keyLower === "f") {
             eventSource._keyDownEvent.preventDefault();
             s.isFinding = true;
-            s.cursorBeforeFind = tb.itNewTempFrom(targetEditor.cursor);
+            s.cursorBeforeFind = { ...targetEditor.cursor };
         }
     }
 }
@@ -627,16 +627,18 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
         ctx.textCursorIdx = tb.itGetPos(editorState.cursor);
     } 
 
-    const container = imScrollContainerBegin(c, sc, COL); imRelative(c); 
-    imPadding(c, 10, PX, 10, PX, 10, PX, 10, PX); {
+    const container = imScrollContainerBegin(c, sc, COL); imRelative(c);  
+    imPadding(c, 10, PX, 10, PX, 10, PX, 10, PX); imCode(c); {
         if (isFirstishRender(c)) {
             elSetClass(c, cnApp.bgFocus);
             elSetStyle(c, "userSelect", "none");
             elSetStyle(c, "cursor", "text");
         }
 
+        const parseResultChanged = imMemo(c, lastParseResult);
+        
         let astTraverser; astTraverser = imGet(c, newResumeableAstTraverser);
-        if (imMemo(c, lastParseResult) || !astTraverser) {
+        if (parseResultChanged || !astTraverser) {
             if (lastParseResult) {
                 astTraverser = newResumeableAstTraverser(lastParseResult);
             } else {
@@ -662,217 +664,218 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
             let renderedLine = false;
             imFor(c); while (textEditorHasChars(editorState) || !renderedLine) {
                 renderedLine = true;
-                imKeyedBegin(c, lineIdx); {
-                    const line = imLayout(c, COL); {
-                        imLayout(c, COL); {
-                            imLayout(c, ROW); imFlex(c); {
-                                const lineChanged = imMemo(c, lineIdx);
-                                const lastMaxLineChanged = imMemo(c, s.lastMaxLine);
+                imKeyedBegin(c, lineIdx); 
+                const line = imLayout(c, COL); {
+                    imLayout(c, COL); {
+                        imLayout(c, ROW); imFlex(c); {
+                            const lineChanged = imMemo(c, lineIdx);
+                            const lastMaxLineChanged = imMemo(c, s.lastMaxLine);
 
-                                let lineText = imGet(c, String);
-                                if (lineChanged || lastMaxLineChanged || lineText === undefined) {
-                                    const numDigits = Math.ceil(Math.log10(s.lastMaxLine + 1));
-                                    lineText = lPad("" + lineIdx, numDigits) + " ";
-                                    imSet(c, lineText);
-                                }
-
-                                imLayout(c, ROW); imAlign(c); imJustify(c); {
-                                    imStr(c, lineText);
-                                } imLayoutEnd(c);
-
-                                imLine(c, LINE_VERTICAL, 5);
-
-                                imLayout(c, COL); imFlex(c); {
-                                    // Actual text line
-                                    imLayout(c, ROW); {
-                                        imFor(c); while (textEditorHasChars(editorState)) {
-                                            const actualC = textEditorGetNextChar(editorState);
-
-                                            let astNode: ProgramExpression | undefined;
-                                            if (astTraverser && lastParseResult) {
-                                                astNode = getAstNodeForTextPos(
-                                                    astTraverser,
-                                                    lastParseResult,
-                                                    pos,
-                                                );
-                                                pos++;
-                                            }
-
-                                            const ws = isWhitespace(actualC);
-                                            const char = getStringRepr(actualC, ws);
-
-                                            const textSpan = imElBegin(c, EL_SPAN); {
-                                                imStr(c, char);
-                                                handleTextEditorClickEventForChar(c, ctx.ev, editorState, editorState._renderCursor);
-
-                                                let isFindResult = false;
-                                                if (s.isFinding) {
-                                                    const i = editorState._renderCursor;
-                                                    for (const range of s.allFindResults) {
-                                                        if (range.start <= i && i <= range.end) {
-                                                            isFindResult = true;
-                                                        }
-                                                    }
-                                                }
-
-                                                const hasFocus = editorState.hasFocus || finderState.editorState.hasFocus;
-
-                                                const isSelected = hasFocus && textEditorCursorIsSelected(editorState, editorState._renderCursor);
-                                                const isCursor = hasFocus && tb.itEquals(editorState._renderCursor, editorState.cursor);
-                                                if (isCursor) {
-                                                    ctx.textCursorLine = lineIdx;
-                                                    editorState._cursorSpan = textSpan.root;
-                                                    editorState._cursorLine = lineIdx;
-                                                    editorState._hasCursorLine = true;
-                                                }
-                                                editorState._lastRenderedCharSpan = textSpan.root;
-
-                                                const isSelectedChanged   = imMemo(c, isSelected);
-                                                const isCursorChanged     = imMemo(c, isCursor);
-                                                const isFindResultChanged = imMemo(c, isFindResult);
-                                                if (isSelectedChanged || isCursorChanged || isFindResultChanged) {
-                                                    let bgCol = "";
-                                                    if (!elSetClass(c, cnApp.inverted, isSelected || isCursor)) {
-                                                        if (isFindResult) {
-                                                            bgCol = "#00F";
-                                                        }
-                                                    }
-                                                    elSetStyle(c, "backgroundColor", bgCol);
-                                                }
-
-                                                const wsChanged      = imMemo(c, ws);
-                                                const astNodeChanged = imMemo(c, astNode);
-                                                if (wsChanged || astNodeChanged) {
-                                                    let italic = false;
-                                                    let bold = false;
-                                                    let color = "";
-                                                    if (ws) {
-                                                        color = "#0000";
-                                                    } else {
-                                                        if (astNode) {
-                                                            if (astNode.t === T_IDENTIFIER) {
-                                                                if (astNode.parent !== null && astNode.parent.t === T_FN) {
-                                                                    // Funny, because now we don't know if it was the function name, or an argument passed into the function.
-                                                                    // TODO: identifier types
-                                                                    bold = true;
-                                                                } else {
-                                                                    italic = true;
-                                                                }
-                                                            } else if (
-                                                                astNode.t === T_FN ||
-                                                                astNode.t === T_BLOCK ||
-                                                                astNode.t === T_LIST_LITERAL ||
-                                                                astNode.t === T_VECTOR_LITERAL
-                                                            ) {
-                                                                bold = true;
-                                                            } else if (astNode.t === T_STRING_LITERAL) {
-                                                                color = "#F62";
-                                                            } else if (astNode.t === T_NUMBER_LITERAL) {
-                                                                color = "#00F";
-                                                            }
-                                                        } else {
-                                                            // whitespace/comment
-                                                            color = "#370";
-                                                        }
-                                                    }
-                                                    elSetStyle(c, "color", color);
-                                                    elSetStyle(c, "fontStyle", italic ? "italic" : "");
-                                                    elSetStyle(c, "fontWeight", bold ? "bold" : "");
-                                                }
-                                            } imElEnd(c, EL_SPAN);
-
-                                            if (actualC === "\n") {
-                                                break;
-                                            }
-                                        } imForEnd(c);
-
-                                        // flex element handles events for the entire newline
-                                        imLayout(c, BLOCK); imFlex(c); {
-                                            handleTextEditorClickEventForChar(c, ctx.ev, editorState, editorState._renderCursor);
-                                        } imLayoutEnd(c);
-                                    } imLayoutEnd(c);
-
-                                    // other stuff just below text
-                                    let numErrors = 0;
-
-                                    if (imIf(c) && lastInterpreterResult?.errors) {
-                                        imDiagnostics(c, lastInterpreterResult.errors, "#F00", lineIdx);
-                                        numErrors += lastInterpreterResult.errors.length;
-                                    } imIfEnd(c);
-
-                                    if (imIf(c) && lastParseResult?.warnings) {
-                                        imDiagnostics(c, lastParseResult.warnings, "#F00", lineIdx);
-                                        numErrors += lastParseResult.warnings.length;
-                                    } imIfEnd(c);
-
-                                    if (imIf(c) &&
-                                        // if this is true, Error: identifier isnt set will prevent this from opening, which is bad.
-                                        // we should reconsider even showing that error.
-                                        // numErrors === 0 && 
-                                        lineIdx === ctx.textCursorLine &&
-                                        !hasSelection
-                                    ) {
-                                        const pos = ctx.textCursorIdx;
-                                        const lastIdentifier = parseIdentifierBackwardsFromPoint(state.text, pos - 1);
-                                        imAutocomplete(c, lastIdentifier);
-                                    } imIfEnd(c);
-                                } imLayoutEnd(c);
-                            } imLayoutEnd(c);
-                        } imLayoutEnd(c);
-
-                        // figures
-                        imLayout(c, COL); imNotCode(c); {
-                            if (isFirstishRender(c)) {
-                                elSetStyle(c, "borderRadius", "10px");
-                                elSetStyle(c, "overflow", "clip");
+                            let lineText = imGet(c, String);
+                            if (lineChanged || lastMaxLineChanged || lineText === undefined) {
+                                const numDigits = Math.ceil(Math.log10(s.lastMaxLine + 1));
+                                lineText = lPad("" + lineIdx, numDigits) + " ";
+                                imSet(c, lineText);
                             }
 
-                            const outputs = lastInterpreterResult?.outputs;
-                            const inputs = outputs?.uiInputsPerLine?.get(lineIdx);
-                            if (imIf(c) && inputs) {
-                                imFor(c); for (const ui of inputs) {
-                                    imLayout(c, COL); imGap(c, 5, PX); imPadding(c, 5, PX, 5, PX, 5, PX, 5, PX); {
-                                        imSwitch(c, ui.t); switch (ui.t) {
-                                            case UI_INPUT_SLIDER: {
-                                                imLayout(c, ROW); imGap(c, 5, PX); {
-                                                    imLayout(c, BLOCK); imStr(c, ui.name); imLayoutEnd(c);
-                                                    imLayout(c, BLOCK); imCode(c); imStr(c, ui.value + ""); imLayoutEnd(c);
-                                                } imLayoutEnd(c);
-                                                imLayout(c, ROW); imSize(c, 0, NA, 1, EM); {
-                                                    ui.value = imSliderInput(c, ctx.ev, ui.start, ui.end, ui.step, ui.value);
-                                                    if (imMemo(c, ui.value)) {
-                                                        rerun(ctx);
+                            imLayout(c, ROW); imAlign(c); imJustify(c); {
+                                imStr(c, lineText);
+                            } imLayoutEnd(c);
+
+                            imLine(c, LINE_VERTICAL, 5);
+
+                            imLayout(c, COL); imFlex(c); {
+                                // Actual text line
+                                imLayout(c, ROW); {
+                                    imFor(c); while (textEditorHasChars(editorState)) {
+                                        const actualC = textEditorGetNextChar(editorState);
+
+                                        let astNode: ProgramExpression | undefined;
+                                        if (astTraverser && lastParseResult) {
+                                            astNode = getAstNodeForTextPos(
+                                                astTraverser,
+                                                lastParseResult,
+                                                pos,
+                                            );
+                                            pos++;
+                                        }
+
+                                        const ws = isWhitespace(actualC);
+                                        const char = getStringRepr(actualC, ws);
+
+                                        const textSpan = imElBegin(c, EL_SPAN); {
+                                            imStr(c, char);
+                                            handleTextEditorClickEventForChar(c, ctx.ev, editorState, editorState._renderCursor);
+
+                                            let isFindResult = false;
+                                            if (s.isFinding) {
+                                                const i = editorState._renderCursor;
+                                                for (const range of s.allFindResults) {
+                                                    if (range.start <= i && i <= range.end) {
+                                                        isFindResult = true;
                                                     }
-                                                } imLayoutEnd(c);
-                                            } break;
-                                            default: {
-                                                throw new Error("Unhandled UI input type");
+                                                }
                                             }
-                                        } imSwitchEnd(c);
+
+                                            const hasFocus = editorState.hasFocus || finderState.editorState.hasFocus;
+
+                                            const isSelected = hasFocus && textEditorCursorIsSelected(editorState, editorState._renderCursor);
+                                            const isCursor = hasFocus && tb.itEquals(editorState._renderCursor, editorState.cursor);
+                                            if (isCursor) {
+                                                ctx.textCursorLine = lineIdx;
+                                                editorState._cursorSpan = textSpan.root;
+                                                editorState._cursorLine = lineIdx;
+                                                editorState._hasCursorLine = true;
+                                            }
+                                            editorState._lastRenderedCharSpan = textSpan.root;
+
+                                            const isSelectedChanged = imMemo(c, isSelected);
+                                            const isCursorChanged = imMemo(c, isCursor);
+                                            const isFindResultChanged = imMemo(c, isFindResult);
+                                            if (isSelectedChanged || isCursorChanged || isFindResultChanged) {
+                                                let bgCol = "";
+                                                if (!elSetClass(c, cn.inverted, isSelected || isCursor)) {
+                                                    if (isFindResult) {
+                                                        bgCol = "#00F";
+                                                    }
+                                                }
+                                                elSetStyle(c, "backgroundColor", bgCol);
+                                            }
+
+                                            const wsChanged = imMemo(c, ws);
+                                            const astNodeChanged = imMemo(c, astNode);
+                                            if (wsChanged || astNodeChanged) {
+                                                let italic = false;
+                                                let bold = false;
+                                                let color = "";
+                                                if (ws) {
+                                                    color = "#0000";
+                                                } else {
+                                                    if (astNode) {
+                                                        if (astNode.t === T_IDENTIFIER) {
+                                                            if (astNode.parent !== null && astNode.parent.t === T_FN) {
+                                                                // Funny, because now we don't know if it was the function name, or an argument passed into the function.
+                                                                // TODO: identifier types
+                                                                bold = true;
+                                                            } else {
+                                                                italic = true;
+                                                            }
+                                                        } else if (
+                                                            astNode.t === T_FN ||
+                                                            astNode.t === T_BLOCK ||
+                                                            astNode.t === T_LIST_LITERAL ||
+                                                            astNode.t === T_VECTOR_LITERAL
+                                                        ) {
+                                                            bold = true;
+                                                        } else if (astNode.t === T_STRING_LITERAL) {
+                                                            color = "#F62";
+                                                        } else if (astNode.t === T_NUMBER_LITERAL) {
+                                                            color = "#00F";
+                                                        }
+                                                    } else {
+                                                        // whitespace/comment
+                                                        color = "#370";
+                                                    }
+                                                }
+                                                elSetStyle(c, "color", color);
+                                                elSetStyle(c, "fontStyle", italic ? "italic" : "");
+                                                elSetStyle(c, "fontWeight", bold ? "bold" : "");
+                                            }
+                                        } imElEnd(c, EL_SPAN);
+
+                                        // break statement needs to be at the end of the loop
+                                        if (actualC === "\n") {
+                                            break;
+                                        }
+                                    } imForEnd(c);
+
+                                    // flex element handles events for the entire newline
+                                    imLayout(c, BLOCK); imFlex(c); {
+                                        handleTextEditorClickEventForChar(c, ctx.ev, editorState, editorState._renderCursor);
                                     } imLayoutEnd(c);
-                                } imForEnd(c);
-                            } imIfEnd(c);
-
-                            const thisLineOutputs = lastInterpreterResult?.flushedOutputs?.get(lineIdx);
-                            if (imIf(c) && thisLineOutputs && lastInterpreterResult) {
-                                imLayout(c, BLOCK); imPadding(c, 5, PX, 5, PX, 5, PX, 5, PX); {
-                                    if (isFirstishRender(c)) {
-                                        elSetStyle(c, "maxWidth", "60vw");
-                                    }
-
-                                    imProgramOutputs(c, ctx, lastInterpreterResult, thisLineOutputs);
                                 } imLayoutEnd(c);
-                            } imIfEnd(c);
+
+                                // other stuff just below text
+                                let numErrors = 0;
+
+                                if (imIf(c) && lastInterpreterResult?.errors) {
+                                    imDiagnostics(c, lastInterpreterResult.errors, "#F00", lineIdx);
+                                    numErrors += lastInterpreterResult.errors.length;
+                                } imIfEnd(c);
+
+                                if (imIf(c) && lastParseResult?.warnings) {
+                                    imDiagnostics(c, lastParseResult.warnings, "#F00", lineIdx);
+                                    numErrors += lastParseResult.warnings.length;
+                                } imIfEnd(c);
+
+                                if (imIf(c) &&
+                                    // if this is true, Error: identifier isnt set will prevent this from opening, which is bad.
+                                    // we should reconsider even showing that error.
+                                    // numErrors === 0 && 
+                                    lineIdx === ctx.textCursorLine &&
+                                    !hasSelection
+                                ) {
+                                    const pos = ctx.textCursorIdx;
+                                    const lastIdentifier = parseIdentifierBackwardsFromPoint(state.text, pos - 1);
+                                    imAutocomplete(c, lastIdentifier);
+                                } imIfEnd(c);
+                            } imLayoutEnd(c);
                         } imLayoutEnd(c);
                     } imLayoutEnd(c);
 
-                    const rect = line.getBoundingClientRect();
-                    if (isPartiallyOffscreen(rect)) {
-                        break;
-                    }
+                    // figures
+                    imLayout(c, COL); imNotCode(c); {
+                        if (isFirstishRender(c)) {
+                            elSetStyle(c, "borderRadius", "10px");
+                            elSetStyle(c, "overflow", "clip");
+                        }
 
-                    lineIdx++;
-                } imKeyedEnd(c);
+                        const outputs = lastInterpreterResult?.outputs;
+                        const inputs = outputs?.uiInputsPerLine?.get(lineIdx);
+                        if (imIf(c) && inputs) {
+                            imFor(c); for (const ui of inputs) {
+                                imLayout(c, COL); imGap(c, 5, PX); imPadding(c, 5, PX, 5, PX, 5, PX, 5, PX); {
+                                    imSwitch(c, ui.t); switch (ui.t) {
+                                        case UI_INPUT_SLIDER: {
+                                            imLayout(c, ROW); imGap(c, 5, PX); {
+                                                imLayout(c, BLOCK); imStr(c, ui.name); imLayoutEnd(c);
+                                                imLayout(c, BLOCK); imCode(c); imStr(c, ui.value + ""); imLayoutEnd(c);
+                                            } imLayoutEnd(c);
+                                            imLayout(c, ROW); imSize(c, 0, NA, 1, EM); {
+                                                ui.value = imSliderInput(c, ctx.ev, ui.start, ui.end, ui.step, ui.value);
+                                                if (imMemo(c, ui.value)) {
+                                                    rerun(ctx);
+                                                }
+                                            } imLayoutEnd(c);
+                                        } break;
+                                        default: {
+                                            throw new Error("Unhandled UI input type");
+                                        }
+                                    } imSwitchEnd(c);
+                                } imLayoutEnd(c);
+                            } imForEnd(c);
+                        } imIfEnd(c);
+
+                        const thisLineOutputs = lastInterpreterResult?.flushedOutputs?.get(lineIdx);
+                        if (imIf(c) && thisLineOutputs && lastInterpreterResult) {
+                            imLayout(c, BLOCK); imPadding(c, 5, PX, 5, PX, 5, PX, 5, PX); {
+                                if (isFirstishRender(c)) {
+                                    elSetStyle(c, "maxWidth", "60vw");
+                                }
+
+                                imProgramOutputs(c, ctx, lastInterpreterResult, thisLineOutputs);
+                            } imLayoutEnd(c);
+                        } imIfEnd(c);
+                    } imLayoutEnd(c);
+                } imLayoutEnd(c);
+                imKeyedEnd(c);
+
+                // break statement needs to be at the end of the loop
+                const rect = line.getBoundingClientRect();
+                if (isPartiallyOffscreen(rect)) {
+                    break;
+                }
+                lineIdx++;
             } imForEnd(c);
 
             s.lastMaxLine = lineIdx + 1;

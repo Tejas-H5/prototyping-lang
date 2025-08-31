@@ -1,4 +1,4 @@
-import { cn } from "src/utils/cssb";
+import { imButtonIsClicked } from './app-components/im-button';
 import { imAppCodeEditor as imCodeEditor } from './code-editor';
 import { imAppCodeOutput } from "./code-output";
 import {
@@ -6,7 +6,6 @@ import {
     COL,
     imAbsolute,
     imAlign,
-    imButton,
     imFixed,
     imFlex,
     imGap,
@@ -20,11 +19,13 @@ import {
     PX,
     ROW
 } from "./components/core/layout";
-import { imDebugger as imDebugger } from './debugger';
+import { cn } from './components/core/stylesheets';
+import { FpsCounterState, imExtraDiagnosticInfo, imFpsCounterSimple } from "./components/fps-counter";
+import { imDebugger } from './debugger';
 import { parse } from "./program-parser";
 import { GlobalContext, newGlobalContext, rerun, saveState } from './state';
 import "./styling";
-import { cnApp } from './styling';
+import { imTestHarness } from "./test-harness";
 import { assert } from './utils/assert';
 import {
     getDeltaTimeSeconds,
@@ -45,7 +46,6 @@ import {
 } from "./utils/im-core";
 import {
     EL_H1,
-    elHasMouseDown,
     elSetClass,
     elSetStyle,
     imElBegin,
@@ -54,8 +54,6 @@ import {
     imGlobalEventSystemEnd,
     imStr
 } from "./utils/im-dom";
-import { imTestHarness } from "./test-harness";
-import { FpsCounterState } from "./components/fps-counter";
 
 let saveTimeout = 0;
 let savingDisabled = false;
@@ -78,7 +76,7 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
     let errorState; errorState = imGet(c, inlineTypeId(imApp));
     if (!errorState) errorState = imSet(c, {
         errors: new Map<string, number>(),
-        dismissed: true,
+        dismissed: false,
         totalErrors: 0,
     });
 
@@ -102,7 +100,7 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
 
     imLayout(c, BLOCK); imFixed(c, 0, PX, 0, PX, 0, PX, 0, PX); {
         if (isFirstishRender(c)) {
-            elSetClass(c, cnApp.normalFont);
+            elSetClass(c, cn.normalFont);
             elSetClass(c, cn.absoluteFill);
         }
 
@@ -165,7 +163,7 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
                 }
 
                 imLayout(c, ROW); imSize(c, 0, NA, 100, PERCENT); {
-                    imLayout(c, BLOCK); imFlex(c); {
+                    imLayout(c, COL); imFlex(c); {
                         imCodeEditor(c, ctx);
                     } imLayoutEnd(c);
 
@@ -189,10 +187,19 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
                         elSetStyle(c, "height", "2em");
                     }
 
-                    imStr(c, saveTimeout ? "Saving..." : "Saved");
+                    if (imIf(c) && saveTimeout) {
+                        imStr(c, saveTimeout ? "Saving..." : "Saved");
+                    } else {
+                        imIfElse(c);
+
+                        imLayout(c, BLOCK); {
+                            imFpsCounterSimple(c, fps);
+                            imExtraDiagnosticInfo(c);
+                        } imLayoutEnd(c);
+                    } imIfEnd(c);
                 } imLayoutEnd(c);
             } else {
-                const { errors, dismissed, totalErrors } = errorState;
+                const { errors, totalErrors } = errorState;
 
                 assert(errors.size !== 0);
 
@@ -217,10 +224,9 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
 
                     imLayout(c, BLOCK); {
                         if (imIf(c) && totalErrors && totalErrors < 10) {
-                            imLayout(c, BLOCK); imButton(c); {
-                                imStr(c, "Dismiss [Warning - may lead to data corruption]");
-                                if (elHasMouseDown(c, ctx.ev)) errorState.dismissed = false;
-                            } imLayoutEnd(c);
+                            if (imButtonIsClicked(c, ctx.ev, "Dismiss [Warning - may lead to data corruption]")) {
+                                errorState.dismissed = false;
+                            }
                         } else {
                             imIfElse(c);
                             imStr(c, "This button was a bad idea ...");
@@ -234,7 +240,6 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
                     imTestHarness(c, ctx.ev);
                 } imIfEnd(c);
             }
-
         } catch (e) {
             imTryCatch(c, tryState, e);
 

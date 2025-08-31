@@ -1,5 +1,6 @@
+import { imButtonIsClicked } from "./app-components/im-button";
 import { imCode } from "./app-styling";
-import { BLOCK, COL, imAlign, imBg, imButton, imFixed, imGap, imLayout, imLayoutEnd, imPadding, imPre, imRelative, imSize, NA, PERCENT, PX, ROW } from "./components/core/layout";
+import { BLOCK, COL, imAlign, imBg, imFixed, imGap, imLayout, imLayoutEnd, imPadding, imPre, imRelative, imSize, NA, PERCENT, PX, ROW } from "./components/core/layout";
 import { imScrollContainerBegin, imScrollContainerEnd, newScrollContainer } from "./components/scroll-container";
 import { cssVars } from "./styling";
 import { ImCache, imFor, imForEnd, imIf, imIfElse, imIfEnd, imMemo, imState, imTry, imTryCatch, imTryEnd, isFirstishRender } from "./utils/im-core";
@@ -69,34 +70,22 @@ export function imTestHarness(c: ImCache, ev: ImGlobalEventSystem) {
                 imLayout(c, ROW); imGap(c, 5, PX); {
                     imElBegin(c, EL_H3); imStr(c, "Tests"); imElEnd(c, EL_H3);
 
-                    imLayout(c, BLOCK); imButton(c); {
-                        imStr(c, "Run failed");
-
-                        if (elHasMouseDown(c, ev)) {
-                            for (const test of s.tests) {
-                                if (test.error !== null) runTest(test);
-                            }
+                    if (imButtonIsClicked(c, ev, "Run failed")) {
+                        for (const test of s.tests) {
+                            if (test.error !== null) runTest(test);
                         }
-                    } imLayoutEnd(c);
+                    }
 
-                    imLayout(c, BLOCK); imButton(c); {
-                        imStr(c, "Run all staggered");
+                    if (imButtonIsClicked(c, ev, "Run all staggered")) {
+                        s.runAllStaggered.running = true;
+                        s.runAllStaggered.idx = 0;
+                    }
 
-                        if (elHasMouseDown(c, ev)) {
-                            s.runAllStaggered.running = true;
-                            s.runAllStaggered.idx = 0;
+                    if (imButtonIsClicked(c, ev, "Run all")) {
+                        for (const test of s.tests) {
+                            runTest(test);
                         }
-                    } imLayoutEnd(c);
-
-                    imLayout(c, BLOCK); imButton(c); {
-                        imStr(c, "Run all");
-
-                        if (elHasMouseDown(c, ev)) {
-                            for (const test of s.tests) {
-                                runTest(test);
-                            }
-                        }
-                    } imLayoutEnd(c);
+                    }
                 } imLayoutEnd(c);
 
 

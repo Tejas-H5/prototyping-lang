@@ -1,3 +1,4 @@
+import { imButton, imButtonIsClicked } from './app-components/im-button';
 import { imCode } from './app-styling';
 import {
     BLOCK,
@@ -6,7 +7,6 @@ import {
     imAlign,
     imAspectRatio,
     imBg,
-    imButton,
     imFixed,
     imFlex,
     imGap,
@@ -24,7 +24,7 @@ import {
     ROW
 } from './components/core/layout';
 import { imLine, LINE_VERTICAL } from './components/im-line';
-import { imScrollContainerBegin, newScrollContainer } from './components/scroll-container';
+import { imScrollContainerBegin, imScrollContainerEnd, newScrollContainer } from './components/scroll-container';
 import { CODE_EXAMPLES } from './examples';
 import {
     evaluateFunctionWithinProgramWithArgs,
@@ -132,12 +132,9 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
             }
         } imLayoutEnd(c);
 
-        imLayout(c, BLOCK); {
-            imStr(c, "Start debugging");
-            if (elHasMouseDown(c, ctx.ev)) {
-                startDebugging(ctx);
-            }
-        } imLayoutEnd(c);
+        if (imButtonIsClicked(c, ctx.ev, "Start debugging")) {
+            startDebugging(ctx);
+        }
 
         imLayout(c, BLOCK); imButton(c, ctx.state.showParserOutput); {
             imStr(c, "Show AST");
@@ -239,7 +236,7 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
             imLayout(c, BLOCK); {
                 imStr(c, "Program hasn't been run yet");
             } imLayoutEnd(c);
-        } imIfElse(c);
+        } imIfEnd(c);
 
         if (imIf(c) && ctx.state.text === "") {
             // NOTE: might not be the best workflow. i.e maybe we want to be able to see the examples while we're writing things.
@@ -259,7 +256,7 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
                 } imForEnd(c);
             } imLayoutEnd(c);
         } imIfEnd(c);
-    } imLayoutEnd(c);
+    } imScrollContainerEnd(c);
 }
 
 function imParserOutputRow(c: ImCache, title: string, type: string, depth: number, code?: string) {
@@ -537,47 +534,45 @@ export function imFunctionInstructions(
     interpretResult: ProgramInterpretResult,
     { steps }: ExecutionSteps
 ) {
-    imLayout(c, COL); imFlex(c); {
-        const sc = imState(c, newScrollContainer);
+    const sc = imState(c, newScrollContainer);
 
-        const scrollContainer = imScrollContainerBegin(c, sc); {
-            let rCurrent: HTMLElement | undefined;
+    const scrollContainer = imScrollContainerBegin(c, sc); {
+        let rCurrent: HTMLElement | undefined;
 
-            imLayout(c, BLOCK); imCode(c); {
-                if (imIf(c) && steps.length > 0) {
-                    imFor(c); for (let i = 0; i < steps.length; i++) {
-                        const step = steps[i];
+        imLayout(c, BLOCK); imCode(c); {
+            if (imIf(c) && steps.length > 0) {
+                imFor(c); for (let i = 0; i < steps.length; i++) {
+                    const step = steps[i];
 
-                        const call = getCurrentCallstack(interpretResult);
-                        const isCurrent = call?.code?.steps === steps
-                            && i === call.i;
+                    const call = getCurrentCallstack(interpretResult);
+                    const isCurrent = call?.code?.steps === steps
+                        && i === call.i;
 
-                        const currentStepDiv = imLayout(c, BLOCK); {
-                            imStr(c, i + " | ");
+                    const currentStepDiv = imLayout(c, BLOCK); {
+                        imStr(c, i + " | ");
 
-                            imExecutionStep(c, step);
+                        imExecutionStep(c, step);
 
-                            if (imIf(c) && isCurrent) {
-                                imStr(c, " <----");
-                            } imIfEnd(c);
-                        } imLayoutEnd(c);
-
-                        if (isCurrent) {
-                            rCurrent = currentStepDiv;
-                        }
-                    } imForEnd(c);
-                } else {
-                    imIfEnd(c);
-                    imLayout(c, BLOCK); {
-                        imStr(c, "no instructions present");
+                        if (imIf(c) && isCurrent) {
+                            imStr(c, " <----");
+                        } imIfEnd(c);
                     } imLayoutEnd(c);
-                } imIfEnd(c);
-            } imLayoutEnd(c);
 
-            if (rCurrent) {
-                scrollIntoViewVH(scrollContainer, rCurrent, 0.5);
-            }
+                    if (isCurrent) {
+                        rCurrent = currentStepDiv;
+                    }
+                } imForEnd(c);
+            } else {
+                imIfEnd(c);
+                imLayout(c, BLOCK); {
+                    imStr(c, "no instructions present");
+                } imLayoutEnd(c);
+            } imIfEnd(c);
         } imLayoutEnd(c);
+
+        if (rCurrent) {
+            scrollIntoViewVH(scrollContainer, rCurrent, 0.5);
+        }
     } imLayoutEnd(c);
 }
 
@@ -1379,19 +1374,17 @@ function imMaximizeableContainerEnd(c: ImCache) {
 function imMaximizeItemButton(c: ImCache, ctx: GlobalContext, item: object) {
     const isMaximized = currentMaximizedItem === item;
 
-    imLayout(c, BLOCK); imButton(c); {
-        imStr(c, isMaximized ? "minimize" : "maximize");
-
+    if (imButtonIsClicked(c, ctx.ev, isMaximized ? "minimize" : "maximize")) {
         if (isMaximized) {
-            if (ctx.input.keyboard.escape || elHasMouseDown(c, ctx.ev)) {
-                currentMaximizedItem = null;
-            }
+            currentMaximizedItem = null;
         } else {
-            if (elHasMouseDown(c, ctx.ev)) {
-                currentMaximizedItem = item;
-            }
+            currentMaximizedItem = item;
         }
-    } imLayoutEnd(c);
+    }
+
+    if (ctx.input.keyboard.escape) {
+        currentMaximizedItem = null;
+    }
 }
 
 
@@ -1403,12 +1396,9 @@ function imPlot(c: ImCache, ctx: GlobalContext, plot: ProgramPlotOutput, program
     imMaximizeableContainerBegin(c, plot); {
         imLayout(c, COL); imBg(c, cssVars.bg); imFlex(c); imGap(c, 5, PX); {
             imLayout(c, ROW); imGap(c, 5, PX); {
-                imLayout(c, BLOCK); imButton(c, plotState.overlay); {
-                    imStr(c, "Overlays");
-                    if (elHasMouseDown(c, ctx.ev)) {
-                        plotState.overlay = !plotState.overlay;
-                    }
-                } imLayoutEnd(c);
+                if (imButtonIsClicked(c, ctx.ev, "Overlays")) {
+                    plotState.overlay = !plotState.overlay;
+                }
 
                 imLayout(c, BLOCK); imButton(c, plotState.overlay); {
                     imStr(c, "Autofit");

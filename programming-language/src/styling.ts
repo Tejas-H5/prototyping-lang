@@ -61,23 +61,16 @@ export const cnApp = {
 ${normalStyle}
 }`]),
 
-    mediumFont: cssb.cn("mediumFont", [` { font-size: ${cssVars.mediumText}; }`]),
-    normalFont: cssb.cn("normalFont", [` { font-size: ${cssVars.normalText}; }`]),
-    smallFont: cssb.cn("smallFont", [` { font-size: ${cssVars.smallText}; }`]),
-
     padded: cssb.cn("padded", [` { padding: 5px }`]),
 
     defocusedText: cssb.cn("defocusedText", [` { color: ${cssVars.mg}; }`]),
     bgFocus: cssb.cn("bgFocus", [` { background-color: ${cssVars.bg2}; }`]),
-    inverted: cssb.cn("inverted", [` { color: ${cssVars.bg} ; background: ${cssVars.fg}; }`]),
 
     border1Solid: cssb.cn("border1Solid", [`{ border: 1px solid ${cssVars.fg}; }`]),
 
     gap5: cssb.cn("gap5", [` { gap: 5px; }`]),
 
-    code: cssb.cn("code", [` { font-family: Source Code Pro, monospace; }`]),
-    bg2: cssb.cn("bg2", [` { background-color: ${cssVars.bg2}; }`]),
-    bg: cssb.cn("bg", [` { background-color: ${cssVars.bg}; }`]),
+    code: cssb.cn("code", [` { font-family: "Source Code Pro", monospace; }`]),
     translucent: cssb.cn("translucent", [` { background-color: ${cssVars.translucent}; }`]),
 
     bold: cssb.cn("bold", [` { font-weight: bold; }`]),
