@@ -2,7 +2,7 @@ import { BLOCK, DisplayType, imLayout, imLayoutEnd } from "src/components/core/l
 import { cssVars } from "src/styling";
 import { newCssBuilder } from "src/utils/cssb";
 import { ImCache, imMemo, isFirstishRender } from "src/utils/im-core";
-import { elHasMouseDown, elSetClass, ImGlobalEventSystem, imStr } from "src/utils/im-dom";
+import { elHasMousePress, elSetClass, ImGlobalEventSystem, imStr } from "src/utils/im-dom";
 
 const cssb = newCssBuilder();
 
@@ -25,7 +25,7 @@ export function imButton(c: ImCache, toggled = false) {
 }
 
 export function imButtonIsClicked(
-    c: ImCache, ev: ImGlobalEventSystem,
+    c: ImCache, 
     text: string,
     toggled: boolean = false,
     type: DisplayType = BLOCK
@@ -34,7 +34,7 @@ export function imButtonIsClicked(
 
     imLayout(c, type); imButton(c, toggled); {
         imStr(c, text);
-        result = elHasMouseDown(c, ev);
+        result = elHasMousePress(c);
     } imLayoutEnd(c);
 
     return result;

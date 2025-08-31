@@ -1577,73 +1577,36 @@ export function newResumeableAstTraverser(parseResult: ProgramParseResult) {
     return traversalStart;
 }
 
-let safety = 0;
 export function getAstNodeForTextPos(
-    traversalStart: ResumeableAstTraverser, 
     parseResult: ProgramParseResult,
     textPos: number
 ): ProgramExpression | undefined {
-    safety = 0;
-
-    const stack = traversalStart.stack;
-    while (stack.length > 0) {
-        if (safety++ > 100000) {
-            throw new Error("Bruh");
+    for (let i = 0; i < parseResult.statements.length; i++) {
+        const statement = parseResult.statements[i];
+        if (statement.start.i <= textPos && textPos <= statement.end.i) {
+            return getAstNodeForTextPosRecursive(statement, textPos);
         }
-
-        const frame = stack[stack.length - 1];;
-        const expr = frame[1];
-
-        let i = frame[0];
-        let found = false;
-        while (i < expr.children.length) {
-            if (safety++ > 100000) {
-                throw new Error("Bruh");
-            }
-
-            const child = expr.children[i];
-
-            if (textPos < child.start.i) {
-                // yield the recursion here, don't increment the frame index
-                break;
-            }
-
-            if (textPos < child.end.i) {
-                stack.push([0, child]);
-                found = true;
-                break;
-            }
-
-            i++;
-        }
-        frame[0] = i;
-
-        if (found) {
-            continue;
-        }
-
-        const result = frame[1];
-
-        assert(i <= expr.children.length);
-        if (i === expr.children.length) {
-            stack.pop();
-            if (stack.length === 0) {
-                traversalStart.statementIdx++;
-                if (traversalStart.statementIdx < parseResult.statements.length) {
-                    stack.push([
-                        0,
-                        parseResult.statements[traversalStart.statementIdx]
-                    ]);
-                }
-            }
-        }
-
-        if (result.start.i <= textPos && textPos <= result.end.i) {
-            return result;
-        }
-
-        break;
+        if (statement.start.i > textPos) break;
     }
 
-    return;
+    return undefined;
 }
+
+function getAstNodeForTextPosRecursive(expr: ProgramExpression, textPos: number) {
+    if (expr.children.length === 0) {
+        return expr;
+    }
+
+    for (let i = 0; i < expr.children.length; i++) {
+        const child = expr.children[i];
+        if (child.start.i <= textPos && textPos <= child.end.i) {
+            return getAstNodeForTextPosRecursive(child, textPos);
+        }
+        if (child.start.i > textPos) break;
+    }
+
+    return undefined;
+}
+
+
+

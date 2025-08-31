@@ -1,17 +1,22 @@
 import { cssVars } from 'src/styling';
-import { ImCache, imFor, imForEnd, imMemo, isFirstishRender } from 'src/utils/im-core';
-import { elHasMouseOver, elSetStyle, ImGlobalEventSystem, imTrackSize } from 'src/utils/im-dom';
+import { ImCache, imFor, imForEnd, imMemo, imState, isFirstishRender } from 'src/utils/im-core';
+import { elHasMouseOver, elSetStyle, getGlobalEventSystem, ImGlobalEventSystem, imTrackSize } from 'src/utils/im-dom';
 import { clamp, inverseLerp, lerp } from 'src/utils/math-utils';
 import { BLOCK, imLayout, imLayoutEnd } from './core/layout';
 
 const MIN_STEP = 0.0001;
 
+function newSliderState() {
+    return { startedDragging: false, }
+}
+
 export function imSliderInput(
     c: ImCache,
-    ev: ImGlobalEventSystem,
     start: number, end: number, step: number | null, 
     value: number = start,
 ): number {
+    const s = imState(c, newSliderState);
+
     if (end < start) {
         [start, end] = [end, start];
     }
@@ -80,8 +85,17 @@ export function imSliderInput(
             }
         } imLayoutEnd(c);
 
-        const { mouse } = ev;
-        if (mouse.leftMouseButton && elHasMouseOver(c, ev)) {
+        const { mouse }  = getGlobalEventSystem();
+
+        if (imMemo(c, mouse.leftMouseButton)) {
+            if (elHasMouseOver(c, sliderBody) && mouse.leftMouseButton) {
+                s.startedDragging = true;
+            } else {
+                s.startedDragging = false;
+            }
+        }
+
+        if (mouse.leftMouseButton && elHasMouseOver(c)) {
             const rect = sliderBody.getBoundingClientRect();
 
             const x0 = rect.left + sliderHandleSize / 2;

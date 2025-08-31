@@ -25,18 +25,18 @@ export function imDebugger(
         });
 
         imLayout(c, ROW); imGap(c, 5, PX); {
-            if (imButtonIsClicked(c, ctx.ev, "Stop debugging")) {
+            if (imButtonIsClicked(c, "Stop debugging")) {
                 ctx.isDebugging = false;
             }
 
-            if (imButtonIsClicked(c, ctx.ev, "Step")) {
+            if (imButtonIsClicked(c, "Step")) {
                 const result = stepProgram(interpretResult);
                 if (!result) {
                     message.val = "Program complete! you can stop debugging now.";
                 }
             }
 
-            if (imButtonIsClicked(c, ctx.ev, "Reset")) {
+            if (imButtonIsClicked(c, "Reset")) {
                 assert(ctx.lastParseResult !== undefined);
                 startDebugging(ctx);
                 message.val = "";

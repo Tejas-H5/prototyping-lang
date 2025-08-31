@@ -1354,12 +1354,12 @@ export function getBuiltinFunctionsMap() {
                 if (val.t !== T_RESULT_MATRIX) {
                     // if only we could get the position of this value's expression.
                     // probably if we made a static type system, it would be easier to report this error in the right place.
-                    addError(program, step, "Expected every element in a list must be a vector");
+                    addError(program, step, "Expected every element in a list to be a vector");
                     return;
                 }
 
                 if (val.val.shape[0] < 2) {
-                    addError(program, step, "Expected every element in a list must atl least be a vector2");
+                    addError(program, step, "Expected every element in a list to at least be a Vector2");
                     return;
                 }
 

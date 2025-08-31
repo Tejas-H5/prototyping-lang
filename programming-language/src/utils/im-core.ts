@@ -3,8 +3,8 @@
 import { assert } from "src/utils/assert";
 
 // Conventions
-//  - All methods that call `imGet`, or call some other method that eventually calls `imGet` should be prefixed with 'im'.
-//    Conversely, methods that don't do so, should NOT be prefixed with 'im'.
+//  - All methods that call `imGet` at some point in their entire execution or plan on doing it should be prefixed with 'im'.
+//    Conversely, methods that don't do so and will never do so, should NOT be prefixed with 'im'.
 //    This allows developers (and in the future, static analysis tools) to know that this method can't be rendered conditionally, or
 //    out of order, similar to how React hooks work. This is really the only convention I would recommend you actually follow.
 //
@@ -770,4 +770,61 @@ export function imTryEnd(c: ImCache, tryState: TryState) {
 
 export function getDeltaTimeSeconds(c: ImCache): number {
     return c[CACHE_ANIMATION_DELTA_TIME_SECONDS];
+}
+
+/**
+ * Sometimes, you'll need a global state stack, so that you have access to some state.
+ * ```ts
+ *
+ * globalStateStackPush(gssThing, thing); {
+ *      ...
+ *      // can be arbitrarily deep inside the component
+ *      const thing = globalStateStackGet(gssThing);
+ *
+ *      ...
+ * } globalStateStackPop(gssThing);
+ * ```ts
+ *
+ * 99% of the time, this pattern is a mistake that obfuscates and overcomplicates the code, 
+ * and you should just pass `thing` as an additional function parameter.
+ * Here is a decision tree you can use to decide whether to use this pattern or not:
+ *
+ *                                      | I need this state everywhere,    | I infrequently need this value, but the requirement can arise 
+ *                                      | and I make sure to pass it as    | naturally somewhere deep node of the component, and I have
+ *                                      | a method param everywhere anyway | to spend a bunch of time adding an extra function argument 
+ *                                      |                                  | everywhere when it does.
+ * ----------------------------------------------------------------------------------------------------------------------------
+ *  This state is related to my app's   | Don't use a global state stack   | Don't use a global state stack 
+ *  domain model                        |                                  |
+ * ----------------------------------------------------------------------------------------------------------------------------
+ *  This state is related to auxilary   | Don't use a global state stack   | Consider using a global state stack
+ *  functions like input events         |                                  |
+ * ----------------------------------------------------------------------------------------------------------------------------
+ *
+ */
+export function globalStateStackPush<T>(gss: T[], item: T) {
+    // I've put a limit on the context depth to 100. But really, anything > 1 is already a niche usecase, and anything > 2 may never happen in practice ... 
+    if (gss.length > 100) {
+        throw new Error("Looks like you're forgetting to pop items from your global state array. tsk tsk tsk. ");
+    }
+
+    gss.push(item);
+}
+
+export function globalStateStackGet<T>(gss: T[]): T {
+    // No context item was pushed
+    assert(gss.length > 0);
+
+    return gss[gss.length - 1];
+}
+
+export function globalStateStackPop<T>(gss: T[], item: T): T {
+    const currentItem = globalStateStackGet(gss);
+
+    // Item may have changed mid-render, which definitely shouldn't ever happen, and is indicative of some other issue.
+    assert(currentItem === item);
+
+    gss.pop();
+
+    return currentItem;
 }

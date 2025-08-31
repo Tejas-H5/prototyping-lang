@@ -21,7 +21,8 @@ import {
     NA,
     PERCENT,
     PX,
-    ROW
+    ROW,
+    START
 } from './components/core/layout';
 import { imLine, LINE_VERTICAL } from './components/im-line';
 import { imScrollContainerBegin, imScrollContainerEnd, newScrollContainer } from './components/scroll-container';
@@ -74,10 +75,11 @@ import {
     T_TERNARY_IF,
     T_UNARY_OP,
     T_VECTOR_LITERAL,
+    TextPosition,
     unaryOpToOpString,
     unaryOpToString
 } from './program-parser';
-import { GlobalContext, rerun, startDebugging } from './state';
+import { GlobalContext, mutateState, rerun, startDebugging } from './state';
 import "./styling";
 import { cssVars, getCurrentTheme } from './styling';
 import { assert } from './utils/assert';
@@ -105,12 +107,12 @@ import {
     EL_CANVAS,
     EL_H3,
     elGet,
-    elHasMouseDown,
+    elHasMousePress,
     elHasMouseOver,
     elSetStyle,
+    getGlobalEventSystem,
     imElBegin,
     imElEnd,
-    ImGlobalEventSystem,
     imPreventScrollEventPropagation,
     imStr,
     imStrFmt,
@@ -124,30 +126,34 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
         imLayout(c, BLOCK); imButton(c, ctx.state.autoRun); {
             imStr(c, "Autorun");
 
-            if (elHasMouseDown(c, ctx.ev)) {
+            if (elHasMousePress(c)) {
                 ctx.state.autoRun = !ctx.state.autoRun
+                mutateState(ctx.state);
+
                 if (ctx.state.autoRun) {
                     rerun(ctx);
                 }
             }
         } imLayoutEnd(c);
 
-        if (imButtonIsClicked(c, ctx.ev, "Start debugging")) {
+        if (imButtonIsClicked(c, "Start debugging")) {
             startDebugging(ctx);
         }
 
         imLayout(c, BLOCK); imButton(c, ctx.state.showParserOutput); {
             imStr(c, "Show AST");
-            if (elHasMouseDown(c, ctx.ev)) {
+            if (elHasMousePress(c)) {
                 ctx.state.showParserOutput = !ctx.state.showParserOutput;
+                mutateState(ctx.state);
             }
         } imLayoutEnd(c);
 
 
         imLayout(c, BLOCK); imButton(c, ctx.state.showParserOutput); {
             imStr(c, "Show instructions");
-            if (elHasMouseDown(c, ctx.ev)) {
+            if (elHasMousePress(c)) {
                 ctx.state.showInterpreterOutput = !ctx.state.showInterpreterOutput;
+                mutateState(ctx.state);
             }
         } imLayoutEnd(c);
     } imLayoutEnd(c);
@@ -182,7 +188,7 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
 
                         imLayout(c, ROW); imButton(c); {
                             imStr(c, "Start debugging");
-                            if (elHasMouseDown(c, ctx.ev)) {
+                            if (elHasMousePress(c)) {
                                 startDebugging(ctx);
                             }
                         } imLayoutEnd(c);
@@ -196,7 +202,7 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
 
                             imLayout(c, ROW); imButton(c); {
                                 imStr(c, "Start debugging");
-                                if (elHasMouseDown(c, ctx.ev)) {
+                                if (elHasMousePress(c)) {
                                     startDebugging(ctx);
                                 }
                             } imLayoutEnd(c);
@@ -218,8 +224,9 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
         imLayout(c, ROW); imButton(c, ctx.state.showGroupedOutput); {
             imStr(c, "Grouped");
 
-            if (elHasMouseDown(c, ctx.ev)) {
+            if (elHasMousePress(c)) {
                 ctx.state.showGroupedOutput = !ctx.state.showGroupedOutput;
+                mutateState(ctx.state);
             }
         } imLayoutEnd(c);
 
@@ -248,8 +255,9 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
                     imLayout(c, BLOCK); imButton(c); {
                         imStr(c, eg.name);
 
-                        if (elHasMouseDown(c, ctx.ev)) {
+                        if (elHasMousePress(c)) {
                             ctx.state.text = eg.code.trim();
+                            mutateState(ctx.state);
                             ctx.lastLoaded = Date.now();
                         }
                     } imLayoutEnd(c);
@@ -259,10 +267,16 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
     } imScrollContainerEnd(c);
 }
 
-function imParserOutputRow(c: ImCache, title: string, type: string, depth: number, code?: string) {
+function imParserOutputRow(
+    c: ImCache,
+    result: ProgramParseResult,
+    expr: ProgramExpression,
+    title: string,
+    type: string,
+    depth: number,
+    code?: string
+) {
     imLayout(c, BLOCK); {
-        if (imMemo(c, depth)) elSetStyle(c, "paddingLeft", (depth * 20) + "px");
-
         imStr(c, title);
         imStr(c, " = ");
         imStr(c, type);
@@ -270,10 +284,27 @@ function imParserOutputRow(c: ImCache, title: string, type: string, depth: numbe
         if (imIf(c) && code) {
             imStr(c, " ");
             imLayout(c, INLINE); imCode(c); imStr(c, code); imLayoutEnd(c);
+        } else {
+            imIfElse(c);
+
+            imStr(c, "(");
+            // TODO: click on button that takes us there in the editor
+            // imStr(c, "start="); imStrFmt(c, expr.start, textPositionToString);
+            // imStr(c, ", end="); imStrFmt(c, expr.end, textPositionToString);
+            imStr(c, "start="); imStr(c, expr.start.i);
+            imStr(c, ", end="); imStr(c, expr.end.i);
+            imStr(c, ")");
         } imIfEnd(c);
     } imLayoutEnd(c);
 }
 
+
+function imRecursiveParserOutputExpressionState() {
+    return {
+        isExpanded: false,
+        showPos: false,
+    };
+}
 
 function imRecursiveParserOutputExpression(
     c: ImCache,
@@ -286,104 +317,128 @@ function imRecursiveParserOutputExpression(
         return;
     }
 
-    let typeString = expressionTypeToString(expr);
-    switch (expr.t) {
-        case T_IDENTIFIER: {
-            imParserOutputRow(c, title, typeString, depth, expressionToString(parseResult.text, expr));
-        } break;
-        case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: {
-            imParserOutputRow(c, title, typeString, depth);
-        } break;
-        case T_ASSIGNMENT: {
-            imParserOutputRow(c, title, typeString, depth);
-            imRecursiveParserOutputExpression(c, parseResult, "lhs", expr.lhs, depth + 1);
-            imRecursiveParserOutputExpression(c, parseResult, "rhs", expr.rhs, depth + 1);
-        } break;
-        case T_BINARY_OP: {
-            const lhsText = expressionToString(parseResult.text, expr.lhs);
-            const rhsText = expr.rhs ? expressionToString(parseResult.text, expr.rhs) : INCOMPLETE;
-            const opSymbol = binOpToSymbolString(expr.op);
-            const text = `(${lhsText}) ${opSymbol} (${rhsText})`;
-            imParserOutputRow(c, title, binOpToString(expr.op), depth, text);
+    const s = imState(c, imRecursiveParserOutputExpressionState);
 
-            imRecursiveParserOutputExpression(c, parseResult, "lhs", expr.lhs, depth + 1);
-            imRecursiveParserOutputExpression(c, parseResult, "rhs", expr.rhs, depth + 1);
-        } break;
-        case T_UNARY_OP: {
-            const exprText = expressionToString(parseResult.text, expr.expr);
-            const opSymbol = unaryOpToOpString(expr.op);
-            const text = `${opSymbol}(${exprText})`;
-            imParserOutputRow(c, title, unaryOpToString(expr.op), depth, text);
-            imRecursiveParserOutputExpression(c, parseResult, "expr", expr.expr, depth + 1);
-        } break;
-        case T_MAP_LITERAL: {
-            imParserOutputRow(c, title, typeString, depth, expressionToString(parseResult.text, expr));
+    const exprChanged = imMemo(c, expr);
 
-            for (let i = 0; i < expr.kvPairs.length; i++) {
-                imRecursiveParserOutputExpression(c, parseResult, "key[" + i + "]", expr.kvPairs[i][0], depth + 1);
-                imRecursiveParserOutputExpression(c, parseResult, "val[" + i + "]", expr.kvPairs[i][1], depth + 1);
-            }
-        } break;
-        case T_LIST_LITERAL:
-        case T_VECTOR_LITERAL: {
-            imParserOutputRow(c, title, typeString, depth, expressionToString(parseResult.text, expr));
-
-            for (let i = 0; i < expr.items.length; i++) {
-                imRecursiveParserOutputExpression(c, parseResult, "[" + i + "]", expr.items[i], depth + 1);
-            }
-        } break;
-        case T_NUMBER_LITERAL: {
-            imParserOutputRow(c, title, typeString, depth, expressionToString(parseResult.text, expr));
-        } break;
-        case T_STRING_LITERAL: {
-            imParserOutputRow(c, title, typeString, depth, expressionToString(parseResult.text, expr));
-        } break;
-        case T_TERNARY_IF: {
-            const queryText = expressionToString(parseResult.text, expr.query);
-            const trueText = expressionToString(parseResult.text, expr.trueBranch);
-            const falseText = expr.falseBranch ? expressionToString(parseResult.text, expr.falseBranch) : "";
-            imParserOutputRow(c, title, typeString, depth, `(${queryText}) ? (${trueText}) : (${falseText})`);
-
-            imRecursiveParserOutputExpression(c, parseResult, "query", expr.query, depth + 1);
-            imRecursiveParserOutputExpression(c, parseResult, "trueBranch", expr.trueBranch, depth + 1);
-            if (expr.falseBranch) {
-                imRecursiveParserOutputExpression(c, parseResult, "falseBranch", expr.falseBranch, depth + 1);
-            }
-        } break;
-        case T_BLOCK: {
-            imParserOutputRow(c, title, typeString, depth, "statement count: " + expr.statements.length);
-
-            for (let i = 0; i < expr.statements.length; i++) {
-                imRecursiveParserOutputExpression(c, parseResult, "s" + i, expr.statements[i], depth + 1);
-            }
-        } break;
-        case T_RANGE_FOR: {
-            imParserOutputRow(c, title, typeString, depth);
-            imRecursiveParserOutputExpression(c, parseResult, "loop var", expr.loopVar, depth + 1);
-            imRecursiveParserOutputExpression(c, parseResult, "range expr", expr.rangeExpr, depth + 1);
-            imRecursiveParserOutputExpression(c, parseResult, "loop body", expr.body, depth + 1);
-        } break;
-        case T_FN: {
-            imParserOutputRow(c, title, typeString, depth);
-            imRecursiveParserOutputExpression(c, parseResult, "name", expr.fnName, depth + 1);
-            for (let i = 0; i < expr.arguments.length; i++) {
-                imRecursiveParserOutputExpression(c, parseResult, "arg" + i, expr.arguments[i], depth + 1);
-            }
-            if (expr.body) {
-                imRecursiveParserOutputExpression(c, parseResult, "body", expr.body, depth + 1);
-            }
-        } break;
-        case T_DATA_INDEX_OP: {
-            imParserOutputRow(c, title, typeString, depth);
-            imRecursiveParserOutputExpression(c, parseResult, "var", expr.lhs, depth + 1);
-            for (let i = 0; i < expr.indexes.length; i++) {
-                imRecursiveParserOutputExpression(c, parseResult, "[" + i + "]", expr.indexes[i], depth + 1);
-            }
-        } break;
-        default: {
-            throw new Error("Unhandled type (parse view): " + typeString);
+    let code = imGet(c, String);
+    if (code === undefined || exprChanged) {
+        if (expr.children.length === 0) {
+            code = expressionToString(parseResult.text, expr);
+        } else {
+            code = expressionToString(parseResult.text, expr).substring(0, 20);
         }
+
+        imSet(c, code);
     }
+    
+    let typeString = expressionTypeToString(expr);
+
+    imLayout(c, BLOCK); imAlign(c, START); {
+        if (imMemo(c, depth)) elSetStyle(c, "paddingLeft", (depth * 20) + "px");
+
+        imLayout(c, ROW); imGap(c, 5, PX); {
+            if (imIf(c) && expr.children.length > 0) {
+                imLayout(c, BLOCK); imButton(c, s.isExpanded); {
+                    imStr(c, s.isExpanded ? "v" : ">");
+                    if (elHasMousePress(c)) {
+                        s.isExpanded = !s.isExpanded;
+                    }
+                } imLayoutEnd(c);
+            } imIfEnd(c);
+
+            imLayout(c, BLOCK); imButton(c, s.showPos); {
+                imStr(c, "pos");
+                if (elHasMousePress(c)) {
+                    s.showPos = !s.showPos;
+                }
+            } imLayoutEnd(c);
+
+            imParserOutputRow(c, parseResult, expr, title, typeString, depth, code);
+        } imLayoutEnd(c);
+
+        if (imIf(c) && s.showPos) {
+            imLayout(c, BLOCK); {
+                imStr(c, "Start="); imStrFmt(c, expr.start, textPositionToString);
+            } imLayoutEnd(c);
+            imLayout(c, BLOCK); {
+                imStr(c, "End="); imStrFmt(c, expr.end, textPositionToString);
+            } imLayoutEnd(c);
+        } imIfEnd(c);
+
+        if (imIf(c) && s.isExpanded) {
+            imLayout(c, BLOCK); imPadding(c, 5, PX, 5, PX, 5, PX, 5, PX); {
+                switch (expr.t) {
+                    case T_IDENTIFIER: {
+                    } break;
+                    case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: {
+                    } break;
+                    case T_ASSIGNMENT: {
+                        imRecursiveParserOutputExpression(c, parseResult, "lhs", expr.lhs, depth + 1);
+                        imRecursiveParserOutputExpression(c, parseResult, "rhs", expr.rhs, depth + 1);
+                    } break;
+                    case T_BINARY_OP: {
+                        imRecursiveParserOutputExpression(c, parseResult, "lhs", expr.lhs, depth + 1);
+                        imRecursiveParserOutputExpression(c, parseResult, "rhs", expr.rhs, depth + 1);
+                    } break;
+                    case T_UNARY_OP: {
+                        imRecursiveParserOutputExpression(c, parseResult, "expr", expr.expr, depth + 1);
+                    } break;
+                    case T_MAP_LITERAL: {
+                        for (let i = 0; i < expr.kvPairs.length; i++) {
+                            imRecursiveParserOutputExpression(c, parseResult, "key[" + i + "]", expr.kvPairs[i][0], depth + 1);
+                            imRecursiveParserOutputExpression(c, parseResult, "val[" + i + "]", expr.kvPairs[i][1], depth + 1);
+                        }
+                    } break;
+                    case T_LIST_LITERAL:
+                    case T_VECTOR_LITERAL: {
+                        for (let i = 0; i < expr.items.length; i++) {
+                            imRecursiveParserOutputExpression(c, parseResult, "[" + i + "]", expr.items[i], depth + 1);
+                        }
+                    } break;
+                    case T_NUMBER_LITERAL: {
+                    } break;
+                    case T_STRING_LITERAL: {
+                    } break;
+                    case T_TERNARY_IF: {
+                        imRecursiveParserOutputExpression(c, parseResult, "query", expr.query, depth + 1);
+                        imRecursiveParserOutputExpression(c, parseResult, "trueBranch", expr.trueBranch, depth + 1);
+                        if (expr.falseBranch) {
+                            imRecursiveParserOutputExpression(c, parseResult, "falseBranch", expr.falseBranch, depth + 1);
+                        }
+                    } break;
+                    case T_BLOCK: {
+                        for (let i = 0; i < expr.statements.length; i++) {
+                            imRecursiveParserOutputExpression(c, parseResult, "s" + i, expr.statements[i], depth + 1);
+                        }
+                    } break;
+                    case T_RANGE_FOR: {
+                        imRecursiveParserOutputExpression(c, parseResult, "loop var", expr.loopVar, depth + 1);
+                        imRecursiveParserOutputExpression(c, parseResult, "range expr", expr.rangeExpr, depth + 1);
+                        imRecursiveParserOutputExpression(c, parseResult, "loop body", expr.body, depth + 1);
+                    } break;
+                    case T_FN: {
+                        imRecursiveParserOutputExpression(c, parseResult, "name", expr.fnName, depth + 1);
+                        for (let i = 0; i < expr.arguments.length; i++) {
+                            imRecursiveParserOutputExpression(c, parseResult, "arg" + i, expr.arguments[i], depth + 1);
+                        }
+                        if (expr.body) {
+                            imRecursiveParserOutputExpression(c, parseResult, "body", expr.body, depth + 1);
+                        }
+                    } break;
+                    case T_DATA_INDEX_OP: {
+                        imRecursiveParserOutputExpression(c, parseResult, "var", expr.lhs, depth + 1);
+                        for (let i = 0; i < expr.indexes.length; i++) {
+                            imRecursiveParserOutputExpression(c, parseResult, "[" + i + "]", expr.indexes[i], depth + 1);
+                        }
+                    } break;
+                    default: {
+                        throw new Error("Unhandled type (parse view): " + typeString);
+                    }
+                }
+            } imLayoutEnd(c);
+        } imIfEnd(c);
+    } imLayoutEnd(c);
 }
 
 const INCOMPLETE = " <Incomplete!> ";
@@ -393,16 +448,18 @@ function imParserOutputs(c: ImCache, parseResult: ProgramParseResult | undefined
         const statements = parseResult.statements;
 
         if (imIf(c) && statements.length > 0) {
-            imFor(c); for (let i = 0; i < statements.length; i++) {
-                const statement = statements[i];
-                imRecursiveParserOutputExpression(
-                    c,
-                    parseResult,
-                    "Statement " + (i + 1),
-                    statement,
-                    0
-                );
-            } imForEnd(c);
+            imLayout(c, COL); imGap(c, 5, PX); {
+                imFor(c); for (let i = 0; i < statements.length; i++) {
+                    const statement = statements[i];
+                    imRecursiveParserOutputExpression(
+                        c,
+                        parseResult,
+                        "Statement " + (i + 1),
+                        statement,
+                        0
+                    );
+                } imForEnd(c);
+            } imLayoutEnd(c);
         } else {
             imIfElse(c);
             imStr(c, "Nothing parsed yet");
@@ -424,7 +481,8 @@ function imDiagnosticInfo(c: ImCache, heading: string, info: DiagnosticInfo[], e
 
     imFor(c); for (const e of info) {
         imLayout(c, BLOCK); {
-            imStr(c, "Line " + e.pos.line + " Col " + (e.pos.col) + " Tab " + (e.pos.tabs) + " - " + e.problem);
+            imStrFmt(c, e.pos, textPositionToString);
+            imStr(c, " - " + e.problem);
         } imLayoutEnd(c);
     } imForEnd(c);
 
@@ -433,6 +491,10 @@ function imDiagnosticInfo(c: ImCache, heading: string, info: DiagnosticInfo[], e
             imStr(c, emptyText);
         } imLayoutEnd(c);
     } imIfEnd(c);
+}
+
+function textPositionToString(pos: TextPosition): string {
+    return "Line " + pos.line + "|Col " + pos.col + "+" + pos.tabs + "tabs" + "|idx " + pos.i;
 }
 
 export function imProgramResult(c: ImCache, res: ProgramResult) {
@@ -659,7 +721,7 @@ export function imProgramOutputs(
 
                         imLayout(c, BLOCK); imButton(c); {
                             imStr(c, "(" + prints.length + ")");
-                            if (elHasMouseDown(c, ctx.ev)) {
+                            if (elHasMousePress(c)) {
                                 localState.open = !localState.open;
                             }
                         } imLayoutEnd(c);
@@ -710,7 +772,7 @@ export function imProgramOutputs(
                                 imMaximizeItemButton(c, ctx, graph);
                             } imLayoutEnd(c);
 
-                            imLayout(c, BLOCK); imAspectRatio(c, window.innerWidth, window.innerHeight); {
+                            imLayout(c, COL); imAspectRatio(c, window.innerWidth, window.innerHeight); {
                                 imGraph(c, ctx, graph);
                             } imLayoutEnd(c);
                         } imLayoutEnd(c);
@@ -784,7 +846,7 @@ export function imProgramOutputs(
                     } imLayoutEnd(c); 
                 } imForEnd(c);
 
-                imLayout(c, BLOCK); imAspectRatio(c, window.innerWidth, window.innerHeight); {
+                imLayout(c, COL); imAspectRatio(c, window.innerWidth, window.innerHeight); {
                     imPlot(c, ctx, plot, program);
                 } imLayoutEnd(c); 
             } imLayoutEnd(c); 
@@ -811,10 +873,10 @@ function imImageOutput(c: ImCache, ctx: GlobalContext, image: ProgramImageOutput
                 if (imIf(c) && image.width !== 0) {
                     const plotState = imState(c, newPlotState);
 
-                    imLayout(c, BLOCK); imAspectRatio(c, window.innerWidth, window.innerHeight); {
+                    imLayout(c, COL); imAspectRatio(c, window.innerWidth, window.innerHeight); {
                         const [, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(c); {
                             imPlotZoomingAndPanning(
-                                c, ctx.ev,
+                                c, 
                                 plotState,
                                 width,
                                 height,
@@ -896,7 +958,6 @@ function imImageOutput(c: ImCache, ctx: GlobalContext, image: ProgramImageOutput
 
 function imPlotZoomingAndPanning(
     c: ImCache,
-    ev: ImGlobalEventSystem,
     plot: PlotState,
     width: number,
     height: number,
@@ -904,7 +965,7 @@ function imPlotZoomingAndPanning(
     shiftHeld: boolean
 ) {
     const isMaximized = plot === currentMaximizedItem;
-    const canZoom = elHasMouseOver(c, ev) && (shiftHeld || isMaximized);
+    const canZoom = elHasMouseOver(c) && (shiftHeld || isMaximized);
     plot.canZoom = canZoom;
 
     if (isFirstishRender(c)) {
@@ -915,9 +976,9 @@ function imPlotZoomingAndPanning(
     plot.height = height;
     plot.dpi = dpi;
 
-    const mouse = ev.mouse;
+    const { mouse } = getGlobalEventSystem();
 
-    plot.isPanning = mouse.leftMouseButton && elHasMouseOver(c, ev);
+    plot.isPanning = mouse.leftMouseButton && elHasMouseOver(c);
     if (plot.isPanning) {
         const dxPlot = getPlotLength(plot, screenToCanvas(plot, mouse.dX));
         const dyPlot = getPlotLength(plot, screenToCanvas(plot, mouse.dY));
@@ -926,7 +987,7 @@ function imPlotZoomingAndPanning(
         plot.posY -= dyPlot;
     }
 
-    const scrollBlocker = imPreventScrollEventPropagation(c, ev);
+    const scrollBlocker = imPreventScrollEventPropagation(c);
     scrollBlocker.isBlocking = canZoom;
     plot.scrollY = scrollBlocker.scrollY;
 
@@ -996,7 +1057,7 @@ function imGraph(c: ImCache, ctx: GlobalContext, graph: ProgramGraphOutput) {
 
     imLayout(c, BLOCK); imFlex(c); imRelative(c); imSize(c, 0, NA, 100, PERCENT); {
         const [_, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(c); {
-            imPlotZoomingAndPanning(c, ctx.ev, plotState, width, height, dpi, ctx.input.keyboard.shiftHeld);
+            imPlotZoomingAndPanning(c, plotState, width, height, dpi, ctx.input.keyboard.shiftHeld);
 
             const widthChanged     = imMemo(c, width);
             const heightChanged    = imMemo(c, height);
@@ -1374,7 +1435,7 @@ function imMaximizeableContainerEnd(c: ImCache) {
 function imMaximizeItemButton(c: ImCache, ctx: GlobalContext, item: object) {
     const isMaximized = currentMaximizedItem === item;
 
-    if (imButtonIsClicked(c, ctx.ev, isMaximized ? "minimize" : "maximize")) {
+    if (imButtonIsClicked(c, isMaximized ? "minimize" : "maximize")) {
         if (isMaximized) {
             currentMaximizedItem = null;
         } else {
@@ -1396,13 +1457,13 @@ function imPlot(c: ImCache, ctx: GlobalContext, plot: ProgramPlotOutput, program
     imMaximizeableContainerBegin(c, plot); {
         imLayout(c, COL); imBg(c, cssVars.bg); imFlex(c); imGap(c, 5, PX); {
             imLayout(c, ROW); imGap(c, 5, PX); {
-                if (imButtonIsClicked(c, ctx.ev, "Overlays")) {
+                if (imButtonIsClicked(c, "Overlays")) {
                     plotState.overlay = !plotState.overlay;
                 }
 
                 imLayout(c, BLOCK); imButton(c, plotState.overlay); {
                     imStr(c, "Autofit");
-                    if (elHasMouseDown(c, ctx.ev)) {
+                    if (elHasMousePress(c)) {
                         plotState.autofit = !plotState.autofit;
                     }
                 } imLayoutEnd(c);
@@ -1416,14 +1477,13 @@ function imPlot(c: ImCache, ctx: GlobalContext, plot: ProgramPlotOutput, program
                 timer: 0 as number | null,
             }); 
 
-            imLayout(c, BLOCK); imFlex(c); imRelative(c); {
+            imLayout(c, COL); imFlex(c); imRelative(c); {
                 const [_, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(c); {
-                    const mouse = ctx.ev.mouse;
-
+                    const mouse = getGlobalEventSystem().mouse;
 
                     // init canvas 
                     imPlotZoomingAndPanning(
-                        c, ctx.ev,
+                        c, 
                         plotState,
                         width,
                         height,
@@ -1431,7 +1491,7 @@ function imPlot(c: ImCache, ctx: GlobalContext, plot: ProgramPlotOutput, program
                         ctx.input.keyboard.shiftHeld
                     );
 
-                    if (elHasMouseDown(c, ctx.ev) && (mouse.scrollWheel !== 0 && !plotState.canZoom)) {
+                    if (elHasMousePress(c) && (mouse.scrollWheel !== 0 && !plotState.canZoom)) {
                         state.shiftScrollToZoom = 1;
                     }
 

@@ -27,6 +27,7 @@ import {
     imAlign,
     imBg,
     imFlex,
+    imFlexWrap,
     imGap,
     imJustify,
     imLayout,
@@ -38,8 +39,10 @@ import {
     INLINE,
     NA,
     PX,
-    ROW
+    ROW,
+    START
 } from "./components/core/layout";
+import { cn } from "./components/core/stylesheets";
 import { imLine, LINE_VERTICAL } from "./components/im-line";
 import { imScrollContainerBegin, newScrollContainer } from "./components/scroll-container";
 import { imSliderInput } from './components/slider';
@@ -52,10 +55,8 @@ import {
 import {
     DiagnosticInfo,
     getAstNodeForTextPos,
-    newResumeableAstTraverser,
     parseIdentifierBackwardsFromPoint,
     ProgramExpression,
-    resetAstTraversal,
     T_BLOCK,
     T_FN,
     T_IDENTIFIER,
@@ -64,7 +65,7 @@ import {
     T_STRING_LITERAL,
     T_VECTOR_LITERAL
 } from './program-parser';
-import { GlobalContext, rerun } from './state';
+import { GlobalContext, mutateState, rerun } from './state';
 import "./styling";
 import { cnApp, cssVars } from './styling';
 import { assert } from './utils/assert';
@@ -91,12 +92,10 @@ import {
     elSetStyle,
     imElBegin,
     imElEnd,
-    ImGlobalEventSystem,
     imStr
 } from "./utils/im-dom";
 import { max } from './utils/math-utils';
 import { isWhitespace } from './utils/text-utils';
-import { cn } from "./components/core/stylesheets";
 
 
 const UNANIMOUSLY_DECIDED_TAB_SIZE = 4;
@@ -144,20 +143,11 @@ function imDiagnostics(c: ImCache, diagnostics: DiagnosticInfo[], col: string, l
             continue
         }
 
-        // transparent span
         imLayout(c, BLOCK); {
+            // transparent span
             imLayout(c, INLINE); {
                 if (isFirstishRender(c)) {
                     elSetStyle(c, "color", "transparent");
-                }
-
-                const numWhitespaces = max(0, err.pos.col + err.pos.tabs * UNANIMOUSLY_DECIDED_TAB_SIZE);
-                imStr(c, "0".repeat(numWhitespaces));
-            } imLayoutEnd(c);
-
-            imLayout(c, INLINE); {
-                if (isFirstishRender(c)) {
-                    elSetStyle(c, "color", col);
                 }
 
                 const numWhitespaces = max(0, err.pos.col + err.pos.tabs * UNANIMOUSLY_DECIDED_TAB_SIZE);
@@ -289,24 +279,22 @@ function newSimpleTextEditorState(): SimpleTextEditorState {
 
 function imSimpleTextInput(
     c: ImCache,
-    ev: ImGlobalEventSystem,
     s: SimpleTextEditorState,
     ctrlHeld: boolean,
     shiftHeld: boolean
 ) {
-    imBeginTextEditor(c, ev, s.editorState, s.container, ctrlHeld, shiftHeld);
+    imBeginTextEditor(c, s.editorState, s.container, ctrlHeld, shiftHeld);
 }
 
 function imEndSimpleTextInput(
     c: ImCache,
-    ev: ImGlobalEventSystem,
     s: SimpleTextEditorState
 ) {
-    imEndTextEditor(c, ev, s.editorState);
+    imEndTextEditor(c, s.editorState);
 }
 
 // A simpler text editor that can be used for simpler text inputs
-function imSimpleTextInputBody(c: ImCache, ev: ImGlobalEventSystem, s: SimpleTextEditorState) {
+function imSimpleTextInputBody(c: ImCache, s: SimpleTextEditorState) {
     imLayout(c, COL); {
         imFor(c); while (textEditorHasChars(s.editorState)) {
             imLayout(c, ROW); {
@@ -318,7 +306,7 @@ function imSimpleTextInputBody(c: ImCache, ev: ImGlobalEventSystem, s: SimpleTex
 
                         if (textSpan.innerText !== char) textSpan.innerText = char;
 
-                        handleTextEditorClickEventForChar(c, ev, s.editorState, s.editorState._renderCursor);
+                        handleTextEditorClickEventForChar(c, s.editorState, s.editorState._renderCursor);
 
                         const isSelected = s.editorState.hasFocus && 
                             textEditorCursorIsSelected( s.editorState, s.editorState._renderCursor);
@@ -453,7 +441,7 @@ function isStartOfLine(it: tb.Iterator, temp: tb.Iterator): boolean {
 }
 
 
-function handleCodeEditorEvents(ev: ImGlobalEventSystem, s: CodeEditorState, targetEditor: TextEditorState, eventSource: TextEditorState) {
+function handleCodeEditorEvents(s: CodeEditorState, targetEditor: TextEditorState, eventSource: TextEditorState) {
     let handled = false;
 
     if (s.isFinding) {
@@ -508,7 +496,7 @@ function handleCodeEditorEvents(ev: ImGlobalEventSystem, s: CodeEditorState, tar
         eventSource._keyDownEvent = null;
     }
 
-    defaultTextEditorKeyboardEventHandler(ev, eventSource);
+    defaultTextEditorKeyboardEventHandler(eventSource);
 
     if (!eventSource._keyDownEvent) {
         return;
@@ -621,6 +609,7 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
     const modifiedAtChanged = imMemo(c, editorState.modifiedAt);
     if (modifiedAtChanged) {
         ctx.state.text = tb.buffToString(editorState.buffer);
+        mutateState(ctx.state);
         ctx.astStart = 1;
         ctx.astEnd = 5;
         hasSelection = tb.itIsClear(editorState.selectionStart);
@@ -635,25 +624,9 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
             elSetStyle(c, "cursor", "text");
         }
 
-        const parseResultChanged = imMemo(c, lastParseResult);
-        
-        let astTraverser; astTraverser = imGet(c, newResumeableAstTraverser);
-        if (parseResultChanged || !astTraverser) {
-            if (lastParseResult) {
-                astTraverser = newResumeableAstTraverser(lastParseResult);
-            } else {
-                astTraverser = null;
-            }
-            imSet(c, astTraverser);
-        }
-
-        if (astTraverser && lastParseResult) {
-            resetAstTraversal(astTraverser, lastParseResult);
-        }
-
         // TODO: only render the stuff that is onscreen
         imBeginTextEditor(
-            c, ctx.ev,
+            c, 
             editorState,
             container,
             ctx.input.keyboard.ctrlHeld,
@@ -678,7 +651,7 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
                                 imSet(c, lineText);
                             }
 
-                            imLayout(c, ROW); imAlign(c); imJustify(c); {
+                            imLayout(c, ROW); imAlign(c, START); imJustify(c); {
                                 imStr(c, lineText);
                             } imLayoutEnd(c);
 
@@ -686,17 +659,13 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
 
                             imLayout(c, COL); imFlex(c); {
                                 // Actual text line
-                                imLayout(c, ROW); {
+                                imLayout(c, ROW); imFlexWrap(c); {
                                     imFor(c); while (textEditorHasChars(editorState)) {
                                         const actualC = textEditorGetNextChar(editorState);
 
                                         let astNode: ProgramExpression | undefined;
-                                        if (astTraverser && lastParseResult) {
-                                            astNode = getAstNodeForTextPos(
-                                                astTraverser,
-                                                lastParseResult,
-                                                pos,
-                                            );
+                                        if (lastParseResult) {
+                                            astNode = getAstNodeForTextPos(lastParseResult, pos);
                                             pos++;
                                         }
 
@@ -705,7 +674,7 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
 
                                         const textSpan = imElBegin(c, EL_SPAN); {
                                             imStr(c, char);
-                                            handleTextEditorClickEventForChar(c, ctx.ev, editorState, editorState._renderCursor);
+                                            handleTextEditorClickEventForChar(c, editorState, editorState._renderCursor);
 
                                             let isFindResult = false;
                                             if (s.isFinding) {
@@ -791,7 +760,7 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
 
                                     // flex element handles events for the entire newline
                                     imLayout(c, BLOCK); imFlex(c); {
-                                        handleTextEditorClickEventForChar(c, ctx.ev, editorState, editorState._renderCursor);
+                                        handleTextEditorClickEventForChar(c, editorState, editorState._renderCursor);
                                     } imLayoutEnd(c);
                                 } imLayoutEnd(c);
 
@@ -842,7 +811,7 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
                                                 imLayout(c, BLOCK); imCode(c); imStr(c, ui.value + ""); imLayoutEnd(c);
                                             } imLayoutEnd(c);
                                             imLayout(c, ROW); imSize(c, 0, NA, 1, EM); {
-                                                ui.value = imSliderInput(c, ctx.ev, ui.start, ui.end, ui.step, ui.value);
+                                                ui.value = imSliderInput(c, ui.start, ui.end, ui.step, ui.value);
                                                 if (imMemo(c, ui.value)) {
                                                     rerun(ctx);
                                                 }
@@ -880,15 +849,15 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
 
             s.lastMaxLine = lineIdx + 1;
 
-            handleCodeEditorEvents(ctx.ev, s, editorState, editorState);
+            handleCodeEditorEvents(s, editorState, editorState);
 
-            handleTextEditorMouseScrollEvent(c, ctx.ev, editorState);
+            handleTextEditorMouseScrollEvent(c, editorState);
 
-        } imEndTextEditor(c, ctx.ev, editorState);
+        } imEndTextEditor(c, editorState);
 
         // Empty space below the lines should just handle click events for the end of the line
         imLayout(c, BLOCK); imFlex(c); {
-            handleTextEditorClickEventForChar(c, ctx.ev, editorState, editorState._renderCursor);
+            handleTextEditorClickEventForChar(c, editorState, editorState._renderCursor);
         } imLayoutEnd(c);
 
         if (imIf(c) && s.isFinding) {
@@ -896,23 +865,23 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
                 imStr(c, "Find: ");
 
                 imSimpleTextInput(
-                    c, ctx.ev,
+                    c, 
                     finderState,
                     ctx.input.keyboard.ctrlHeld,
                     ctx.input.keyboard.shiftHeld
                 ); {
-                    imSimpleTextInputBody(c, ctx.ev, finderState);
+                    imSimpleTextInputBody(c, finderState);
                     handleCodeEditorEvents(
-                        ctx.ev, s,
+                        s,
                         editorState,
                         finderState.editorState
                     );
-                } imEndSimpleTextInput(c, ctx.ev, finderState)
+                } imEndSimpleTextInput(c, finderState)
             } imLayoutEnd(c);
         } imIfEnd(c);
         // Empty space below the lines should just handle click events for the end of the line
         imLayout(c, BLOCK); imFlex(c); {
-            handleTextEditorClickEventForChar(c, ctx.ev, editorState, editorState._renderCursor);
+            handleTextEditorClickEventForChar(c, editorState, editorState._renderCursor);
         } imLayoutEnd(c);
     } imLayoutEnd(c);
 }

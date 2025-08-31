@@ -48,10 +48,9 @@ import {
     EL_H1,
     elSetClass,
     elSetStyle,
+    getGlobalEventSystem,
     imElBegin,
     imElEnd,
-    imGlobalEventSystemBegin,
-    imGlobalEventSystemEnd,
     imStr
 } from "./utils/im-dom";
 
@@ -83,10 +82,9 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
     let ctx = imGet(c, newGlobalContext);
     if (!ctx) ctx = imSet(c, newGlobalContext());
 
-    imGlobalEventSystemBegin(c, ctx.ev);
 
     if (TEST_HARNESS_ENABLED) {
-        const keys = ctx.ev.keyboard;
+        const keys = getGlobalEventSystem().keyboard;
         if (keys.keyDown) {
             const key = keys.keyDown.key;
             if (key === "F1") {
@@ -108,15 +106,13 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
             savingDisabled = false;
 
             if (imIf(c) && !errorState.dismissed) {
-                const { state, stateVersion } = ctx;
-
                 const input = ctx.input;
 
                 input.keyboard.escape = false;
 
                 // input handling
                 {
-                    const { keyDown, keyUp, blur } = ctx.ev.keyboard;
+                    const { keyDown, keyUp, blur } = getGlobalEventSystem().keyboard;
 
                     if (keyDown) {
                         const shiftPressed = keyDown.key === "Shift";
@@ -139,14 +135,14 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
                     }
                 }
 
-                if (imMemo(c, stateVersion)) {
+                if (imMemo(c, ctx.state._version)) {
                     saveStateDebounced(ctx);
 
                     // Need to parse as soon as the text changes
                     ctx.lastParseResult = parse(ctx.state.text);
 
                     // Run the code with a slight debounce
-                    if (state.autoRun) {
+                    if (ctx.state.autoRun) {
                         ctx.autoRunTimer = 0.15;
                     }
                 } 
@@ -224,20 +220,20 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
 
                     imLayout(c, BLOCK); {
                         if (imIf(c) && totalErrors && totalErrors < 10) {
-                            if (imButtonIsClicked(c, ctx.ev, "Dismiss [Warning - may lead to data corruption]")) {
+                            if (imButtonIsClicked(c, "Dismiss [Warning - may lead to data corruption]")) {
                                 errorState.dismissed = false;
                             }
                         } else {
                             imIfElse(c);
                             imStr(c, "This button was a bad idea ...");
-                        } imLayoutEnd(c);
+                        } imIfEnd(c);
                     } imLayoutEnd(c);
                 } imLayoutEnd(c); 
             } imIfEnd(c);
 
             if (TEST_HARNESS_ENABLED) {
                 if (imIf(c) && isTesting) {
-                    imTestHarness(c, ctx.ev);
+                    imTestHarness(c);
                 } imIfEnd(c);
             }
         } catch (e) {
@@ -254,6 +250,4 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
             errorState.dismissed = true;
         } imTryEnd(c, tryState);
     } imLayoutEnd(c);
-
-    imGlobalEventSystemEnd(c, ctx.ev);
 }

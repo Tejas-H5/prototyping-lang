@@ -1,10 +1,10 @@
-import { imButtonIsClicked } from "./app-components/im-button";
+import { imButton, imButtonIsClicked } from "./app-components/im-button";
 import { imCode } from "./app-styling";
 import { BLOCK, COL, imAlign, imBg, imFixed, imGap, imLayout, imLayoutEnd, imPadding, imPre, imRelative, imSize, NA, PERCENT, PX, ROW } from "./components/core/layout";
 import { imScrollContainerBegin, imScrollContainerEnd, newScrollContainer } from "./components/scroll-container";
 import { cssVars } from "./styling";
 import { ImCache, imFor, imForEnd, imIf, imIfElse, imIfEnd, imMemo, imState, imTry, imTryCatch, imTryEnd, isFirstishRender } from "./utils/im-core";
-import { EL_H3, elHasMouseDown, elSetStyle, imElBegin, imElEnd, ImGlobalEventSystem, imStr } from "./utils/im-dom";
+import { EL_H3, elHasMousePress, elSetStyle, imElBegin, imElEnd, imStr } from "./utils/im-dom";
 import {
     getTestSuites,
     runTest,
@@ -37,7 +37,7 @@ function newTestHarnessState(): {
     };
 }
 
-export function imTestHarness(c: ImCache, ev: ImGlobalEventSystem) {
+export function imTestHarness(c: ImCache) {
     const s = imState(c, newTestHarnessState);
 
     const tryState = imTry(c); try {
@@ -70,18 +70,18 @@ export function imTestHarness(c: ImCache, ev: ImGlobalEventSystem) {
                 imLayout(c, ROW); imGap(c, 5, PX); {
                     imElBegin(c, EL_H3); imStr(c, "Tests"); imElEnd(c, EL_H3);
 
-                    if (imButtonIsClicked(c, ev, "Run failed")) {
+                    if (imButtonIsClicked(c, "Run failed")) {
                         for (const test of s.tests) {
                             if (test.error !== null) runTest(test);
                         }
                     }
 
-                    if (imButtonIsClicked(c, ev, "Run all staggered")) {
+                    if (imButtonIsClicked(c, "Run all staggered")) {
                         s.runAllStaggered.running = true;
                         s.runAllStaggered.idx = 0;
                     }
 
-                    if (imButtonIsClicked(c, ev, "Run all")) {
+                    if (imButtonIsClicked(c, "Run all")) {
                         for (const test of s.tests) {
                             runTest(test);
                         }
@@ -137,7 +137,7 @@ export function imTestHarness(c: ImCache, ev: ImGlobalEventSystem) {
                                     imLayout(c, BLOCK); imButton(c); {
                                         imStr(c, "Debug");
 
-                                        if (elHasMouseDown(c, ev)) {
+                                        if (elHasMousePress(c)) {
                                             runTest(test, true);
                                         }
                                     } imLayoutEnd(c);
@@ -145,7 +145,7 @@ export function imTestHarness(c: ImCache, ev: ImGlobalEventSystem) {
                                     imLayout(c, BLOCK); imButton(c); {
                                         imStr(c, "Rerun");
 
-                                        if (elHasMouseDown(c, ev)) {
+                                        if (elHasMousePress(c)) {
                                             runTest(test);
                                         }
                                     } imLayoutEnd(c);
@@ -173,7 +173,7 @@ export function imTestHarness(c: ImCache, ev: ImGlobalEventSystem) {
             imLayout(c, BLOCK); imButton(c); {
                 imStr(c, "Ok");
 
-                if (elHasMouseDown(c, ev)) {
+                if (elHasMousePress(c)) {
                     tryState.recover();
                 }
             } imLayoutEnd(c);

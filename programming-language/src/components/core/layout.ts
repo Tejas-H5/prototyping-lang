@@ -179,6 +179,10 @@ export function imLayout(c: ImCache, type: DisplayType) {
     return root.root;
 }
 
+export function imFlexWrap(c: ImCache) {
+    if (isFirstishRender(c)) { elSetClass(c, cn.flexWrap); }
+}
+
 export function imPre(c: ImCache) {
     if (isFirstishRender(c)) {
         elSetClass(c, cn.pre);
@@ -215,16 +219,16 @@ export function imGap(c: ImCache, val = 0, units: SizeUnits) {
 // Add more as needed
 export const NONE = 0;
 export const CENTER = 1;
-export const LEFT = 2;
-export const RIGHT = 3;
+export const START = 2;
+export const END = 3;
 export const STRETCH = 4;
 
 function getAlignment(alignment: number) {
     switch(alignment) {
         case NONE:    return "";
         case CENTER:  return "center";
-        case LEFT:    return "left";
-        case RIGHT:   return "right";
+        case START:   return "start";
+        case END:     return "end";
         case STRETCH: return "stretch";
     }
     return "";
@@ -259,17 +263,23 @@ export function imFixed(
     bottom: number, bottomType: SizeUnits,
     left: number, leftType: SizeUnits,
 ) {
-    if (isFirstishRender(c)) {
-        elSetClass(c, cn.fixed);
-    }
-
-    imOffsets(
+    const offsetsChanged = imOffsets(
         c,
         top, topType,
         right, rightType,
         bottom, bottomType,
         left, leftType,
     );
+
+    if (offsetsChanged) {
+        const disabled = 
+            topType === NA &&
+            leftType === NA &&
+            rightType === NA &&
+            bottomType === NA;
+
+        elSetClass(c, cn.fixed, !disabled);
+    }
 }
 
 function imOffsets(
@@ -282,25 +292,33 @@ function imOffsets(
     let val = imGet(c, newPaddingState);
     if (val === undefined) val = imSet(c, newPaddingState());
 
+    let changed = false;
+
     if (val.left !== left || val.leftType !== leftType) {
         val.left = left; val.leftType = leftType;
+        changed = true;
         elSetStyle(c, "left", getSize(left, leftType));
     }
 
     if (val.right !== right || val.rightType !== rightType) {
         val.right = right; val.rightType = rightType;
+        changed = true;
         elSetStyle(c, "right", getSize(right, rightType));
     }
 
     if (val.top !== top || val.topType !== topType) {
         val.top = top; val.topType = topType;
+        changed = true;
         elSetStyle(c, "top", getSize(top, topType));
     }
 
     if (val.bottom !== bottom || val.bottomType !== bottomType) {
         val.bottom = bottom; val.bottomType = bottomType;
+        changed = true;
         elSetStyle(c, "bottom", getSize(bottom, bottomType));
     }
+
+    return changed;
 }
 
 

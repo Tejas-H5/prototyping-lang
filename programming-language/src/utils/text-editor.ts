@@ -4,11 +4,12 @@ import { isWhitespace } from "src/utils/text-utils";
 import * as tb from "./text-edit-buffer";
 import {
     EL_TEXTAREA,
-    elHasMouseDown,
+    elHasMousePress,
     elHasMouseOver,
     elSetStyle,
     EV_KEYDOWN,
     EV_KEYUP,
+    getGlobalEventSystem,
     imElBegin,
     imElEnd,
     ImGlobalEventSystem,
@@ -314,10 +315,10 @@ export function textEditorScroll(s: TextEditorState, amount: number) {
     s.wantedScrollAmount = amount;
 }
 
-export function handleTextEditorMouseScrollEvent(c: ImCache, ev: ImGlobalEventSystem, s: TextEditorState) {
-    const mouse = ev.mouse;
+export function handleTextEditorMouseScrollEvent(c: ImCache, s: TextEditorState) {
+    const mouse = getGlobalEventSystem().mouse;
     if (mouse.scrollWheel !== 0) {
-        if (elHasMouseOver(c, ev)) {
+        if (elHasMouseOver(c)) {
             const n = Math.max(mouse.scrollWheel / 50);
             textEditorScroll(s, n);
         } 
@@ -345,13 +346,13 @@ export function textEditorMoveToStartOfLine(cursor: tb.Iterator) {
 }
 
 // events are only set to null if we handle them.
-export function defaultTextEditorKeyboardEventHandler(ev: ImGlobalEventSystem, s: TextEditorState) {
+export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
     if (s._handledEvent) {
         return;
     }
     s._handledEvent = true;
 
-    const mouse = ev.mouse;
+    const mouse = getGlobalEventSystem().mouse;
     if (!mouse.leftMouseButton) {
         s.hasClick = false;
     }
@@ -716,7 +717,6 @@ function textEditorExtendSelection(s: TextEditorState, cursor: tb.Iterator) {
 // with position: relative to correctly position the fake text-area.
 export function imBeginTextEditor(
     c: ImCache,
-    ev: ImGlobalEventSystem,
     s: TextEditorState,
     container: HTMLElement | null,
     ctrlHeld: boolean,
@@ -729,7 +729,7 @@ export function imBeginTextEditor(
 
     const wasShifting = s.isShifting;
     s.isShifting = shiftHeld;
-    const mouse = ev.mouse;
+    const mouse = getGlobalEventSystem().mouse;
 
     if (s.isMouseSelecting && !mouse.leftMouseButton) {
         s.isMouseSelecting = false;
@@ -799,7 +799,7 @@ export function imBeginTextEditor(
     } imElEnd(c, EL_TEXTAREA);
 }
 
-export function imEndTextEditor(c: ImCache, ev: ImGlobalEventSystem, s: TextEditorState) {
+export function imEndTextEditor(c: ImCache, s: TextEditorState) {
     tb.itCopy(s._renderCursorEnd, s._renderCursor);
 
     // NOTE: code that is in the rendering pass should be moved
@@ -821,7 +821,7 @@ export function imEndTextEditor(c: ImCache, ev: ImGlobalEventSystem, s: TextEdit
         }
     }
 
-    defaultTextEditorKeyboardEventHandler(ev, s);
+    defaultTextEditorKeyboardEventHandler(s);
 
     // Make sure the cursor is still in view. autoscrolling.
     // Since the user can render anything inside a line, we actually can't make any assumptions about
@@ -885,8 +885,8 @@ export function imEndTextEditor(c: ImCache, ev: ImGlobalEventSystem, s: TextEdit
     }
 }
 
-export function handleTextEditorClickEventForChar(c: ImCache, ev: ImGlobalEventSystem, s: TextEditorState, cursor: tb.Iterator) {
-    if (elHasMouseDown(c, ev)) {
+export function handleTextEditorClickEventForChar(c: ImCache, s: TextEditorState, cursor: tb.Iterator) {
+    if (elHasMousePress(c)) {
         s.hasClick = true;
 
         // single click, clear selection
@@ -895,7 +895,7 @@ export function handleTextEditorClickEventForChar(c: ImCache, ev: ImGlobalEventS
         textEditorStartSelection(s, s.cursor);
     }
 
-    if (s.hasClick && elHasMouseDown(c, ev)) {
+    if (s.hasClick && elHasMousePress(c)) {
         // mouse is down. could be a single click, or a drag click
         
         // we probably wanted to start selecting from here
