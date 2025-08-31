@@ -1,50 +1,24 @@
-import { initCnStyles } from "src/utils/cn";
-import { renderApp as imApp, } from './app.ts';
-import {
-    imFpsCounterOutput,
-    newFpsCounterState,
-    startFpsCounter,
-    stopFpsCounter,
-} from "./components/fps-counter.ts";
+import { initCnStyles } from "src/utils/cssb";
+import { imApp } from './app.ts';
+import { fpsMarkRenderingEnd, fpsMarkRenderingStart, newFpsCounterState, } from "./components/fps-counter.ts";
 import "./styling.ts";
-import { getImKeys, imEndIf, imIf, imState, initializeImDomUtils } from './utils/im-dom-utils.ts';
-import { imTestHarness } from "./test-harness.ts";
+import { ImCache, imCacheBegin, imCacheEnd, imState, USE_ANIMATION_FRAME } from "./utils/im-core.ts";
+import { imDomRootBegin, imDomRootEnd } from "./utils/im-dom.ts";
 
-// const TESTING_ENABLED = !IS_PROD;
-const TEST_HARNESS_ENABLED = true;
+const cGlobal: ImCache = [];
 
-let isTesting = false;
+function imRoot(c: ImCache) {
+    imCacheBegin(cGlobal, imRoot, USE_ANIMATION_FRAME); {
+        const fps = imState(c, newFpsCounterState);
+        fpsMarkRenderingStart(fps);
 
-function imRoot() {
-    const fps = imState(newFpsCounterState);
+        imDomRootBegin(c, document.body); {
+            imApp(c, fps);
+        } imDomRootEnd(c, document.body);
 
-    startFpsCounter(fps);
-
-    if (TEST_HARNESS_ENABLED) {
-        const keys = getImKeys();
-        if (keys.keyDown) {
-            const key = keys.keyDown.key;
-            if (key === "F1") {
-                isTesting = !isTesting;
-            } else if (key === "Escape" && isTesting) {
-                isTesting = !isTesting;
-                keys.keyDown = null;
-            }
-        }
-    }
-
-    imApp();
-
-    imFpsCounterOutput(fps);
-
-    if (TEST_HARNESS_ENABLED) {
-        if (imIf() && isTesting) {
-            imTestHarness();
-        } imEndIf();
-    }
-
-    stopFpsCounter(fps);
+        fpsMarkRenderingEnd(fps);
+    } imCacheEnd(cGlobal);
 }
 
 initCnStyles();
-initializeImDomUtils(imRoot);
+imRoot(cGlobal);

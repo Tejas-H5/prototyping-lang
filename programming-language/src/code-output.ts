@@ -1,425 +1,481 @@
+import { imCode } from './app-styling';
+import {
+    BLOCK,
+    COL,
+    imAbsolute,
+    imAlign,
+    imAspectRatio,
+    imBg,
+    imButton,
+    imFixed,
+    imFlex,
+    imGap,
+    imJustify,
+    imLayout,
+    imLayoutEnd,
+    imPadding,
+    imPre,
+    imRelative,
+    imSize,
+    INLINE,
+    NA,
+    PERCENT,
+    PX,
+    ROW
+} from './components/core/layout';
+import { imLine, LINE_VERTICAL } from './components/im-line';
+import { imScrollContainerBegin, newScrollContainer } from './components/scroll-container';
 import { CODE_EXAMPLES } from './examples';
-import { ALIGN_CENTER, imBeginCodeBlock, imBeginHeading, BOLD, CODE, COL, FIXED, FLEX, GAP, H100, H3, imBeginAbsoluteLayout, imBeginAspectRatio, imBeginButton, imBeginLayout, imBeginScrollContainer, imTextSpan, imVerticalBar, JUSTIFY_CENTER, newH3, NONE, OPAQUE, PRE, RELATIVE, ROW, setInset, TRANSLUCENT, W100, } from './layout';
-import { evaluateFunctionWithinProgramWithArgs, ExecutionSteps, executionStepToString, getCurrentCallstack, newNumberResult, ProgramExecutionStep, ProgramGraphOutput, ProgramImageOutput, ProgramInterpretResult, ProgramOutputs, ProgramPlotOutput, ProgramPrintOutput, ProgramResult, ProgramResultFunction, ProgramResultNumber, programResultTypeString, T_RESULT_FN, T_RESULT_LIST, T_RESULT_MAP, T_RESULT_MATRIX, T_RESULT_NUMBER, T_RESULT_RANGE, T_RESULT_STRING } from './program-interpreter';
-import { binOpToString, binOpToOpString as binOpToSymbolString, DiagnosticInfo, expressionToString, expressionTypeToString, ProgramExpression, ProgramParseResult, T_ASSIGNMENT, T_BINARY_OP, T_BLOCK, T_DATA_INDEX_OP, T_FN, T_IDENTIFIER, T_IDENTIFIER_THE_RESULT_FROM_ABOVE, T_LIST_LITERAL, T_MAP_LITERAL, T_NUMBER_LITERAL, T_RANGE_FOR, T_STRING_LITERAL, T_TERNARY_IF, T_UNARY_OP, T_VECTOR_LITERAL, unaryOpToOpString, unaryOpToString } from './program-parser';
+import {
+    evaluateFunctionWithinProgramWithArgs,
+    ExecutionSteps,
+    executionStepToString,
+    getCurrentCallstack,
+    newNumberResult,
+    ProgramExecutionStep,
+    ProgramGraphOutput,
+    ProgramImageOutput,
+    ProgramInterpretResult,
+    ProgramOutputs,
+    ProgramPlotOutput,
+    ProgramPrintOutput,
+    ProgramResult,
+    ProgramResultFunction,
+    ProgramResultNumber,
+    programResultTypeString,
+    T_RESULT_FN,
+    T_RESULT_LIST,
+    T_RESULT_MAP,
+    T_RESULT_MATRIX,
+    T_RESULT_NUMBER,
+    T_RESULT_RANGE,
+    T_RESULT_STRING
+} from './program-interpreter';
+import {
+    binOpToString,
+    binOpToOpString as binOpToSymbolString,
+    DiagnosticInfo,
+    expressionToString,
+    expressionTypeToString,
+    ProgramExpression,
+    ProgramParseResult,
+    T_ASSIGNMENT,
+    T_BINARY_OP,
+    T_BLOCK,
+    T_DATA_INDEX_OP,
+    T_FN,
+    T_IDENTIFIER,
+    T_IDENTIFIER_THE_RESULT_FROM_ABOVE,
+    T_LIST_LITERAL,
+    T_MAP_LITERAL,
+    T_NUMBER_LITERAL,
+    T_RANGE_FOR,
+    T_STRING_LITERAL,
+    T_TERNARY_IF,
+    T_UNARY_OP,
+    T_VECTOR_LITERAL,
+    unaryOpToOpString,
+    unaryOpToString
+} from './program-parser';
 import { GlobalContext, rerun, startDebugging } from './state';
 import "./styling";
 import { cssVars, getCurrentTheme } from './styling';
 import { assert } from './utils/assert';
+import { scrollIntoViewVH } from './utils/dom-utils';
 import {
-    deltaTimeSeconds,
-    disableIm,
-    elementHasMousePress,
-    elementHasMouseDown,
-    elementHasMouseHover,
-    enableIm,
-    getCurrentRoot,
-    getImMouse,
-    imArray,
-    imEnd,
-    imDiv,
-    imEndList,
-    imInit,
-    imMemo,
-    imBeginList,
-    imMemoObjectVals,
-    imPreventScrollEventPropagation,
-    imRef,
-    imState,
-    imBeginRoot,
-    imStateInline,
-    imTrackSize,
-    nextListRoot,
-    scrollIntoViewVH,
-    setInnerText,
-    setStyle,
-    UIRoot,
+    getDeltaTimeSeconds,
+    ImCache,
+    imFor,
+    imForEnd,
+    imGet,
     imIf,
-    imEndIf,
-    imElse,
+    imIfElse,
+    imIfEnd,
+    imKeyedBegin,
+    imKeyedEnd,
+    imMemo,
+    imSet,
+    imState,
     imSwitch,
-    imEndSwitch
-} from './utils/im-dom-utils';
+    imSwitchEnd,
+    inlineTypeId,
+    isFirstishRender
+} from './utils/im-core';
+import {
+    EL_CANVAS,
+    EL_H3,
+    elGet,
+    elHasMouseDown,
+    elHasMouseOver,
+    elSetStyle,
+    imElBegin,
+    imElEnd,
+    ImGlobalEventSystem,
+    imPreventScrollEventPropagation,
+    imStr,
+    imStrFmt,
+    imTrackSize
+} from './utils/im-dom';
 import { clamp, gridSnap, inverseLerp, lerp, max, min } from './utils/math-utils';
 import { getSliceValue } from './utils/matrix-math';
 
-export function renderAppCodeOutput(ctx: GlobalContext) {
-    imBeginLayout(ROW | GAP); {
-        imBeginButton(ctx.state.autoRun); {
-            imTextSpan("Autorun");
+export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
+    imLayout(c, ROW); imGap(c, 5, PX); {
+        imLayout(c, BLOCK); imButton(c, ctx.state.autoRun); {
+            imStr(c, "Autorun");
 
-            if (elementHasMousePress()) {
+            if (elHasMouseDown(c, ctx.ev)) {
                 ctx.state.autoRun = !ctx.state.autoRun
                 if (ctx.state.autoRun) {
                     rerun(ctx);
                 }
             }
-        } imEnd();
+        } imLayoutEnd(c);
 
-        imBeginButton(); {
-            imTextSpan("Start debugging");
-            if (elementHasMousePress()) {
+        imLayout(c, BLOCK); {
+            imStr(c, "Start debugging");
+            if (elHasMouseDown(c, ctx.ev)) {
                 startDebugging(ctx);
             }
-        } imEnd();
+        } imLayoutEnd(c);
 
-        imBeginButton(ctx.state.showParserOutput); {
-            imTextSpan("Show AST");
-            if (elementHasMousePress()) {
+        imLayout(c, BLOCK); imButton(c, ctx.state.showParserOutput); {
+            imStr(c, "Show AST");
+            if (elHasMouseDown(c, ctx.ev)) {
                 ctx.state.showParserOutput = !ctx.state.showParserOutput;
             }
-        } imEnd();
+        } imLayoutEnd(c);
 
 
-        imBeginButton(ctx.state.showInterpreterOutput); {
-            imTextSpan("Show instructions");
-            if (elementHasMousePress()) {
+        imLayout(c, BLOCK); imButton(c, ctx.state.showParserOutput); {
+            imStr(c, "Show instructions");
+            if (elHasMouseDown(c, ctx.ev)) {
                 ctx.state.showInterpreterOutput = !ctx.state.showInterpreterOutput;
             }
-        } imEnd();
-    } imEnd();
+        } imLayoutEnd(c);
+    } imLayoutEnd(c);
 
-    const scrollContainer = imBeginScrollContainer(FLEX); {
+    const sc = imState(c, newScrollContainer);
+    const scrollContainer = imScrollContainerBegin(c, sc); {
         const parseResult = ctx.lastParseResult;
 
-        if (imIf() && ctx.state.showParserOutput) {
-            imParserOutputs(parseResult);
-        } imEndIf();
+        if (imIf(c) && ctx.state.showParserOutput) {
+            imParserOutputs(c, parseResult);
+        } imIfEnd(c);
 
-        const message = imRef<string>();
+        let message; message = imGet(c, inlineTypeId(imAppCodeOutput));
+        if (!message) message = imSet(c, { val: "" });
 
         // TODO: better UI for this message
-        imDiv(); {
-            imTextSpan(message.val ?? "");
-        } imEnd();
+        imLayout(c, BLOCK); { 
+            imStr(c, message.val ?? "");
+        } imLayoutEnd(c);
 
-        if (imIf() && ctx.state.showInterpreterOutput) {
-            if (imIf() && ctx.lastInterpreterResult) {
+        if (imIf(c) && ctx.state.showInterpreterOutput) {
+            if (imIf(c) && ctx.lastInterpreterResult) {
                 const interpretResult = ctx.lastInterpreterResult;
 
-                imDiv(); {
-                    imDiagnosticInfo("Interpreting errors", interpretResult.errors, "No interpreting errors");
+                imLayout(c, BLOCK); {
+                    imDiagnosticInfo(c, "Interpreting errors", interpretResult.errors, "No interpreting errors");
 
-                    imBeginRoot(newH3); {
-                        imTextSpan("Instructions");
-                    } imEnd();
+                    imElBegin(c, EL_H3); imStr(c, "Instructions"); imElEnd(c, EL_H3);
 
-                    imBeginList(); {
-                        nextListRoot();
+                    imLayout(c, ROW); imGap(c, 5, PX); {
+                        imElBegin(c, EL_H3); imStr(c, interpretResult.entryPoint.name); imElEnd(c, EL_H3);
 
-                        imBeginLayout(ROW | GAP); {
-                            imTextSpan(interpretResult.entryPoint.name, H3 | BOLD);
+                        imLayout(c, ROW); imButton(c); {
+                            imStr(c, "Start debugging");
+                            if (elHasMouseDown(c, ctx.ev)) {
+                                startDebugging(ctx);
+                            }
+                        } imLayoutEnd(c);
+                    } imLayoutEnd(c);
 
-                            imBeginButton(); {
-                                imTextSpan("Start debugging");
-                                if (elementHasMousePress()) {
+                    imFunctionInstructions(c, interpretResult, interpretResult.entryPoint);
+
+                    imFor(c); for (const [, fn] of interpretResult.functions) {
+                        imLayout(c, ROW); imGap(c, 5, PX); {
+                            imElBegin(c, EL_H3); imStrFmt(c, fn, getFunctionName); imElEnd(c, EL_H3);
+
+                            imLayout(c, ROW); imButton(c); {
+                                imStr(c, "Start debugging");
+                                if (elHasMouseDown(c, ctx.ev)) {
                                     startDebugging(ctx);
                                 }
-                            } imEnd();
-                        } imEnd();
+                            } imLayoutEnd(c);
+                        } imLayoutEnd(c);
 
-                        renderFunctionInstructions(interpretResult, interpretResult.entryPoint);
-
-                        for (const [, fn] of interpretResult.functions) {
-                            nextListRoot();
-
-                            imBeginLayout(ROW | GAP); {
-                                const fnName = imFunctionName(fn);
-                                imTextSpan(fnName, H3 | BOLD);
-
-                                imBeginButton(); {
-                                    imTextSpan("Start debugging");
-                                } imEnd();
-                            } imEnd();
-
-                            renderFunctionInstructions(interpretResult, fn.code);
-                        }
-                    } imEndList();
-
-                } imEnd();
+                        imFunctionInstructions(c, interpretResult, fn.code);
+                    } imForEnd(c);
+                } imLayoutEnd(c);
             } else {
-                imElse();
-                imBeginLayout(); {
-                    imTextSpan("No instructions generated yet");
-                } imEnd();
-            } imEndIf();
-        } imEndIf();
+                imIfEnd(c);
+                imLayout(c, BLOCK); {
+                    imStr(c, "No instructions generated yet");
+                } imLayoutEnd(c);
+            } imIfEnd(c);
+        } imIfEnd(c);
 
-        imBeginHeading(); {
-            imTextSpan("Code output");
-        } imEnd();
+        imElBegin(c, EL_H3); imStr(c, "Code output"); imElEnd(c, EL_H3);
 
-        imBeginLayout(ROW); {
-            imBeginButton(ctx.state.showGroupedOutput); {
-                imTextSpan("Grouped");
+        imLayout(c, ROW); imButton(c, ctx.state.showGroupedOutput); {
+            imStr(c, "Grouped");
 
-                if (elementHasMousePress()) {
-                    ctx.state.showGroupedOutput = !ctx.state.showGroupedOutput;
-                }
-            } imEnd();
-        } imEnd();
+            if (elHasMouseDown(c, ctx.ev)) {
+                ctx.state.showGroupedOutput = !ctx.state.showGroupedOutput;
+            }
+        } imLayoutEnd(c);
 
-        if (imIf() && ctx.lastInterpreterResult) {
+        if (imIf(c) && ctx.lastInterpreterResult) {
             imProgramOutputs(
+                c,
                 ctx, 
                 ctx.lastInterpreterResult, 
                 ctx.lastInterpreterResult.outputs,
-                scrollContainer.root
+                scrollContainer,
             );
         } else {
-            imElse();
-            imBeginLayout(); {
-                imTextSpan("Program hasn't been run yet");
-            } imEnd();
-        } imEndIf();
+            imIfElse(c);
+            imLayout(c, BLOCK); {
+                imStr(c, "Program hasn't been run yet");
+            } imLayoutEnd(c);
+        } imIfElse(c);
 
-        if (imIf() && ctx.state.text === "") {
+        if (imIf(c) && ctx.state.text === "") {
             // NOTE: might not be the best workflow. i.e maybe we want to be able to see the examples while we're writing things.
 
-            imBeginHeading(); {
-                imTextSpan("Examples")
-            } imEnd();
+            imElBegin(c, EL_H3); imStr(c, "Examples"); imElEnd(c, EL_H3);
 
-            imBeginLayout(COL | GAP); {
-                imBeginList();
-                for (const eg of CODE_EXAMPLES) {
-                    nextListRoot();
-                    imBeginButton(); {
-                        imTextSpan(eg.name);
+            imLayout(c, COL); imGap(c, 5, PX); {
+                imFor(c); for (const eg of CODE_EXAMPLES) {
+                    imLayout(c, BLOCK); imButton(c); {
+                        imStr(c, eg.name);
 
-                        if (elementHasMousePress()) {
+                        if (elHasMouseDown(c, ctx.ev)) {
                             ctx.state.text = eg.code.trim();
                             ctx.lastLoaded = Date.now();
                         }
-                    } imEnd();
-                }
-                imEndList();
-            } imEnd();
-        } imEndIf();
-    } imEnd();
+                    } imLayoutEnd(c);
+                } imForEnd(c);
+            } imLayoutEnd(c);
+        } imIfEnd(c);
+    } imLayoutEnd(c);
+}
+
+function imParserOutputRow(c: ImCache, title: string, type: string, depth: number, code?: string) {
+    imLayout(c, BLOCK); {
+        if (imMemo(c, depth)) elSetStyle(c, "paddingLeft", (depth * 20) + "px");
+
+        imStr(c, title);
+        imStr(c, " = ");
+        imStr(c, type);
+
+        if (imIf(c) && code) {
+            imStr(c, " ");
+            imLayout(c, INLINE); imCode(c); imStr(c, code); imLayoutEnd(c);
+        } imIfEnd(c);
+    } imLayoutEnd(c);
 }
 
 
-function imParserOutputs(parseResult: ProgramParseResult | undefined) {
-    if (imIf() && parseResult) {
+function imRecursiveParserOutputExpression(
+    c: ImCache,
+    parseResult: ProgramParseResult,
+    title: string, 
+    expr: ProgramExpression | undefined, 
+    depth: number,
+) {
+    if (!expr) {
+        return;
+    }
+
+    let typeString = expressionTypeToString(expr);
+    switch (expr.t) {
+        case T_IDENTIFIER: {
+            imParserOutputRow(c, title, typeString, depth, expressionToString(parseResult.text, expr));
+        } break;
+        case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: {
+            imParserOutputRow(c, title, typeString, depth);
+        } break;
+        case T_ASSIGNMENT: {
+            imParserOutputRow(c, title, typeString, depth);
+            imRecursiveParserOutputExpression(c, parseResult, "lhs", expr.lhs, depth + 1);
+            imRecursiveParserOutputExpression(c, parseResult, "rhs", expr.rhs, depth + 1);
+        } break;
+        case T_BINARY_OP: {
+            const lhsText = expressionToString(parseResult.text, expr.lhs);
+            const rhsText = expr.rhs ? expressionToString(parseResult.text, expr.rhs) : INCOMPLETE;
+            const opSymbol = binOpToSymbolString(expr.op);
+            const text = `(${lhsText}) ${opSymbol} (${rhsText})`;
+            imParserOutputRow(c, title, binOpToString(expr.op), depth, text);
+
+            imRecursiveParserOutputExpression(c, parseResult, "lhs", expr.lhs, depth + 1);
+            imRecursiveParserOutputExpression(c, parseResult, "rhs", expr.rhs, depth + 1);
+        } break;
+        case T_UNARY_OP: {
+            const exprText = expressionToString(parseResult.text, expr.expr);
+            const opSymbol = unaryOpToOpString(expr.op);
+            const text = `${opSymbol}(${exprText})`;
+            imParserOutputRow(c, title, unaryOpToString(expr.op), depth, text);
+            imRecursiveParserOutputExpression(c, parseResult, "expr", expr.expr, depth + 1);
+        } break;
+        case T_MAP_LITERAL: {
+            imParserOutputRow(c, title, typeString, depth, expressionToString(parseResult.text, expr));
+
+            for (let i = 0; i < expr.kvPairs.length; i++) {
+                imRecursiveParserOutputExpression(c, parseResult, "key[" + i + "]", expr.kvPairs[i][0], depth + 1);
+                imRecursiveParserOutputExpression(c, parseResult, "val[" + i + "]", expr.kvPairs[i][1], depth + 1);
+            }
+        } break;
+        case T_LIST_LITERAL:
+        case T_VECTOR_LITERAL: {
+            imParserOutputRow(c, title, typeString, depth, expressionToString(parseResult.text, expr));
+
+            for (let i = 0; i < expr.items.length; i++) {
+                imRecursiveParserOutputExpression(c, parseResult, "[" + i + "]", expr.items[i], depth + 1);
+            }
+        } break;
+        case T_NUMBER_LITERAL: {
+            imParserOutputRow(c, title, typeString, depth, expressionToString(parseResult.text, expr));
+        } break;
+        case T_STRING_LITERAL: {
+            imParserOutputRow(c, title, typeString, depth, expressionToString(parseResult.text, expr));
+        } break;
+        case T_TERNARY_IF: {
+            const queryText = expressionToString(parseResult.text, expr.query);
+            const trueText = expressionToString(parseResult.text, expr.trueBranch);
+            const falseText = expr.falseBranch ? expressionToString(parseResult.text, expr.falseBranch) : "";
+            imParserOutputRow(c, title, typeString, depth, `(${queryText}) ? (${trueText}) : (${falseText})`);
+
+            imRecursiveParserOutputExpression(c, parseResult, "query", expr.query, depth + 1);
+            imRecursiveParserOutputExpression(c, parseResult, "trueBranch", expr.trueBranch, depth + 1);
+            if (expr.falseBranch) {
+                imRecursiveParserOutputExpression(c, parseResult, "falseBranch", expr.falseBranch, depth + 1);
+            }
+        } break;
+        case T_BLOCK: {
+            imParserOutputRow(c, title, typeString, depth, "statement count: " + expr.statements.length);
+
+            for (let i = 0; i < expr.statements.length; i++) {
+                imRecursiveParserOutputExpression(c, parseResult, "s" + i, expr.statements[i], depth + 1);
+            }
+        } break;
+        case T_RANGE_FOR: {
+            imParserOutputRow(c, title, typeString, depth);
+            imRecursiveParserOutputExpression(c, parseResult, "loop var", expr.loopVar, depth + 1);
+            imRecursiveParserOutputExpression(c, parseResult, "range expr", expr.rangeExpr, depth + 1);
+            imRecursiveParserOutputExpression(c, parseResult, "loop body", expr.body, depth + 1);
+        } break;
+        case T_FN: {
+            imParserOutputRow(c, title, typeString, depth);
+            imRecursiveParserOutputExpression(c, parseResult, "name", expr.fnName, depth + 1);
+            for (let i = 0; i < expr.arguments.length; i++) {
+                imRecursiveParserOutputExpression(c, parseResult, "arg" + i, expr.arguments[i], depth + 1);
+            }
+            if (expr.body) {
+                imRecursiveParserOutputExpression(c, parseResult, "body", expr.body, depth + 1);
+            }
+        } break;
+        case T_DATA_INDEX_OP: {
+            imParserOutputRow(c, title, typeString, depth);
+            imRecursiveParserOutputExpression(c, parseResult, "var", expr.lhs, depth + 1);
+            for (let i = 0; i < expr.indexes.length; i++) {
+                imRecursiveParserOutputExpression(c, parseResult, "[" + i + "]", expr.indexes[i], depth + 1);
+            }
+        } break;
+        default: {
+            throw new Error("Unhandled type (parse view): " + typeString);
+        }
+    }
+}
+
+const INCOMPLETE = " <Incomplete!> ";
+
+function imParserOutputs(c: ImCache, parseResult: ProgramParseResult | undefined) {
+    if (imIf(c) && parseResult) {
         const statements = parseResult.statements;
 
-        if (imIf() && statements.length > 0) {
-            function renderRow(title: string, type: string, depth: number, code?: string) {
-                nextListRoot();
-                imDiv(); {
-                    setStyle("paddingLeft", (depth * 20) + "px");
-
-                    imTextSpan(title);
-                    imTextSpan(" = ");
-                    imTextSpan(type);
-
-                    if (imIf() && code) {
-                        imTextSpan(" ");
-                        imTextSpan(code, CODE);
-                    } imEndIf();
-                } imEnd();
-            }
-
-            const INCOMPLETE = " <Incomplete!> ";
-
-            const dfs = (title: string, expr: ProgramExpression | undefined, depth: number) => {
-                if (!expr) {
-                    renderRow(title, INCOMPLETE, depth);
-                    return;
-                }
-
-                let typeString = expressionTypeToString(expr);
-                switch (expr.t) {
-                    case T_IDENTIFIER: {
-                        renderRow(title, typeString, depth, expressionToString(parseResult.text, expr));
-                    } break;
-                    case T_IDENTIFIER_THE_RESULT_FROM_ABOVE: {
-                        renderRow(title, typeString, depth);
-                    } break;
-                    case T_ASSIGNMENT: {
-                        renderRow(title, typeString, depth);
-                        dfs("lhs", expr.lhs, depth + 1);
-                        dfs("rhs", expr.rhs, depth + 1);
-                    } break;
-                    case T_BINARY_OP: {
-                        const lhsText = expressionToString(parseResult.text, expr.lhs);
-                        const rhsText = expr.rhs ? expressionToString(parseResult.text, expr.rhs) : INCOMPLETE;
-                        const opSymbol = binOpToSymbolString(expr.op);
-                        const text = `(${lhsText}) ${opSymbol} (${rhsText})`;
-                        renderRow(title, binOpToString(expr.op), depth, text);
-
-                        dfs("lhs", expr.lhs, depth + 1);
-                        dfs("rhs", expr.rhs, depth + 1);
-                    } break;
-                    case T_UNARY_OP: {
-                        const exprText = expressionToString(parseResult.text, expr.expr);
-                        const opSymbol = unaryOpToOpString(expr.op);
-                        const text = `${opSymbol}(${exprText})`;
-                        renderRow(title, unaryOpToString(expr.op), depth, text);
-                        dfs("expr", expr.expr, depth + 1);
-                    } break;
-                    case T_MAP_LITERAL: {
-                        renderRow(title, typeString, depth, expressionToString(parseResult.text, expr));
-
-                        for (let i = 0; i < expr.kvPairs.length; i++) {
-                            dfs("key[" + i + "]", expr.kvPairs[i][0], depth + 1);
-                            dfs("val[" + i + "]", expr.kvPairs[i][1], depth + 1);
-                        }
-                    } break;
-                    case T_LIST_LITERAL:
-                    case T_VECTOR_LITERAL: {
-                        renderRow(title, typeString, depth, expressionToString(parseResult.text, expr));
-
-                        for (let i = 0; i < expr.items.length; i++) {
-                            dfs("[" + i + "]", expr.items[i], depth + 1);
-                        }
-                    } break;
-                    case T_NUMBER_LITERAL: {
-                        renderRow(title, typeString, depth, expressionToString(parseResult.text, expr));
-                    } break;
-                    case T_STRING_LITERAL: {
-                        renderRow(title, typeString, depth, expressionToString(parseResult.text, expr));
-                    } break;
-                    case T_TERNARY_IF: {
-                        const queryText = expressionToString(parseResult.text, expr.query);
-                        const trueText = expressionToString(parseResult.text, expr.trueBranch);
-                        const falseText = expr.falseBranch ? expressionToString(parseResult.text, expr.falseBranch) : "";
-                        renderRow(title, typeString, depth, `(${queryText}) ? (${trueText}) : (${falseText})`);
-
-                        dfs("query", expr.query, depth + 1);
-                        dfs("trueBranch", expr.trueBranch, depth + 1);
-                        if (expr.falseBranch) {
-                            dfs("falseBranch", expr.falseBranch, depth + 1);
-                        }
-                    } break;
-                    case T_BLOCK: {
-                        renderRow(title, typeString, depth, "statement count: " + expr.statements.length);
-
-                        for (let i = 0; i < expr.statements.length; i++) {
-                            dfs("s" + i, expr.statements[i], depth + 1);
-                        }
-                    } break;
-                    case T_RANGE_FOR: {
-                        renderRow(title, typeString, depth);
-                        dfs("loop var", expr.loopVar, depth + 1);
-                        dfs("range expr", expr.rangeExpr, depth + 1);
-                        dfs("loop body", expr.body, depth + 1);
-                    } break;
-                    case T_FN: {
-                        renderRow(title, typeString, depth);
-                        dfs("name", expr.fnName, depth + 1);
-                        for (let i = 0; i < expr.arguments.length; i++) {
-                            dfs("arg" + i, expr.arguments[i], depth + 1);
-                        }
-                        if (expr.body) {
-                            dfs("body", expr.body, depth + 1);
-                        }
-                    } break;
-                    case T_DATA_INDEX_OP: {
-                        renderRow(title, typeString, depth);
-                        dfs("var", expr.lhs, depth + 1);
-                        for (let i = 0; i < expr.indexes.length; i++) {
-                            dfs("[" + i + "]", expr.indexes[i], depth + 1);
-                        }
-                    } break;
-                    default: {
-                        throw new Error("Unhandled type (parse view): " + typeString);
-                    }
-                }
-            }
-
-            imBeginList();
-            for (let i = 0; i < statements.length; i++) {
+        if (imIf(c) && statements.length > 0) {
+            imFor(c); for (let i = 0; i < statements.length; i++) {
                 const statement = statements[i];
-                dfs("Statement " + (i + 1), statement, 0);
-            }
-            imEndList();
+                imRecursiveParserOutputExpression(
+                    c,
+                    parseResult,
+                    "Statement " + (i + 1),
+                    statement,
+                    0
+                );
+            } imForEnd(c);
         } else {
-            imElse();
-            imTextSpan("Nothing parsed yet");
-        } imEndIf();
+            imIfElse(c);
+            imStr(c, "Nothing parsed yet");
+        } imIfEnd(c);
 
-        imDiagnosticInfo("Errors", parseResult.errors, "No parsing errors!");
-        imDiagnosticInfo("Warnings", parseResult.warnings, "No parsing warnings");
+        imDiagnosticInfo(c, "Errors", parseResult.errors, "No parsing errors!");
+        imDiagnosticInfo(c, "Warnings", parseResult.warnings, "No parsing warnings");
     } else {
-        imElse();
-        imTextSpan("No parse results yet");
-    } imEndIf();
+        imIfElse(c);
+        imStr(c, "No parse results yet");
+    } imIfEnd(c);
 }
 
 // TODO: display these above the code editor itself. 
-function imDiagnosticInfo(heading: string, info: DiagnosticInfo[], emptyText: string) {
-    if (imIf() && heading) {
-        imBeginHeading(); {
-            imTextSpan(heading);
-        } imEnd();
-    } imEndIf();
+function imDiagnosticInfo(c: ImCache, heading: string, info: DiagnosticInfo[], emptyText: string) {
+    if (imIf(c) && heading) {
+        imElBegin(c, EL_H3); imStr(c, heading); imElEnd(c, EL_H3);
+    } imIfEnd(c);
 
-    imBeginList();
-    for (const e of info) {
-        nextListRoot();
-        imDiv(); {
-            imTextSpan("Line " + e.pos.line + " Col " + (e.pos.col) + " Tab " + (e.pos.tabs) + " - " + e.problem);
-        } imEnd();
-    }
-    imEndList();
+    imFor(c); for (const e of info) {
+        imLayout(c, BLOCK); {
+            imStr(c, "Line " + e.pos.line + " Col " + (e.pos.col) + " Tab " + (e.pos.tabs) + " - " + e.problem);
+        } imLayoutEnd(c);
+    } imForEnd(c);
 
-    if (imIf() && info.length === 0) {
-        imDiv(); {
-            imTextSpan(emptyText);
-        } imEnd();
-    } imEndIf();
+    if (imIf(c) && info.length === 0) {
+        imLayout(c, BLOCK); {
+            imStr(c, emptyText);
+        } imLayoutEnd(c);
+    } imIfEnd(c);
 }
 
-
-
-
-export function renderProgramResult(res: ProgramResult) {
-    imBeginLayout(ROW | GAP); {
+export function imProgramResult(c: ImCache, res: ProgramResult) {
+    imLayout(c, ROW); imGap(c, 5, PX); {
         const typeString = programResultTypeString(res)
-        imTextSpan(typeString + " ");
+        imStr(c, typeString + " ");
 
-        imSwitch(res.t);
-        switch (res.t) {
-            case T_RESULT_NUMBER:
-                imTextSpan("" + res.val, CODE);
-                break;
-            case T_RESULT_STRING:
-                imBeginLayout(COL | GAP); {
-                    imTextSpan(res.val, CODE | PRE);
-                } imEnd();
-                break;
-            case T_RESULT_LIST:
-                imBeginCodeBlock(0); {
-                    imTextSpan("list[", CODE);
-                    imBeginCodeBlock(1); {
-                        imBeginList();
-                        for (let i = 0; i < res.values.length; i++) {
-                            nextListRoot();
-                            renderProgramResult(res.values[i]);
-                        }
-                        imEndList();
-                    } imEnd();
-                    imTextSpan("]", CODE);
-                } imEnd();
-                break;
-            case T_RESULT_MAP: {
-                imBeginCodeBlock(0); {
-                    imTextSpan("map{", CODE);
-                    imBeginCodeBlock(1); {
-                        imBeginList();
-                        for (const [k, val] of res.map) {
-                            nextListRoot();
-                            imTextSpan(k + "", CODE);
-                            renderProgramResult(val);
-                        }
-                        imEndList();
-                    } imEnd();
-                    imTextSpan("}", CODE);
-                } imEnd();
+        imSwitch(c, res.t); switch (res.t) {
+            case T_RESULT_NUMBER: {
+                imLayout(c, INLINE); imCode(c); imStr(c, "" + res.val); imLayoutEnd(c);
             } break;
-            case T_RESULT_MATRIX:
+            case T_RESULT_STRING: {
+                imLayout(c, COL); imGap(c, 5, PX); imPre(c); imCode(c); {
+                    imStr(c, res.val);
+                } imLayoutEnd(c);
+            } break;
+            case T_RESULT_LIST: {
+                imLayout(c, BLOCK); imCode(c); {
+                    imLayout(c, BLOCK); imCode(c, 1); imStr(c, "list["); imLayoutEnd(c);
+                    imLayout(c, BLOCK); imCode(c, 1); {
+                        imFor(c); for (let i = 0; i < res.values.length; i++) {
+                            imProgramResult(c, res.values[i]);
+                        } imForEnd(c);
+                    } imLayoutEnd(c);
+                    imLayout(c, BLOCK); imCode(c, 1); imStr(c, "]"); imLayoutEnd(c);
+                } imLayoutEnd(c);
+            } break;
+            case T_RESULT_MAP: {
+                imLayout(c, BLOCK); imCode(c, 0); {
+                    imLayout(c, BLOCK); imCode(c, 1); imStr(c, "map{"); imLayoutEnd(c);
+                    imLayout(c, BLOCK); imCode(c, 1); {
+                        imFor(c); for (const [k, val] of res.map) {
+                            imStr(c, k + "");
+                            imProgramResult(c, val);
+                        } imForEnd(c);
+                    } imLayoutEnd(c);
+                    imLayout(c, BLOCK); imCode(c, 1); imStr(c, "}"); imLayoutEnd(c);
+                } imLayoutEnd(c);
+            } break;
+            case T_RESULT_MATRIX: {
                 let idx = 0;
                 const dfs = (dim: number, isLast: boolean) => {
                     if (dim === res.val.shape.length) {
@@ -428,124 +484,116 @@ export function renderProgramResult(res: ProgramResult) {
                         // assuming everything renders in order, this is the only thing we need to do for this to work.
                         idx++;
 
-                        imTextSpan("" + val);
+                        imStr(c, "" + val);
 
-                        if (imIf() && !isLast) {
-                            imTextSpan(", ");
-                        } imEndIf();
+                        if (imIf(c) && !isLast) {
+                            imStr(c, ", ");
+                        } imIfEnd(c);
 
                         return;
                     }
 
-                    imBeginCodeBlock(dim === 0 ? 0 : 1); {
-                        imTextSpan("[");
-                        imBeginList(); {
-                            const len = res.val.shape[dim];
-                            for (let i = 0; i < len; i++) {
-                                // This is because when the 'level' of the list changes, the depth itself changes,
-                                // and the components we're rendering at a particular level will change. 
-                                // We need to re-key the list, so that we may render a different kind of component at this position.
-                                const key = (res.val.shape.length - dim) + "-" + i;
-                                nextListRoot(key);
+                    imLayout(c, BLOCK); imCode(c, dim === 0 ? 0 : 1); {
+                        imLayout(c, BLOCK); imCode(c, 1); imStr(c, "["); imLayoutEnd(c);
+                        const len = res.val.shape[dim];
+                        imFor(c); for (let i = 0; i < len; i++) {
+                            // This is because when the 'level' of the list changes, the depth itself changes,
+                            // and the components we're rendering at a particular level will change. 
+                            // We need to re-key the list, so that we may render a different kind of component at this position.
+                            const key = (res.val.shape.length - dim) + "-" + i;
+                            imKeyedBegin(c, key); {
                                 dfs(dim + 1, i === len - 1);
-                            }
-                        } imEndList();
-                        imTextSpan("]");
-                    } imEnd();
+                            } imKeyedEnd(c);
+                        } imForEnd(c);
+                        imLayout(c, BLOCK); imCode(c, 1); imStr(c, "]"); imLayoutEnd(c);
+                    } imLayoutEnd(c);
                 }
                 dfs(0, false);
-                break;
-            case T_RESULT_RANGE:
-                imTextSpan("" + res.val.lo, CODE);
-                imTextSpan(" -> ", CODE);
-                imTextSpan("" + res.val.hi, CODE);
-                break;
-            case T_RESULT_FN:
-                imTextSpan(res.expr.fnName.name, CODE);
-                break;
+            } break;
+            case T_RESULT_RANGE: {
+                imLayout(c, INLINE); imCode(c); {
+                    imStr(c, "" + res.val.lo);
+                    imStr(c, " -> ");
+                    imStr(c, "" + res.val.hi);
+                } imLayoutEnd(c);
+            } break;
+            case T_RESULT_FN: {
+                imLayout(c, INLINE); imCode(c); {
+                    imStr(c, res.expr.fnName.name);
+                } imLayoutEnd(c);
+            } break;
             default:
                 throw new Error("Unhandled result type: " + programResultTypeString(res));
-        } 
-    imEndSwitch();
-    } imEnd();
+        } imSwitchEnd(c);
+    } imLayoutEnd(c);
 }
 
-function renderExecutionStep(step: ProgramExecutionStep) {
-    imTextSpan(executionStepToString(step));
+function imExecutionStep(c: ImCache, step: ProgramExecutionStep) {
+    imStrFmt(c, step, executionStepToString);
 }
 
-export function renderFunctionInstructions(interpretResult: ProgramInterpretResult, { steps }: ExecutionSteps) {
-    imBeginLayout(FLEX | COL); {
-        const scrollContainer = imBeginScrollContainer(FLEX); {
-            let rCurrent: UIRoot<HTMLElement> | undefined;
+export function imFunctionInstructions(
+    c: ImCache,
+    interpretResult: ProgramInterpretResult,
+    { steps }: ExecutionSteps
+) {
+    imLayout(c, COL); imFlex(c); {
+        const sc = imState(c, newScrollContainer);
 
-            imBeginCodeBlock(0); {
-                if (imIf() && steps.length > 0) {
-                    imBeginList();
-                    for (let i = 0; i < steps.length; i++) {
-                        nextListRoot();
+        const scrollContainer = imScrollContainerBegin(c, sc); {
+            let rCurrent: HTMLElement | undefined;
 
+            imLayout(c, BLOCK); imCode(c); {
+                if (imIf(c) && steps.length > 0) {
+                    imFor(c); for (let i = 0; i < steps.length; i++) {
                         const step = steps[i];
 
                         const call = getCurrentCallstack(interpretResult);
                         const isCurrent = call?.code?.steps === steps
                             && i === call.i;
 
-                        const currentStepDiv = imDiv(); {
-                            imTextSpan(i + " | ");
+                        const currentStepDiv = imLayout(c, BLOCK); {
+                            imStr(c, i + " | ");
 
-                            renderExecutionStep(step);
+                            imExecutionStep(c, step);
 
-                            if (imIf() && isCurrent) {
-                                imTextSpan(" <----");
-                            } imEndIf();
-                        } imEnd();
+                            if (imIf(c) && isCurrent) {
+                                imStr(c, " <----");
+                            } imIfEnd(c);
+                        } imLayoutEnd(c);
 
                         if (isCurrent) {
                             rCurrent = currentStepDiv;
                         }
-                    }
-                    imEndList();
+                    } imForEnd(c);
                 } else {
-                    imElse();
-                    imDiv(); {
-                        imTextSpan("no instructions present");
-                    } imEnd();
-                } imEndIf();
-            } imEnd();
+                    imIfEnd(c);
+                    imLayout(c, BLOCK); {
+                        imStr(c, "no instructions present");
+                    } imLayoutEnd(c);
+                } imIfEnd(c);
+            } imLayoutEnd(c);
 
             if (rCurrent) {
-                scrollIntoViewVH(scrollContainer.root, rCurrent.root, 0.5);
+                scrollIntoViewVH(scrollContainer, rCurrent, 0.5);
             }
-        } imEnd();
-    } imEnd();
+        } imLayoutEnd(c);
+    } imLayoutEnd(c);
 }
 
+export function getFunctionName(fn: ProgramResultFunction | null) {
+    let name;
 
-export function imFunctionName(fn: ProgramResultFunction | null) {
-    const sb = imArray<string>();
+    if (!fn) {
+        name = "Entry point";
+    } else {
+        name = fn.code.name + "("
+            + fn.args.map(a =>a.name).join(", ")
+            + ")";
+    }
 
-    const fnChanged = imMemo(fn);
-    if (fnChanged) {
-        sb.length = 0;
-        if (!fn) {
-            sb.push("Entry point");
-        } else {
-            sb.push(fn.code.name + "(");
-            sb.push("(");
-            for (let i = 0; i < fn.args.length; i++) {
-                if (i > 0) sb.push(", ");
-                sb.push(fn.args[i].name);
-            }
-            sb.push(")");
-        }
-    } 
-
-    return sb.toString();
+    return name;
 }
-
-
-
 
 type ProgramOutputState = {
     outputToScrollTo: HTMLElement | undefined;
@@ -560,189 +608,170 @@ function canScrollToThing(ctx: GlobalContext, s: ProgramOutputState, expr: Progr
 }
 
 function imProgramPrintOutput(
+    c: ImCache,
     ctx: GlobalContext,
     program: ProgramInterpretResult, 
     s: ProgramOutputState,
     result: ProgramPrintOutput,
 ) {
     const programText = program.parseResult.text;
-    const root = imBeginLayout(ROW | GAP); {
+    const root = imLayout(c, ROW); imGap(c, 5, PX); {
         if (canScrollToThing(ctx, s, result.expr)) {
-            s.outputToScrollTo = root.root;
+            s.outputToScrollTo = root;
         }
 
-        imVerticalBar();
+        imLine(c, LINE_VERTICAL, 1);
 
-        imBeginCodeBlock(0); {
-            imTextSpan(
+        imLayout(c, BLOCK); imCode(c); {
+            imStr(
+                c,
                 expressionToString(programText, result.expr)
             )
-        } imEnd();
+        } imLayoutEnd(c);
 
-        imBeginLayout(FLEX); {
-            renderProgramResult(result.val);
-        } imEnd();
-    } imEnd();
+        imLayout(c, BLOCK); imFlex(c); {
+            imProgramResult(c, result.val);
+        } imLayoutEnd(c);
+    } imLayoutEnd(c);
 }
 
-
 export function imProgramOutputs(
+    c: ImCache,
     ctx: GlobalContext, 
     program: ProgramInterpretResult, 
     outputs: ProgramOutputs,
     scrollContainer?: HTMLElement,
 ) {
-    const s = imState(newProgramOutputsState);
+    const s = imState(c, newProgramOutputsState);
     s.outputToScrollTo = undefined;
     const programText = program.parseResult.text;
 
-    imBeginLayout(); {
-        if (imInit()) {
-            setStyle("height", "5px")
-        }
-    } imEnd();
-    imBeginLayout(COL | GAP); {
-        if (imIf() && ctx.state.showGroupedOutput) {
-            imBeginList();
-            for (const [step, prints] of outputs.printsGroupedByStep) {
-                nextListRoot();
+    imLayout(c, BLOCK); imSize(c, 0, NA, 5, PX); imLayoutEnd(c);
 
-                const localState = imStateInline(() => {
-                    return { open: false };
-                });
+    imLayout(c, COL); imGap(c, 5, PX); {
+        if (imIf(c) && ctx.state.showGroupedOutput) {
+            imFor(c); for (const [step, prints] of outputs.printsGroupedByStep) {
+                let localState; localState = imGet(c, inlineTypeId(imProgramOutputs));
+                if (!localState) localState = imSet(c, { open: false });
 
-                imBeginLayout(COL | FLEX); {
-                    imBeginLayout(ROW | FLEX); {
-                        imBeginLayout(CODE); {
-                            imTextSpan(expressionToString(programText, step.expr));
-                        } imEnd();
+                imLayout(c, COL); imFlex(c); {
+                    imLayout(c, ROW); imFlex(c); {
+                        imLayout(c, BLOCK); {
+                            imStr(c, expressionToString(programText, step.expr));
+                        } imLayoutEnd(c);
 
-                        imBeginLayout(FLEX); imEnd();
+                        imLayout(c, BLOCK); imFlex(c); imLayoutEnd(c);
 
-                        imBeginButton(); {
-                            imTextSpan("(" + prints.length + ")");
-                            if (elementHasMousePress()) {
+                        imLayout(c, BLOCK); imButton(c); {
+                            imStr(c, "(" + prints.length + ")");
+                            if (elHasMouseDown(c, ctx.ev)) {
                                 localState.open = !localState.open;
                             }
-                        } imEnd();
-                    } imEnd();
+                        } imLayoutEnd(c);
+                    } imLayoutEnd(c);
 
-                    if (imIf() && localState.open) {
-                        imBeginLayout(); {
-                            imBeginList();
-                            for (const result of prints) {
-                                nextListRoot();
-
-                                renderProgramResult(result.val);
-                            }
-                            imEndList();
-                        } imEnd();
-                    } imEndIf();
-                } imEnd();
-            }
-            imEndList();
+                    if (imIf(c) && localState.open) {
+                        imLayout(c, BLOCK); {
+                            imFor(c); for (const result of prints) {
+                                imProgramResult(c, result.val);
+                            } imForEnd(c);
+                        } imLayoutEnd(c);
+                    } imIfEnd(c);
+                } imLayoutEnd(c);
+            } imForEnd(c);
         } else {
-            imElse();
+            imIfElse(c);
 
-            imBeginList();
-            for (const result of outputs.prints) {
+            imFor(c); for (const result of outputs.prints) {
                 if (!result.visible) continue;
-                nextListRoot();
-                imProgramPrintOutput(ctx, program, s, result);
-            };
-            imEndList();
-        } imEndIf();
-    } imEnd();
-    imBeginLayout(COL | GAP); {
-        imBeginList();
-        for (const [idx, graph] of outputs.graphs) {
-            nextListRoot();
-
-            const root = imBeginLayout(COL | GAP); {
+                imProgramPrintOutput(c, ctx, program, s, result);
+            } imForEnd(c);
+        } imIfEnd(c);
+    } imLayoutEnd(c);
+    imLayout(c, COL); imGap(c, 5, PX); {
+        imFor(c); for (const [idx, graph] of outputs.graphs) {
+            const root = imLayout(c, COL); imGap(c, 5, PX); {
                 if (canScrollToThing(ctx, s, graph.expr)) {
-                    s.outputToScrollTo = root.root;
+                    s.outputToScrollTo = root;
                 }
 
-                imTextSpan("Graph #" + idx, H3);
-            } imEnd();
+                imElBegin(c, EL_H3); imStr(c, "Graph #" + idx); imElEnd(c, EL_H3);
+            } imIfEnd(c);
 
-            imBeginLayout(ROW | GAP); {
-                imVerticalBar();
+            imLayout(c, ROW); imGap(c, 5, PX); {
+                imLine(c, LINE_VERTICAL);
 
-                imBeginLayout(COL | GAP | FLEX); {
-                    imBeginCodeBlock(0); {
-                        imTextSpan(
+                imLayout(c, COL); imGap(c, 5, PX); imFlex(c); {
+                    imLayout(c, BLOCK); imCode(c); imCode(c); {
+                        imStr(
+                            c,
                             expressionToString(programText, graph.expr)
                         )
-                    } imEnd();
+                    } imLayoutEnd(c);
 
-                    beginMaximizeableContainer(graph); {
-                        imBeginLayout(COL | OPAQUE | FLEX | GAP); {
-                            imBeginLayout(ROW | GAP); {
-                                imMaximizeItemButton(ctx, graph);
-                            } imEnd();
+                    imMaximizeableContainerBegin(c, graph); {
+                        imLayout(c, COL); imBg(c, cssVars.bg); imGap(c, 5, PX); {
+                            imLayout(c, ROW); imGap(c, 5, PX); {
+                                imMaximizeItemButton(c, ctx, graph);
+                            } imLayoutEnd(c);
 
-                            imBeginAspectRatio(window.innerWidth, window.innerHeight); {
-                                renderGraph(ctx, graph);
-                            } imEnd();
-                        } imEnd();
-                    } imEnd();
-                } imEnd();
-            } imEnd();
-        };
-        imEndList();
-    } imEnd();
-    imBeginList();
-    for (const image of outputs.images) {
-        nextListRoot();
-        const root = imBeginLayout(ROW | GAP); {
+                            imLayout(c, BLOCK); imAspectRatio(c, window.innerWidth, window.innerHeight); {
+                                imGraph(c, ctx, graph);
+                            } imLayoutEnd(c);
+                        } imLayoutEnd(c);
+                    } imMaximizeableContainerEnd(c);
+                } imLayoutEnd(c);
+            } imLayoutEnd(c);
+        }; imForEnd(c);
+    } imLayoutEnd(c);
+    imFor(c); for (const image of outputs.images) {
+        const root = imLayout(c, ROW); imGap(c, 5, PX); {
             if (canScrollToThing(ctx, s, image.expr)) {
-                s.outputToScrollTo = root.root;
+                s.outputToScrollTo = root;
             }
 
-            imVerticalBar();
+            imLine(c, LINE_VERTICAL, 1);
 
-            imBeginLayout(COL | GAP | FLEX); {
-                imBeginCodeBlock(0); {
-                    if (imInit()) {
-                        setStyle("textOverflow", "ellipsis");
-                        setStyle("whiteSpace", "nowrap");
-                        setStyle("overflow", "hidden");
+            imLayout(c, COL); imFlex(c); imGap(c, 5, PX); {
+                imLayout(c, BLOCK); imCode(c); {
+                    if (isFirstishRender(c)) {
+                        elSetStyle(c, "textOverflow", "ellipsis");
+                        elSetStyle(c, "whiteSpace", "nowrap");
+                        elSetStyle(c, "overflow", "hidden");
                     }
 
-                    setInnerText(
+                    imStr(
+                        c, 
                         expressionToString(programText, image.expr)
-                    )
-                } imEnd();
+                    );
+                } imLayoutEnd(c);
 
-                renderImageOutput(ctx, image);
-            } imEnd();
-        } imEnd();
-    };
-    imEndList();
-    imBeginList();
-    if (outputs.plots.size > 0) {
-        for (const plot of outputs.plotsInOrder) {
-            nextListRoot();
-            const root = imBeginLayout(COL | GAP); {
+                imImageOutput(c, ctx, image);
+            } imLayoutEnd(c);
+        } imLayoutEnd(c);
+    }; imForEnd(c);
+    if (imIf(c) && outputs.plots.size > 0) {
+        imFor(c); for (const plot of outputs.plotsInOrder) {
+            const root = imLayout(c, COL); imGap(c, 5, PX); {
                 for (const line of plot.lines) {
                     if (canScrollToThing(ctx, s, line.expr)) {
-                        s.outputToScrollTo = root.root;
+                        s.outputToScrollTo = root;
                     }
                 }
                 for (const func of plot.functions) {
                     if (canScrollToThing(ctx, s, func.expr)) {
-                        s.outputToScrollTo = root.root;
+                        s.outputToScrollTo = root;
                     }
                 }
 
-                imBeginLayout(COL | GAP); {
-                    imTextSpan("Plot #" + plot.idx, H3);
-                } imEnd();
+                imLayout(c, COL); imGap(c, 5, PX); {
+                    imElBegin(c, EL_H3); imStr(c, "Plot #" + plot.idx); imElEnd(c, EL_H3);
+                } imLayoutEnd(c); 
 
-                const exprFrequencies = imStateInline(() => new Map<ProgramExpression, number>());
+                let exprFrequencies; exprFrequencies = imGet(c, inlineTypeId(Map));
+                if (!exprFrequencies) exprFrequencies = imSet(c, new Map<ProgramExpression, number>());
 
-                const outputsChanged = imMemo(outputs);
+                const outputsChanged = imMemo(c, outputs);
                 if (outputsChanged) {
                     exprFrequencies.clear();
                     for (const line of plot.lines) {
@@ -751,26 +780,24 @@ export function imProgramOutputs(
                     }
                 } 
 
-                imBeginList();
-                for (const [expr, count] of exprFrequencies) {
-                    nextListRoot();
-                    imBeginLayout(ROW | GAP); {
-                        imTextSpan(count + "x: ");
-                        imTextSpan(expressionToString(programText, expr), CODE);
-                    } imEnd();
-                }
-                imEndList();
+                imFor(c); for (const [expr, count] of exprFrequencies) {
+                    imLayout(c, ROW); imGap(c, 5, PX); {
+                        imStr(c, count + "x: ");
+                        imLayout(c, INLINE); imCode(c); {
+                            imStr(c, expressionToString(programText, expr));
+                        } imLayoutEnd(c); 
+                    } imLayoutEnd(c); 
+                } imForEnd(c);
 
-                imBeginAspectRatio(window.innerWidth, window.innerHeight); {
-                    renderPlot(ctx, plot, program);
-                } imEnd();
-            } imEnd();
-        }
-    }
-    imEndList();
+                imLayout(c, BLOCK); imAspectRatio(c, window.innerWidth, window.innerHeight); {
+                    imPlot(c, ctx, plot, program);
+                } imLayoutEnd(c); 
+            } imLayoutEnd(c); 
+        } imForEnd(c);
+    } imIfEnd(c);
 
-    const scrollContainerChanged = imMemo(scrollContainer);
-    const outputToScrollToChanged = imMemo(s.outputToScrollTo);
+    const scrollContainerChanged  = imMemo(c, scrollContainer);
+    const outputToScrollToChanged = imMemo(c, s.outputToScrollTo);
     if (scrollContainerChanged || outputToScrollToChanged) {
         if (scrollContainer && s.outputToScrollTo) {
             scrollIntoViewVH(scrollContainer, s.outputToScrollTo, 0.5);
@@ -778,30 +805,32 @@ export function imProgramOutputs(
     } 
 }
 
-function newCanvasElement() {
-    return document.createElement("canvas");
-}
+function imImageOutput(c: ImCache, ctx: GlobalContext, image: ProgramImageOutput) {
+    imMaximizeableContainerBegin(c, image); {
+        imLayout(c, COL); imBg(c, cssVars.bg); imGap(c, 5, PX); {
+            imLayout(c, ROW); imGap(c, 5, PX); {
+                imMaximizeItemButton(c, ctx, image);
+            } imLayoutEnd(c);
 
+            imLayout(c, BLOCK); imFlex(c); imRelative(c); {
+                if (imIf(c) && image.width !== 0) {
+                    const plotState = imState(c, newPlotState);
 
-function renderImageOutput(ctx: GlobalContext, image: ProgramImageOutput) {
-    beginMaximizeableContainer(image); {
-        imBeginLayout(COL | OPAQUE | FLEX | GAP); {
-            imBeginLayout(ROW | GAP); {
-                imMaximizeItemButton(ctx, image);
-            } imEnd();
-
-            imBeginLayout(FLEX | RELATIVE); {
-                if (imIf() && image.width !== 0) {
-                    const plotState = imState(newPlotState);
-
-                    imBeginAspectRatio(window.innerWidth, window.innerHeight); {
-                        const [, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(); {
-                            imPlotZoomingAndPanning(plotState, width, height, dpi, ctx.input.keyboard.shiftHeld);
+                    imLayout(c, BLOCK); imAspectRatio(c, window.innerWidth, window.innerHeight); {
+                        const [, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(c); {
+                            imPlotZoomingAndPanning(
+                                c, ctx.ev,
+                                plotState,
+                                width,
+                                height,
+                                dpi,
+                                ctx.input.keyboard.shiftHeld
+                            );
 
                             const pixelSize = 10;
 
-                            const imageChanged = imMemo(image);
-                            const plotStateChanged = imMemoObjectVals(plotState);
+                            const imageChanged = imMemo(c, image);
+                            const plotStateChanged = imMemo(c, plotState.version);
 
                             if (imageChanged) {
                                 const minX = 0,
@@ -812,7 +841,6 @@ function renderImageOutput(ctx: GlobalContext, image: ProgramImageOutput) {
                                 recomputePlotExtent(plotState, minX, maxX, minY, maxY);
                             }
 
-                            disableIm(); 
                             if (imageChanged || plotStateChanged) {
                                 canvas.clearRect(0, 0, width, height);
 
@@ -858,37 +886,43 @@ function renderImageOutput(ctx: GlobalContext, image: ProgramImageOutput) {
 
                                 drawBoundary(canvas, width, height);
                             } 
-                            enableIm();
-                        } imEndCanvasRenderingContext2D();
-                    } imEnd();
+                        } imEndCanvasRenderingContext2D(c);
+                    } imLayoutEnd(c);
                 } else {
-                    imElse();
-                    imBeginLayout(COL | ALIGN_CENTER | JUSTIFY_CENTER); {
-                        imTextSpan("Value was empty");
-                    } imEnd();
-                } imEndIf();
-
-            } imEnd();
-        } imEnd();
-    } imEnd();
+                    imIfElse(c);
+                    imLayout(c, COL); imAlign(c); imJustify(c); {
+                        imStr(c, "Value was empty");
+                    } imLayoutEnd(c);
+                } imIfEnd(c);
+            } imLayoutEnd(c);
+        } imLayoutEnd(c);
+    } imMaximizeableContainerEnd(c);
 }
 
-function imPlotZoomingAndPanning(plot: PlotState, width: number, height: number, dpi: number, shiftHeld: boolean) {
+function imPlotZoomingAndPanning(
+    c: ImCache,
+    ev: ImGlobalEventSystem,
+    plot: PlotState,
+    width: number,
+    height: number,
+    dpi: number,
+    shiftHeld: boolean
+) {
     const isMaximized = plot === currentMaximizedItem;
-    const canZoom = elementHasMouseHover() && (shiftHeld || isMaximized);
+    const canZoom = elHasMouseOver(c, ev) && (shiftHeld || isMaximized);
     plot.canZoom = canZoom;
 
-    if (imInit()) {
-        setStyle("cursor", "move");
+    if (isFirstishRender(c)) {
+        elSetStyle(c, "cursor", "move");
     }
 
     plot.width = width;
     plot.height = height;
     plot.dpi = dpi;
 
-    const mouse = getImMouse();
+    const mouse = ev.mouse;
 
-    plot.isPanning = mouse.leftMouseButton && elementHasMouseDown();
+    plot.isPanning = mouse.leftMouseButton && elHasMouseOver(c, ev);
     if (plot.isPanning) {
         const dxPlot = getPlotLength(plot, screenToCanvas(plot, mouse.dX));
         const dyPlot = getPlotLength(plot, screenToCanvas(plot, mouse.dY));
@@ -897,7 +931,7 @@ function imPlotZoomingAndPanning(plot: PlotState, width: number, height: number,
         plot.posY -= dyPlot;
     }
 
-    const scrollBlocker = imPreventScrollEventPropagation();
+    const scrollBlocker = imPreventScrollEventPropagation(c, ev);
     scrollBlocker.isBlocking = canZoom;
     plot.scrollY = scrollBlocker.scrollY;
 
@@ -907,7 +941,7 @@ function imPlotZoomingAndPanning(plot: PlotState, width: number, height: number,
             // When we zoom in or out, we want the graph-point that the mouse is currently over
             // to remain the same.
 
-            const rect = getCurrentRoot().root.getBoundingClientRect();
+            const rect = elGet(c).getBoundingClientRect();
 
             const mouseX = screenToCanvas(plot, mouse.X - rect.left);
             const mouseY = screenToCanvas(plot, mouse.Y - rect.top);
@@ -936,21 +970,18 @@ function imPlotZoomingAndPanning(plot: PlotState, width: number, height: number,
     }
 }
 
-function renderGraph(ctx: GlobalContext, graph: ProgramGraphOutput) {
-    const plotState = imState(newPlotState);
+function imGraph(c: ImCache, ctx: GlobalContext, graph: ProgramGraphOutput) {
+    const plotState = imState(c, newPlotState);
 
-    const s = imStateInline((): {
-        nodeData: Map<string | number, {
+    let s; s = imGet(c, inlineTypeId(imGraph));
+    if (!s) s = imSet(c, {
+        nodeData: new Map<string | number, {
             position: { x: number, y: number };
             adjacencies: (string | number)[];
-        }>;
-    } => {
-        return {
-            nodeData: new Map(),
-        };
+        }>(),
     });
 
-    const graphChanged = imMemo(graph);
+    const graphChanged = imMemo(c, graph);
     if (graphChanged) {
         let minX = Number.MAX_SAFE_INTEGER;
         let maxX = Number.MIN_SAFE_INTEGER;
@@ -968,15 +999,15 @@ function renderGraph(ctx: GlobalContext, graph: ProgramGraphOutput) {
         recomputePlotExtent(plotState, minX, maxX, minY, maxY);
     } 
 
-    imBeginLayout(FLEX | RELATIVE | H100).root; {
-        const [_, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(); {
-            imPlotZoomingAndPanning(plotState, width, height, dpi, ctx.input.keyboard.shiftHeld);
+    imLayout(c, BLOCK); imFlex(c); imRelative(c); imSize(c, 0, NA, 100, PERCENT); {
+        const [_, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(c); {
+            imPlotZoomingAndPanning(c, ctx.ev, plotState, width, height, dpi, ctx.input.keyboard.shiftHeld);
 
-            const widthChanged = imMemo(width);
-            const heightChanged = imMemo(height);
-            const graphChanged = imMemo(graph);
-            const plotStateChanged = imMemoObjectVals(plotState);
-            disableIm();
+            const widthChanged     = imMemo(c, width);
+            const heightChanged    = imMemo(c, height);
+            const graphChanged     = imMemo(c, graph);
+            const plotStateChanged = imMemo(c, plotState.version);
+
             if (widthChanged || heightChanged || graphChanged || plotStateChanged) {
                 canvas.clearRect(0, 0, width, height);
 
@@ -1041,9 +1072,8 @@ function renderGraph(ctx: GlobalContext, graph: ProgramGraphOutput) {
 
                 drawBoundary(canvas, width, height);
             }
-            enableIm();
-        } imEndCanvasRenderingContext2D();
-    } imEnd();
+        } imEndCanvasRenderingContext2D(c);
+    } imLayoutEnd(c);
 }
 
 let currentMaximizedItem: object | null = null;
@@ -1062,6 +1092,8 @@ type PlotState = {
     isPanning: boolean;
     canZoom: boolean;
     scrollY: number;
+    // bump this whenever you mutate
+    version: number;
 }
 
 function newPlotState(): PlotState {
@@ -1079,6 +1111,7 @@ function newPlotState(): PlotState {
         maximized: false,
         isPanning: false,
         canZoom: false,
+        version: 0,
     };
 }
 
@@ -1219,38 +1252,45 @@ function drawPointAt(ctx: CanvasRenderingContext2D, x: number, y: number, halfSi
     ctx.closePath();
 }
 
-function imBeginCanvasRenderingContext2D() {
+type ImCanvasRenderingContext = [
+    canvas: HTMLCanvasElement,
+    context: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    dpi: number
+];
+
+function imBeginCanvasRenderingContext2D(c: ImCache): ImCanvasRenderingContext {
     // When I set the canvas to the size of it's offset width, this in turn
     // causes the parent to get larger, which causes the canvas to get larger, and so on.
     // This relative -> absolute pattern is being used here to fix this.
 
-    imBeginLayout(RELATIVE | W100 | H100);
+    imLayout(c, BLOCK); imRelative(c); imSize(c, 100, PERCENT, 100, PERCENT);
+    const { size } = imTrackSize(c);
 
-    const { size } = imTrackSize();
-    const canvasRoot = imBeginRoot(newCanvasElement);
+    const canvas = imElBegin(c, EL_CANVAS).root;
 
-    const canvas = canvasRoot.root;
-    let ctxRef = imRef<[UIRoot<HTMLCanvasElement>, CanvasRenderingContext2D, number, number, number] | null>();
-    if (!ctxRef.val) {
+    let ctx = imGet(c, imBeginCanvasRenderingContext2D);
+    if (!ctx) {
         const context = canvas.getContext("2d");
         if (!context) {
             throw new Error("Canvas 2d isn't supported by your browser!!! I'd suggest _not_ plotting anything.");
         }
-        ctxRef.val = [canvasRoot, context, 0, 0, 0];
 
-        setStyle("position", "absolute");
-        setStyle("top", "0");
-        setStyle("left", "0");
+        elSetStyle(c, "position", "absolute");
+        elSetStyle(c, "top", "0");
+        elSetStyle(c, "left", "0");
+
+        ctx = imSet(c, [canvas, context, 0, 0, 0]);
     }
-    const ctx = ctxRef.val;
 
     const w = size.width;
     const h = size.height;
     // const sf = window.devicePixelRatio ?? 1;
     const dpi = 2; // TODO: revert
-    const wC = imMemo(w);
-    const hC = imMemo(h);
-    const dpiC = imMemo(dpi);
+    const wC   = imMemo(c, w);
+    const hC   = imMemo(c, h);
+    const dpiC = imMemo(c, dpi);
     if (wC || hC || dpiC) {
         canvas.style.width = w + "px";
         canvas.style.height = h + "px";
@@ -1264,9 +1304,9 @@ function imBeginCanvasRenderingContext2D() {
     return ctx;
 }
 
-function imEndCanvasRenderingContext2D() {
-    imEnd();
-    imEnd();
+function imEndCanvasRenderingContext2D(c: ImCache) {
+    imElEnd(c, EL_CANVAS);
+    imLayoutEnd(c);
 }
 
 function drawCircle(
@@ -1318,94 +1358,97 @@ function drawBoundary(ctx: CanvasRenderingContext2D, width: number, height: numb
     ctx.closePath();
 }
 
-function beginMaximizeableContainer(item: object) {
+function imMaximizeableContainerBegin(c: ImCache, item: object) {
     const isMaximized = item === currentMaximizedItem;
+    const unit = isMaximized ? PX : NA;
 
-    let rootLayoutFlags = GAP | W100 | H100 | COL | JUSTIFY_CENTER;
-    if (isMaximized) {
-        rootLayoutFlags = rootLayoutFlags | FIXED | TRANSLUCENT;
-    }
+    // NOTE: A shortcoming of our styling system now, is that we can't conditionally call these. sad. 
+    // TODO: fix.
+    imLayout(c, COL); imGap(c, 5, PX); imFlex(c); imJustify(c); 
+    imBg(c, isMaximized ? cssVars.translucent : "");
+    imFixed(c, 0, unit, 0, unit, 0, unit, 0, unit); 
+    imPadding(c, 10, unit, 10, unit, 10, unit, 10, unit); {
 
-    imBeginLayout(rootLayoutFlags).root; {
-        const isMaximizedC = imMemo(isMaximized);
-        if (isMaximizedC) {
-            if (isMaximized) {
-                setInset("10px");
-            } else {
-                setInset("");
-            }
-        } 
-    }
-
+    } // imLayoutEnd(c);
 }
 
-function imMaximizeItemButton(ctx: GlobalContext, item: object) {
+function imMaximizeableContainerEnd(c: ImCache) {
+    imLayoutEnd(c);
+}
+
+function imMaximizeItemButton(c: ImCache, ctx: GlobalContext, item: object) {
     const isMaximized = currentMaximizedItem === item;
 
-    imBeginButton(isMaximized); {
-        imTextSpan(isMaximized ? "minimize" : "maximize");
+    imLayout(c, BLOCK); imButton(c); {
+        imStr(c, isMaximized ? "minimize" : "maximize");
 
         if (isMaximized) {
-            if (ctx.input.keyboard.escape || (elementHasMousePress())) {
+            if (ctx.input.keyboard.escape || elHasMouseDown(c, ctx.ev)) {
                 currentMaximizedItem = null;
             }
         } else {
-            if (elementHasMousePress()) {
+            if (elHasMouseDown(c, ctx.ev)) {
                 currentMaximizedItem = item;
             }
         }
-    } imEnd();
+    } imLayoutEnd(c);
 }
 
 
-function renderPlot(ctx: GlobalContext, plot: ProgramPlotOutput, program: ProgramInterpretResult) {
+function imPlot(c: ImCache, ctx: GlobalContext, plot: ProgramPlotOutput, program: ProgramInterpretResult) {
     const isMaximized = plot === currentMaximizedItem;
-    const plotState = imState(newPlotState);
+    const plotState = imState(c, newPlotState);
     plotState.maximized = isMaximized;
 
-    beginMaximizeableContainer(plot); {
-        imBeginLayout(COL | OPAQUE | FLEX | GAP); {
-            imBeginLayout(ROW | GAP); {
-                imMaximizeItemButton(ctx, plot);
-
-                imBeginButton(plotState.overlay); {
-                    setInnerText("Overlays");
-                    if (elementHasMousePress()) {
+    imMaximizeableContainerBegin(c, plot); {
+        imLayout(c, COL); imBg(c, cssVars.bg); imFlex(c); imGap(c, 5, PX); {
+            imLayout(c, ROW); imGap(c, 5, PX); {
+                imLayout(c, BLOCK); imButton(c, plotState.overlay); {
+                    imStr(c, "Overlays");
+                    if (elHasMouseDown(c, ctx.ev)) {
                         plotState.overlay = !plotState.overlay;
                     }
-                } imEnd();
+                } imLayoutEnd(c);
 
-                imBeginButton(plotState.autofit); {
-                    setInnerText("Autofit");
-                    if (elementHasMousePress()) {
+                imLayout(c, BLOCK); imButton(c, plotState.overlay); {
+                    imStr(c, "Autofit");
+                    if (elHasMouseDown(c, ctx.ev)) {
                         plotState.autofit = !plotState.autofit;
                     }
-                } imEnd();
-            } imEnd();
+                } imLayoutEnd(c);
+            } imLayoutEnd(c);
 
-            imBeginLayout(FLEX | RELATIVE).root; {
-                const shiftScrollToZoomVal = imRef<number>();
+            let state; state = imGet(c, inlineTypeId(imGet));
+            if (!state) state = imSet(c, {
+                shiftScrollToZoom: 0,
+                problems: [] as string[],
+                rows: [] as number[][],
+                timer: 0 as number | null,
+            }); 
 
-                const problems = imRef<string[]>();
-                if (!problems.val) {
-                    problems.val = [];
-                }
+            imLayout(c, BLOCK); imFlex(c); imRelative(c); {
+                const [_, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(c); {
+                    const mouse = ctx.ev.mouse;
 
-                const [_, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(); {
-                    const mouse = getImMouse();
 
                     // init canvas 
+                    imPlotZoomingAndPanning(
+                        c, ctx.ev,
+                        plotState,
+                        width,
+                        height,
+                        dpi,
+                        ctx.input.keyboard.shiftHeld
+                    );
 
-                    imPlotZoomingAndPanning(plotState, width, height, dpi, ctx.input.keyboard.shiftHeld);
-
-                    if (elementHasMouseHover() && (mouse.scrollWheel !== 0 && !plotState.canZoom)) {
-                        shiftScrollToZoomVal.val = 1;
+                    if (elHasMouseDown(c, ctx.ev) && (mouse.scrollWheel !== 0 && !plotState.canZoom)) {
+                        state.shiftScrollToZoom = 1;
                     }
 
-                    const programChanged = imMemo(program);
-                    const autoFitChanged = imMemo(plotState.autofit);
+                    const programChanged = imMemo(c, program);
+                    const autoFitChanged = imMemo(c, plotState.autofit);
                     const runChanged = programChanged || autoFitChanged;
-                    const textChanged = imMemo(program.parseResult.text);
+                    const textChanged = imMemo(c, program.parseResult.text);
                     if (runChanged || textChanged) {
                         if (plotState.autofit) {
                             let minX = Number.MAX_SAFE_INTEGER;
@@ -1429,16 +1472,10 @@ function renderPlot(ctx: GlobalContext, plot: ProgramPlotOutput, program: Progra
                         }
                     }
 
-                    const rows = imRef<number[][]>();
-                    if (!rows.val) {
-                        rows.val = [];
-                    }
-
-                    const plotChanged = imMemo(plot);
-                    const plotStateChanged = imMemoObjectVals(plotState);
-                    disableIm();
+                    const plotChanged = imMemo(c, plot);
+                    const plotStateChanged = imMemo(c, plotState.version);
                     if (plotChanged || plotStateChanged) {
-                        problems.val.length = 0;
+                        state.problems.length = 0;
 
                         const { width, height } = plotState;
 
@@ -1467,11 +1504,11 @@ function renderPlot(ctx: GlobalContext, plot: ProgramPlotOutput, program: Progra
                                     // TODO: we need to be able to run functions that we're debugging.
                                     // This will be useful when we want to implement a 'watch' window. Prob just as simple as
                                     // duplicating the program stack. 
-                                    problems.val.push("Can't render heatmaps while we're debugging - the program stack is still in use. ");
+                                    state.problems.push("Can't render heatmaps while we're debugging - the program stack is still in use. ");
                                     break;
                                 }
 
-                                rows.val.length = 0
+                                state.rows.length = 0
 
                                 const args: ProgramResultNumber[] = [
                                     newNumberResult(1),
@@ -1494,16 +1531,16 @@ function renderPlot(ctx: GlobalContext, plot: ProgramPlotOutput, program: Progra
 
                                         const result = evaluateFunctionWithinProgramWithArgs(program, output.step, output.fn, args);
                                         if (!result) {
-                                            problems.val.push("result for " + i + ", " + j + " didn't return anything");
+                                            state.problems.push("result for " + i + ", " + j + " didn't return anything");
                                             break outer;
                                         }
                                         if (program.errors.length > 0) {
                                             // TODO: display the error
-                                            problems.val.push("Encountered an error in the program");
+                                            state.problems.push("Encountered an error in the program");
                                             break outer;
                                         }
                                         if (result.t !== T_RESULT_NUMBER) {
-                                            problems.val.push("result for " + i + ", " + j + " wasn't a number");
+                                            state.problems.push("result for " + i + ", " + j + " wasn't a number");
                                             break outer;
                                         }
 
@@ -1514,16 +1551,16 @@ function renderPlot(ctx: GlobalContext, plot: ProgramPlotOutput, program: Progra
                                         maxValue = max(maxValue, res);
                                     }
 
-                                    rows.val.push(row);
+                                    state.rows.push(row);
                                 }
 
-                                if (problems.val.length === 0) {
+                                if (state.problems.length === 0) {
                                     const theme = getCurrentTheme();
                                     const color = output.color ?? theme.fg;
 
                                     for (let i = 0; i < n; i++) {
                                         for (let j = 0; j < n; j++) {
-                                            const val = rows.val[i][j];
+                                            const val = state.rows[i][j];
                                             const heat = inverseLerp(val, minValue, maxValue);
 
                                             const evalPointX = centerX + (-(n / 2) + i) * size;
@@ -1679,34 +1716,29 @@ function renderPlot(ctx: GlobalContext, plot: ProgramPlotOutput, program: Progra
 
                         drawBoundary(canvas, width, height);
                     }
-                    enableIm();
-                } imEndCanvasRenderingContext2D();
+                } imEndCanvasRenderingContext2D(c);
 
-                if (shiftScrollToZoomVal.val !== null) {
-                    const dt = deltaTimeSeconds();
-                    shiftScrollToZoomVal.val -= dt;
-                    if (shiftScrollToZoomVal.val < 0) {
-                        shiftScrollToZoomVal.val = null;
+                if (state.timer !== null) {
+                    const dt = getDeltaTimeSeconds(c);
+                    state.timer -= dt;
+                    if (state.timer < 0) {
+                        state.timer = null;
                     }
                 }
 
-                imBeginAbsoluteLayout(0, 5, NONE, NONE, 5); {
-                    const tChanged = imMemo(shiftScrollToZoomVal.val);
-                    if (tChanged) {
-                        setStyle("opacity", (shiftScrollToZoomVal.val ?? 0) + "");
+                imLayout(c, BLOCK); imAbsolute(c, 5, PX, 0, NA, 5, PX, 0, NA); {
+                    if (imMemo(c, state.timer)) {
+                        elSetStyle(c, "opacity", (state.timer ?? 0) + "");
                     } 
-                    imTextSpan("Shift + scroll to zoom");
-                } imEnd();
+                    imStr(c, "Shift + scroll to zoom");
+                } imLayoutEnd(c);
 
-                imBeginList();
-                for (const prob of problems.val) {
-                    nextListRoot();
-                    imBeginLayout(); {
-                        imTextSpan("Problem: " + prob);
-                    } imEnd();
-                }
-                imEndList();
-            } imEnd();
-        } imEnd();
-    } imEnd();
+                imFor(c); for (const prob of state.problems) {
+                    imLayout(c, BLOCK); {
+                        imStr(c, "Problem: " + prob);
+                    } imLayoutEnd(c);
+                } imForEnd(c);
+            } imLayoutEnd(c);
+        } imLayoutEnd(c);
+    } imMaximizeableContainerEnd(c);
 }

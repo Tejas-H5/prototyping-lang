@@ -1,4 +1,4 @@
-import { assert, typeGuard } from "./utils/assert";
+import { assert, assertUnreachable } from "./utils/assert";
 import { isWhitespace } from "./utils/text-utils";
 
 ////////////////////////
@@ -1529,7 +1529,7 @@ export function parse(text: string): ProgramParseResult {
                 }
             } break;
             default:
-                typeGuard(expr);
+                assertUnreachable(expr);
         }
 
         if (expr.children.length > 0) {

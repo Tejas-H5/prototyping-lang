@@ -19,9 +19,17 @@ export type Buffer = {
     _tempCursors: Iterator[];
     _isEditing: boolean;
 
-    _modified: boolean;
     _text: string;
+    _textClean: boolean;
+    _numNewlines: number;
+    _numNewlinesClean: boolean;
 };
+
+function setDirty(b: Buffer) {
+    b._textClean = false;
+    b._numNewlinesClean = false;
+}
+
 
 function itAssertIsValid(c: Iterator) {
     // Check that this iterator was actually from it's buffer, and not a shallow copy
@@ -99,8 +107,7 @@ export function itInsert(it: Iterator, text: string): boolean {
     }
 
     recomputeLineCount(piece);
-
-    b._modified = true;
+    setDirty(b);
     return true;
 }
 
@@ -148,7 +155,7 @@ export function itRemove(start: Iterator, end: Iterator): boolean {
     if (!isValidAndNonZeroRange(start, end)) return false;
 
     const b = start.buff;
-    b._modified = true;
+    setDirty(b);
 
     if (!itIsZero(start)) {
         itBisect(start);
@@ -216,7 +223,7 @@ export function itGetTextBetween(start: Iterator, end: Iterator) {
 }
 
 export function buffToString(b: Buffer) {
-    if (!b._modified) return b._text;
+    if (b._textClean) return b._text;
 
     const sb: string[] = [];
 
@@ -229,8 +236,21 @@ export function buffToString(b: Buffer) {
     }
 
     b._text = sb.join("");
-    b._modified = false;
+    b._textClean = true;
     return b._text;
+}
+
+export function buffNumNewlines(b: Buffer): number {
+    if (b._numNewlinesClean) return b._numNewlines;
+
+    let numNewlines = 0;
+    for (let i = 0; i < b.pieces.length; i++) {
+        numNewlines += b.pieces[i].numNewlines;
+    }
+
+    b._numNewlines = numNewlines;
+    b._numNewlinesClean = true;
+    return numNewlines;
 }
 
 function updateCursorsForBisect(b: Buffer, pieceIdx: number, textIdx: number) {
@@ -331,8 +351,10 @@ export function newBuff(): Buffer {
         _tempCursors: [],
         _isEditing: false,
 
-        _modified: false,
-        _text: ""
+        _text: "",
+        _textClean: true,
+        _numNewlines: 0,
+        _numNewlinesClean: true,
     };
 }
 
@@ -404,6 +426,52 @@ export function itBefore(a: Iterator, b: Iterator) {
     if (a.pieceIdx < b.pieceIdx) return true;
     if (a.pieceIdx === b.pieceIdx) return a.textIdx < b.textIdx;
     return false;
+}
+
+export function itDistance(a: Iterator, b: Iterator): number {
+    assert(a.buff === b.buff);
+    const buff = a.buff;
+
+    if (a.pieceIdx === b.pieceIdx) {
+        return b.textIdx - a.textIdx;
+    }
+
+    let negate = false;
+    if (a.pieceIdx > b.pieceIdx) {
+        let temp = a;
+        a = b;
+        b = temp;
+        negate = true;
+    } 
+
+    let dist = buff.pieces[a.pieceIdx].text.length - a.textIdx;
+    for (let i = a.pieceIdx + 1; i < b.pieceIdx; i++) {
+        dist += buff.pieces[i].text.length;
+    }
+    dist += b.textIdx;
+
+    return negate ? -dist : dist;
+}
+
+export function itLine(a: Iterator) {
+    const b = a.buff;
+
+    let line = 0;
+    for (let i = 0; i < a.pieceIdx; i++) {
+        line += b.pieces[i].numNewlines;
+    }
+
+    if (a.pieceIdx < b.pieces.length) {
+        const piece = b.pieces[a.pieceIdx];
+        assert(a.textIdx < piece.text.length);
+        for (let i = 0; i <= a.textIdx; i++) {
+            if (piece.text[i] === "\n") {
+                line++;
+            }
+        }
+    }
+
+    return line;
 }
 
 export function itBeforeOrEqual(a: Iterator, b: Iterator) {
@@ -521,7 +589,7 @@ export function iterateBackwardsUnclamped(it: Iterator): boolean {
     if (it.textIdx === 0) {
         if (it.pieceIdx > 0) {
             it.pieceIdx--;
-            const piece = b.pieces[it.pieceIdx]; assert(piece);
+            const piece = b.pieces[it.pieceIdx]; assert(!!piece);
 
             // invalid for zero-length text on a piece.
             assert(piece.text.length > 0);

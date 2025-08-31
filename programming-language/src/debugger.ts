@@ -1,204 +1,175 @@
-import { imFunctionName, imProgramOutputs, renderFunctionInstructions, renderProgramResult } from './code-output';
-import {
-    BOLD,
-    CODE,
-    COL,
-    FLEX,
-    GAP,
-    H100,
-    H3,
-    imBeginButton,
-    imBeginLayout,
-    imBeginScrollContainer,
-    imTextSpan,
-    newH3,
-    ROW
-} from './layout';
+import { imCode } from './app-styling';
+import { imProgramOutputs, imFunctionInstructions, imProgramResult, getFunctionName } from './code-output';
+import { BLOCK, COL, imButton, imFlex, imGap, imLayout, imLayoutEnd, imPadding, NA, PX, ROW } from './components/core/layout';
+import { imScrollContainerBegin, newScrollContainer } from './components/scroll-container';
 import { getCurrentCallstack, ProgramInterpretResult, stepProgram } from './program-interpreter';
 import { GlobalContext, startDebugging } from './state';
 import "./styling";
 import { assert } from './utils/assert';
-import {
-    elementHasMousePress,
-    imDiv,
-    imBeginRoot,
-    imBeginList,
-    imEnd,
-    imEndList,
-    imInit,
-    imRef,
-    imStateInline,
-    nextListRoot,
-    setAttr,
-    imIf,
-    imEndIf,
-    imElse
-} from './utils/im-dom-utils';
+import { ImCache, imFor, imForEnd, imGet, imIf, imIfElse, imIfEnd, imSet, imState, inlineTypeId, isFirstishRender } from './utils/im-core';
+import { EL_H3, elHasMouseDown, elSetStyle, imElBegin, imElEnd, imStr, imStrFmt } from './utils/im-dom';
 
 
-export function renderDebugger(ctx: GlobalContext, interpretResult: ProgramInterpretResult) {
-    imBeginScrollContainer(COL | GAP | H100); {
-        const message = imRef<string>();
+export function imDebugger(
+    c: ImCache,
+    ctx: GlobalContext,
+    interpretResult: ProgramInterpretResult
+) {
+    const sc = imState(c, newScrollContainer);
 
-        imBeginLayout(ROW | GAP); {
-            imBeginLayout(FLEX); {
-                imBeginButton(); {
-                    imTextSpan("Stop debugging");
-                    if (elementHasMousePress()) {
-                        ctx.isDebugging = false;
+    imScrollContainerBegin(c, sc); {
+        let message; message = imGet(c, inlineTypeId(imDebugger));
+        if (!message) message = imSet(c, {
+            val: "",
+        });
+
+        imLayout(c, ROW); imGap(c, 5, PX); {
+            imLayout(c, BLOCK); imFlex(c); imButton(c); {
+                imStr(c, "Stop debugging");
+                if (elHasMouseDown(c, ctx.ev)) {
+                    ctx.isDebugging = false;
+                }
+            } imLayoutEnd(c);
+
+            imLayout(c, BLOCK); imFlex(c); imButton(c); {
+                imStr(c, "Step");
+                if (elHasMouseDown(c, ctx.ev)) {
+                    const result = stepProgram(interpretResult);
+                    if (!result) {
+                        message.val = "Program complete! you can stop debugging now.";
                     }
-                } imEnd();
-            } imEnd();
+                }
+            } imLayoutEnd(c);
 
-            imBeginLayout(FLEX); {
-                imBeginButton(); {
-                    imTextSpan("Step");
+            imLayout(c, BLOCK); imFlex(c); imButton(c); {
+                imStr(c, "Reset");
+                if (elHasMouseDown(c, ctx.ev)) {
+                    assert(ctx.lastParseResult !== undefined);
+                    startDebugging(ctx);
+                    message.val = "";
+                }
+            } imLayoutEnd(c);
+        } imLayoutEnd(c);
 
-                    if (elementHasMousePress()) {
-                        const result = stepProgram(interpretResult);
-                        if (!result) {
-                            message.val = "Program complete! you can stop debugging now.";
-                        }
-                    }
-                } imEnd();
-            } imEnd();
-
-            imBeginLayout(FLEX); {
-                imBeginButton(); {
-                    imTextSpan("Reset");
-                    if (elementHasMousePress()) {
-                        assert(ctx.lastParseResult !== undefined);
-                        startDebugging(ctx);
-                        message.val = "";
-                    }
-                } imEnd();
-            } imEnd();
-        } imEnd();
-
-        if (imIf() && message.val) {
-            imDiv(); {
-                imTextSpan(message.val);
-            } imEnd();
-        } imEndIf();
+        if (imIf(c) && message.val) {
+            imLayout(c, BLOCK); {
+                imStr(c, message.val);
+            } imLayoutEnd(c);
+        } imIfEnd(c);
 
         const cs = getCurrentCallstack(interpretResult);
 
-        imBeginLayout(COL | FLEX); {
-            imBeginLayout(COL | FLEX); {
-                if (imIf() && cs) {
-                    const fnName = imFunctionName(cs.fn);
-                    imBeginLayout(H3 | BOLD); {
-                        imTextSpan(fnName);
-                    } imEnd();
+        imLayout(c, COL); imFlex(c); {
+            imLayout(c, COL); imFlex(c); {
+                if (imIf(c) && cs) {
+                    imLayout(c, BLOCK); {
+                        imElBegin(c, EL_H3); imStrFmt(c, cs.fn, getFunctionName); imElEnd(c, EL_H3);
 
-                    renderFunctionInstructions(interpretResult, cs.code);
-                } imEndIf()
-            } imEnd();
-            imBeginLayout(ROW | FLEX); {
-                imBeginLayout(COL | FLEX); {
-                    imBeginRoot(newH3); {
-                        imTextSpan("Stack");
-                    } imEnd();
-
-                    // render the stack
-                    {
-                        const variablesReverseMap = imStateInline(() => new Map<number, string>());
-                        variablesReverseMap.clear();
-                        for (const cs of interpretResult.callStack) {
-                            for (const [varName, addr] of cs.variables) {
-                                variablesReverseMap.set(addr, varName);
-                            }
-                        }
-
-                        let n = interpretResult.stack.length;
-                        while (n > 0) {
-                            n--;
-                            if (interpretResult.stack[n]) {
-                                break;
-                            }
-                        }
-
-                        // show a couple more addresses after, why not.
-                        n += 10;
-                        if (n > interpretResult.stack.length) {
-                            n = interpretResult.stack.length - 1;
-                        }
-
-                        imBeginList();
-                        for (let addr = 0; addr <= n; addr++) {
-                            const res = interpretResult.stack[addr];
-
-                            nextListRoot();
-
-                            imDiv(); {
-                                imBeginLayout(ROW | GAP); {
-                                    const stackAddrArrow = (name: string) => {
-                                        imDiv(); {
-                                            if (imInit()) setAttr("style", "padding-left: 10px; padding-right: 10px");
-
-                                            imTextSpan(name + "->", CODE);
-                                        } imEnd();
-                                    }
-
-                                    if (imIf() && addr === interpretResult.stackIdx) {
-                                        stackAddrArrow("");
-                                    } imEndIf();
-
-                                    // every callstack will have a different return address
-                                    let callstackIdx = -1;
-                                    for (let i = 0; i < interpretResult.callStack.length; i++) {
-                                        const cs = interpretResult.callStack[i];
-                                        if (cs.returnAddress === addr) {
-                                            callstackIdx = i;
-                                        }
-                                    }
-
-                                    if (imIf() && callstackIdx !== -1) {
-                                        stackAddrArrow("r" + callstackIdx + "");
-                                    } imEndIf();
-
-                                    // every callstack will have a different next-variable address
-                                    callstackIdx = -1;
-                                    for (let i = 0; i < interpretResult.callStack.length; i++) {
-                                        const cs = interpretResult.callStack[i];
-                                        if (cs.nextVarAddress === addr) {
-                                            callstackIdx = i;
-                                        }
-                                    }
-
-                                    if (imIf() && callstackIdx !== -1) {
-                                        stackAddrArrow("v" + callstackIdx + "");
-                                    } imEndIf();
-
-                                    const variable = variablesReverseMap.get(addr);
-                                    if (imIf() && variable) {
-                                        imDiv(); {
-                                            imTextSpan(variable + " = ", CODE);
-                                        } imEnd();
-                                    } imEndIf();
-
-                                    imBeginLayout(FLEX); {
-                                        if (imIf() && res) {
-                                            renderProgramResult(res);
-                                        } else {
-                                            imElse();
-                                            imTextSpan("null");
-                                        } imEndIf();
-                                    } imEnd();
-                                } imEnd();
-                            } imEnd();
-                        } imEndList();
-                    }
-                } imEnd();
-                imBeginLayout(FLEX | COL); {
-                    imBeginRoot(newH3); {
-                        imTextSpan("Results");
-                    } imEnd();
-
-                    imProgramOutputs(ctx, interpretResult, interpretResult.outputs);
-                } imEnd();
-            } imEnd();
-        } imEnd();
-    } imEnd();
+                        imFunctionInstructions(c, interpretResult, cs.code);
+                    } imLayoutEnd(c);
+                } imIfEnd(c)
+            } imLayoutEnd(c);
+            imLayout(c, ROW); imFlex(c); {
+                imLayout(c, COL); imFlex(c); {
+                    imElBegin(c, EL_H3); imStr(c, "Stack"); imElEnd(c, EL_H3);
+                    imProgramStack(c, ctx, interpretResult);
+                } imLayoutEnd(c);
+                imLayout(c, COL); imFlex(c); {
+                    imElBegin(c, EL_H3); imStr(c, "Results"); imElEnd(c, EL_H3);
+                    imProgramOutputs(c, ctx, interpretResult, interpretResult.outputs);
+                } imLayoutEnd(c);
+            } imLayoutEnd(c);
+        } imLayoutEnd(c);
+    } imLayoutEnd(c);
 }
 
+
+function imProgramStack(
+    c: ImCache,
+    ctx: GlobalContext,
+    interpretResult: ProgramInterpretResult
+) {
+    let variablesReverseMap; variablesReverseMap = imGet(c, inlineTypeId(imGet));
+    if (!variablesReverseMap) {
+        variablesReverseMap = imSet(c, new Map<number, string>());
+    }
+    variablesReverseMap.clear();
+
+    for (const cs of interpretResult.callStack) {
+        for (const [varName, addr] of cs.variables) {
+            variablesReverseMap.set(addr, varName);
+        }
+    }
+
+    let n = interpretResult.stack.length;
+    while (n > 0) {
+        n--;
+        if (interpretResult.stack[n]) {
+            break;
+        }
+    }
+
+    // show a couple more addresses after, why not.
+    n += 10;
+    if (n > interpretResult.stack.length) {
+        n = interpretResult.stack.length - 1;
+    }
+
+    imFor(c); for (let addr = 0; addr <= n; addr++) {
+        const res = interpretResult.stack[addr];
+
+        imLayout(c, BLOCK); {
+            imLayout(c, ROW); imGap(c, 5, PX); {
+                function imAddrArrow(c: ImCache, name: string) {
+                    imLayout(c, BLOCK); imCode(c); imPadding(c, 0, NA, 10, PX, 0, NA, 10, PX); {
+                        imStr(c, name + "->");
+                    } imLayoutEnd(c);
+                }
+
+                if (imIf(c) && addr === interpretResult.stackIdx) {
+                    imAddrArrow(c, "");
+                } imIfEnd(c);
+
+                // every callstack will have a different return address
+                let callstackIdx = -1;
+                for (let i = 0; i < interpretResult.callStack.length; i++) {
+                    const cs = interpretResult.callStack[i];
+                    if (cs.returnAddress === addr) {
+                        callstackIdx = i;
+                    }
+                }
+
+                if (imIf(c) && callstackIdx !== -1) {
+                    imAddrArrow(c, "r" + callstackIdx + "");
+                } imIfEnd(c);
+
+                // every callstack will have a different next-variable address
+                callstackIdx = -1;
+                for (let i = 0; i < interpretResult.callStack.length; i++) {
+                    const cs = interpretResult.callStack[i];
+                    if (cs.nextVarAddress === addr) {
+                        callstackIdx = i;
+                    }
+                }
+
+                if (imIf(c) && callstackIdx !== -1) {
+                    imAddrArrow(c, "v" + callstackIdx + "");
+                } imIfEnd(c);
+
+                const variable = variablesReverseMap.get(addr);
+                if (imIf(c) && variable) {
+                    imLayout(c, BLOCK); imCode(c); imStr(c, variable + " = "); imLayoutEnd(c);
+                } imIfEnd(c);
+
+                imLayout(c, BLOCK); imFlex(c); {
+                    if (imIf(c) && res) {
+                        imProgramResult(c, res);
+                    } else {
+                        imIfElse(c);
+                        imStr(c, "null");
+                    } imIfElse(c);
+                } imLayoutEnd(c);
+            } imLayoutEnd(c);
+        } imLayoutEnd(c);
+    } imForEnd(c);
+}

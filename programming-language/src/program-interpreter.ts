@@ -1,4 +1,4 @@
-import { assert, typeGuard } from "src/utils/assert";
+import { assert, assertUnreachable } from "src/utils/assert";
 import { copyMatrix, getMatrixRow, getMatrixRowLength, getMatrixValue, getSliceValue, isIndexInSliceBounds, Matrix, matrixAddElements, matrixDivideElements, matrixElementsEqual, matrixElementsGreaterThan, matrixElementsGreaterThanOrEqual, matrixElementsLessThan, matrixElementsLessThanOrEqual, matrixIsRank2, matrixLogicalAndElements, matrixLogicalOrElements, matrixMul, matrixMultiplyElements, matrixShapesAreEqual, matrixSubtractElements, matrixZeroes, newSlice, orthographicMatrix3D, perspectiveMatrix3D, rotationMatrix2D, rotationMatrix3DX, rotationMatrix3DY, rotationMatrix3DZ, rotationMatrixTranslate2D, rotationMatrixTranslate3D, scaleMatrix2D, scaleMatrix3D, setSliceValue, sliceToArray, subMatrixShapeEqualsRowShape, transposeMatrix } from "src/utils/matrix-math";
 import {
     BIN_OP_ADD, BIN_OP_AND_AND, BIN_OP_DIVIDE, BIN_OP_GREATER_THAN, BIN_OP_GREATER_THAN_EQ, BIN_OP_INVALID, BIN_OP_IS_EQUAL_TO, BIN_OP_LESS_THAN, BIN_OP_LESS_THAN_EQ, BIN_OP_MULTIPLY, BIN_OP_OR_OR, BIN_OP_SUBTRACT,
@@ -23,6 +23,7 @@ import { clamp, inverseLerp } from "./utils/math-utils";
 import { getNextRng, newRandomNumberGenerator, RandomNumberGenerator, setRngSeed } from "./utils/random";
 import { CssColor, newColor, newColorFromHexOrUndefined } from "./utils/colour";
 import { groupBy, mapSet } from "./utils/array-utils";
+import { defaultTextEditorKeyboardEventHandler } from "./utils/text-editor";
 
 export const T_RESULT_NUMBER = 1;
 export const T_RESULT_STRING = 2;
@@ -498,7 +499,7 @@ export function executionStepToString(step: ProgramExecutionStep): string {
         case EX_STEP_FN:
         case EX_STEP_FN_CALL: {
             const fn = step._fn;
-            assert(fn);
+            assert(!!fn);
             const name = fn.expr.fnName.name;
             if (step.type === EX_STEP_FN) {
                 return ("Fn " + name + "(" + step.n + " args) ");
@@ -508,7 +509,7 @@ export function executionStepToString(step: ProgramExecutionStep): string {
         case EX_STEP_FN_BUILTIN:
         case EX_STEP_FN_BUILTIN_CALL: {
             const fn = step.fnBuiltin;
-            assert(fn);
+            assert(!!fn);
             const name = fn.name
             if (step.type === EX_STEP_FN_BUILTIN) {
                 return ("[builtin] Fn " + name + "(" + step.n + " args) ");
@@ -521,11 +522,9 @@ export function executionStepToString(step: ProgramExecutionStep): string {
         case EX_STEP_INVALID: {
             return "Invalid step! there is a bug in the instruction generator.";
         }
-        default:
-            typeGuard(step.type);
+        default: assertUnreachable(step.type);
     }
 
-    assert(false);
 }
 
 function newExecutionStep(expr: ProgramExpression): ProgramExecutionStep {
@@ -944,7 +943,7 @@ function getExecutionSteps(
 
                     // We've already pre-extracted and linearlized every function declaration,
                     // so it's got to exist.
-                    assert(fn);
+                    assert(!!fn);
 
                     step.type = EX_STEP_FN;
                     step._fn = fn;
@@ -1064,7 +1063,7 @@ function get(result: ProgramInterpretResult, offset = 0): ProgramResult | null {
 function pop(result: ProgramInterpretResult): ProgramResult {
     // At this stage, we shouldn't even generate the instruction if we thought it was going to fail.
     const val = get(result);
-    assert(val);
+    assert(!!val);
     result.stackIdx--;
     return val;
 }
@@ -1158,8 +1157,8 @@ export function startInterpreting(
         // we need to lineralize functions ahead of time, so that recursion will work.
         for (const [name, fn] of parseResult.functions) {
             // Otherwise, there was no reason for the parse-result to give us this
-            assert(fn.body);
-            assert(fn.argumentNames);
+            assert(!!fn.body);
+            assert(!!fn.argumentNames);
 
             const code: ExecutionSteps = {
                 name: fn.fnName.name,
@@ -1515,7 +1514,7 @@ export function getBuiltinFunctionsMap() {
     newBuiltinFunction("print", [newArg("x", [])], (result, step, val) => {
         if (!val) return;
 
-        assert(step.fnBuiltin);
+        assert(!!step.fnBuiltin);
         assert(step.expr.t === T_FN);
 
         const innerExpr = step.expr.arguments[0];
@@ -1703,7 +1702,7 @@ export function getBuiltinFunctionsMap() {
             }
 
 
-            assert(result);
+            assert(!!result);
             program.outputs.images.push(result);
 
             return vec;
@@ -1714,7 +1713,7 @@ export function getBuiltinFunctionsMap() {
         if (!list) return;
 
         assert(list.t === T_RESULT_LIST);
-        assert(item);
+        assert(!!item);
         list.values.push(item);
 
         return list;
@@ -2220,12 +2219,12 @@ function evaluateBuiltinFunctionCall(
     program: ProgramInterpretResult,
     step: ProgramExecutionStep,
 ): ProgramResult | undefined {
-    assert(step.fnBuiltin);
+    assert(!!step.fnBuiltin);
     const fn = step.fnBuiltin;
     const numArgsInputted = step.n;
     const expr = step.expr;
 
-    assert(fn);
+    assert(!!fn);
     assert(expr.t === T_FN);
 
     let numArgsToPull = numArgsInputted;
@@ -2234,7 +2233,7 @@ function evaluateBuiltinFunctionCall(
     }
 
     const getArg = (program: ProgramInterpretResult, step: ProgramExecutionStep, i: number): ProgramResult | null =>  {
-        assert(step.fnBuiltin);
+        assert(!!step.fnBuiltin);
         const argExpr: ProgramExpression | undefined = expr.arguments[i];
 
         if (program.errors.length > 0) {
@@ -2516,7 +2515,7 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
                 const addr = s.variables.get(varName);
                 assert(addr !== undefined);
                 const val = program.stack[addr];
-                assert(val);
+                assert(!!val);
 
                 resultToPush = val;
             }
@@ -2605,7 +2604,7 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
             const list: ProgramResult = { t: T_RESULT_LIST, values: [] };
             for (let i = 0; i < step.n; i++) {
                 const val = program.stack[program.stackIdx + i + 1];
-                assert(val);
+                assert(!!val);
                 list.values.push(val);
             }
 
@@ -2619,8 +2618,8 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
                 const mapKey = program.stack[program.stackIdx + 2 * i + 1];
                 const mapVal = program.stack[program.stackIdx + 2 * i + 2];
 
-                assert(mapKey);
-                assert(mapVal);
+                assert(!!mapKey);
+                assert(!!mapVal);
 
                 const key = validateMapKey(program, step, mapKey);
                 if (key === null) {
@@ -2643,7 +2642,7 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
             const len = step.n;
             for (let i = 0; i < len; i++) {
                 const val = program.stack[program.stackIdx + i + 1];
-                assert(val);
+                assert(!!val);
 
                 if (val.t !== T_RESULT_NUMBER && val.t !== T_RESULT_MATRIX) {
                     addError(program, step, "Vectors/Matrices can only contain other vectors/matrices/numbers. You can create a List instead, by prepending 'list', like list[1,2,\"3\"]");
@@ -2727,7 +2726,7 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
             const addr = call.variables.get(step.str);
             assert(addr !== undefined);
             const val = program.stack[addr];
-            assert(val);
+            assert(!!val);
             assert(val.t === T_RESULT_NUMBER);
             val.val += stepVal.val;
         } break; 
@@ -2794,11 +2793,11 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
             }
         } break;
         case EX_STEP_FN: {
-            assert(step._fn);
+            assert(!!step._fn);
             push(program, step._fn, step);
         } break;
         case EX_STEP_FN_CALL: {
-            assert(step._fn);
+            assert(!!step._fn);
             const numArgs = step.n;
             pushFunctionCallFrame(program, step._fn, numArgs);
             call.i++;
@@ -2810,7 +2809,7 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
                 return false;
             }
             // Should always push an error if we're returning undefined
-            assert(res);
+            assert(!!res);
 
             program.stackIdx -= step.n;
             push(program, res, step);
@@ -2888,7 +2887,7 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
             return false;
         }
         default:
-            typeGuard(step.type);
+            assertUnreachable(step.type);
     }
 
     call.i = nextCallI;
@@ -2930,7 +2929,7 @@ function interpretRestOfProgram(result: ProgramInterpretResult) {
 
     if (safetyCounter === MAX_ITERATIONS) {
         const call = getCurrentCallstack(result);
-        assert(call);
+        assert(!!call);
         const step = call.code.steps[call.i];
 
         // Could do the funniest thing here - "Log in and purchase a premium account to unlock more iterations"

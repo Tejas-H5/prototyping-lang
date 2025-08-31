@@ -1,4 +1,4 @@
-import { newCssBuilder, setCssVars } from "src/utils/cn";
+import { newCssBuilder, setCssVars } from "src/utils/cssb";
 import { newColor, newColorFromHex } from "src/utils/colour";
 
 const mainTheme = Object.freeze({

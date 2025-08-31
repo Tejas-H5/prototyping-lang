@@ -1,136 +1,102 @@
 import { cssVars } from 'src/styling';
-import {
-    elementHasMouseDown,
-    getCurrentRoot,
-    getImMouse,
-    imDiv,
-    imBeginList,
-    imEnd,
-    imEndList,
-    imInit,
-    imMemo,
-    imMemoObjectVals,
-    imState,
-    imTrackSize,
-    nextListRoot,
-    setStyle
-} from 'src/utils/im-dom-utils';
+import { ImCache, imFor, imForEnd, imMemo, isFirstishRender } from 'src/utils/im-core';
+import { elHasMouseOver, elSetStyle, ImGlobalEventSystem, imTrackSize } from 'src/utils/im-dom';
 import { clamp, inverseLerp, lerp } from 'src/utils/math-utils';
+import { BLOCK, imLayout, imLayoutEnd } from './core/layout';
 
-export function newSliderState() {
-    return {
-        value: 0,
-        start: 0,
-        end: 1,
-        step: 0 as number | null,
-        t: 0,
-    };
-}
+const MIN_STEP = 0.0001;
 
-export function renderSliderBody(
-    sliderStart: number,
-    sliderEnd: number,
-    step: number | null,
-    value: number = sliderStart,
-) {
-    const s = imState(newSliderState);
+export function imSliderInput(
+    c: ImCache,
+    ev: ImGlobalEventSystem,
+    start: number, end: number, step: number | null, 
+    value: number = start,
+): number {
+    if (end < start) {
+        [start, end] = [end, start];
+    }
+    value = clamp(value, start, end);
 
-    // slider body
-    imDiv(); {
-        const { size } = imTrackSize();
+    const valueChanged = imMemo(c, value);
+    const sliderStartChanged = imMemo(c, start);
+    const sliderEndChanged = imMemo(c, end);
+    const width = end - start;
 
-        if (imInit()) {
-            setStyle("display", "flex");
-            setStyle("flex", "1");
-            setStyle("position", "relative");
-            setStyle("backgroundColor", cssVars.bg2);
-            setStyle("borderRadius", "1000px");
-            setStyle("cursor", "ew-resize");
-            setStyle("userSelect", "none");
+    const sliderBody = imLayout(c, BLOCK); {
+        const { size } = imTrackSize(c);
+
+        if (isFirstishRender(c)) {
+            elSetStyle(c, "display", "flex");
+            elSetStyle(c, "flex", "1");
+            elSetStyle(c, "position", "relative");
+            elSetStyle(c, "backgroundColor", cssVars.bg2);
+            elSetStyle(c, "borderRadius", "1000px");
+            elSetStyle(c, "cursor", "ew-resize");
+            elSetStyle(c, "userSelect", "none");
         }
-
-        s.start = sliderStart;
-        s.end = sliderEnd;
-        if (s.end < s.start) {
-            [s.start, s.end] = [s.end, s.start];
-        }
-        s.step = step;
-
-        const valueChanged = imMemo(value);
-        if (valueChanged) {
-            s.value = value;
-        } 
-
-        s.value = clamp(s.value, s.start, s.end);
 
         const sliderHandleSize = size.height;
 
         // little dots for every step
-        imBeginList(); 
-        if (s.step) {
-            const width = s.end - s.start;
-            const count = Math.floor(width / s.step);
+        imFor(c); if (step) {
+            const count = Math.floor(width / step);
             if (count < 50) {
                 for (let i = 0; i < count - 1; i++) {
                     let t = (i + 1) / count;
                     const sliderPos = lerp(0, size.width - sliderHandleSize, t);
 
-                    nextListRoot();
-
-                    imDiv(); {
-                        if (imInit()) {
-                            setStyle("position", "absolute");
-                            setStyle("aspectRatio", "1 / 1");
-                            setStyle("height", "100%");
-                            setStyle("backgroundColor", cssVars.mg);
-                            setStyle("transformOrigin", "center");
-                            setStyle("transform", "scale(0.4) rotate(45deg)");
+                    imLayout(c, BLOCK); {
+                        if (isFirstishRender(c)) {
+                            elSetStyle(c, "position", "absolute");
+                            elSetStyle(c, "aspectRatio", "1 / 1");
+                            elSetStyle(c, "height", "100%");
+                            elSetStyle(c, "backgroundColor", cssVars.mg);
+                            elSetStyle(c, "transformOrigin", "center");
+                            elSetStyle(c, "transform", "scale(0.4) rotate(45deg)");
                         }
 
-                        setStyle("left", sliderPos + "px");
-                    } imEnd();
+                        elSetStyle(c, "left", sliderPos + "px");
+                    } imLayoutEnd(c);
                 }
             }
-        }
-        imEndList();
+        } imForEnd(c);
 
         // slider handle
-        imDiv(); {
-            if (imInit()) {
-                setStyle("position", "absolute");
-                setStyle("backgroundColor", cssVars.fg);
-                setStyle("borderRadius", "1000px");
-                setStyle("aspectRatio", "1 / 1");
-                setStyle("height", "100%");
-
-                setStyle("userSelect", "none");
-                setStyle("cursor", "ew-resize");
+        imLayout(c, BLOCK); {
+            if (isFirstishRender(c)) {
+                elSetStyle(c, "position", "absolute");
+                elSetStyle(c, "backgroundColor", cssVars.fg);
+                elSetStyle(c, "borderRadius", "1000px");
+                elSetStyle(c, "aspectRatio", "1 / 1");
+                elSetStyle(c, "height", "100%");
+                elSetStyle(c, "userSelect", "none");
+                elSetStyle(c, "cursor", "ew-resize");
             }
 
-            const sChanged = imMemoObjectVals(s);
-            if (sChanged) {
-                const t = inverseLerp(s.value, s.start, s.end);
+            if (valueChanged || sliderStartChanged || sliderEndChanged) {
+                const t = inverseLerp(value, start, end);
                 const sliderPos = lerp(0, size.width - sliderHandleSize, t);
-                setStyle("left", sliderPos + "px");
+                elSetStyle(c, "left", sliderPos + "px");
             }
-        } imEnd();
+        } imLayoutEnd(c);
 
-        const mouse = getImMouse();
-        if (mouse.leftMouseButton && elementHasMouseDown()) {
-            const rect = getCurrentRoot().root.getBoundingClientRect();
+        const { mouse } = ev;
+        if (mouse.leftMouseButton && elHasMouseOver(c, ev)) {
+            const rect = sliderBody.getBoundingClientRect();
+
             const x0 = rect.left + sliderHandleSize / 2;
             const x1 = rect.right - sliderHandleSize / 2;
             let t = inverseLerp(mouse.X, x0, x1);
             t = clamp(t, 0, 1);
 
-            s.value = lerp(s.start, s.end, t);
-            s.t = s.value;
-            if (s.step && s.step > 0.0001) {
-                s.value = Math.round(s.value / s.step) * s.step;
+            value = lerp(start, end, t);
+            t = value;
+            if (step && step > MIN_STEP) {
+                value = Math.round(value / step) * step;
             }
-            s.value = clamp(s.value, s.start, s.end);
+            value = clamp(value, start, end);
         }
-    } imEnd();
+    } imLayoutEnd(c);
 
-    return s;
+    return value;
 }

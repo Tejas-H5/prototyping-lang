@@ -1,20 +1,20 @@
 import "src/styling";
 import { copyToClipboard, readFromClipboard } from "src/utils/clipboard";
-import {
-    elementHasMousePress,
-    elementHasMouseDown,
-    elementHasMouseHover,
-    getImMouse,
-    imBeginRoot,
-    imEnd,
-    imInit,
-    imOn,
-    setStyle,
-    UIRoot,
-    imMemo
-} from 'src/utils/im-dom-utils';
 import { isWhitespace } from "src/utils/text-utils";
 import * as tb from "./text-edit-buffer";
+import {
+    EL_TEXTAREA,
+    elHasMouseDown,
+    elHasMouseOver,
+    elSetStyle,
+    EV_KEYDOWN,
+    EV_KEYUP,
+    imElBegin,
+    imElEnd,
+    ImGlobalEventSystem,
+    imOn
+} from "./im-dom";
+import { ImCache, imMemo, isFirstishRender } from "./im-core";
 
 // TODO: the user of this 'library' like code shouldn't need to actually use the im-dom-utils framework.
 // Should make it framework-agnostic. or at least moving the immediate mode functions to the bottom half of the file.
@@ -121,7 +121,7 @@ type TextEdit = {
 };
 
 export type TextEditorState = {
-    _textAreaElement:      UIRoot<HTMLTextAreaElement>    | null;
+    _textAreaElement:      HTMLTextAreaElement            | null;
     _cursorSpan:           HTMLElement                    | null;
     _lastRenderedCharSpan: HTMLElement                    | null;
     _containerElement:     HTMLElement                    | null;
@@ -145,7 +145,7 @@ export type TextEditorState = {
     // Curent line
     viewLine:           number;
     // number of lines we _can_ view at once. its the viewport height in lines
-    viewTotalLines:    number;
+    viewTotalLines:     number;
     _cursorLine:        number;
     _hasCursorLine:     boolean;
     // TODO: viewCol for horizonal scrolling
@@ -314,10 +314,10 @@ export function textEditorScroll(s: TextEditorState, amount: number) {
     s.wantedScrollAmount = amount;
 }
 
-export function handleTextEditorMouseScrollEvent(s: TextEditorState) {
-    const mouse = getImMouse();
+export function handleTextEditorMouseScrollEvent(c: ImCache, ev: ImGlobalEventSystem, s: TextEditorState) {
+    const mouse = ev.mouse;
     if (mouse.scrollWheel !== 0) {
-        if (elementHasMouseHover()) {
+        if (elHasMouseOver(c, ev)) {
             const n = Math.max(mouse.scrollWheel / 50);
             textEditorScroll(s, n);
         } 
@@ -345,13 +345,13 @@ export function textEditorMoveToStartOfLine(cursor: tb.Iterator) {
 }
 
 // events are only set to null if we handle them.
-export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
+export function defaultTextEditorKeyboardEventHandler(ev: ImGlobalEventSystem, s: TextEditorState) {
     if (s._handledEvent) {
         return;
     }
     s._handledEvent = true;
 
-    const mouse = getImMouse();
+    const mouse = ev.mouse;
     if (!mouse.leftMouseButton) {
         s.hasClick = false;
     }
@@ -455,9 +455,12 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
                 textEditorDeleteSelection(s);
             } else {
                 if (key === "Backspace") {
-                    tb.iterateBackwards(s.cursor);
+                    if (tb.iterateBackwards(s.cursor)) {
+                        textEditorRemoveLen(s, s.cursor, 1);
+                    }
+                } else {
+                    textEditorRemoveLen(s, s.cursor, 1);
                 }
-                textEditorRemoveLen(s, s.cursor, 1);
             }
         } else if (key === "ArrowLeft") {
             if (s.inCommandMode) {
@@ -517,7 +520,7 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
         const modified = lastModified !== s.modifiedAt;
         const movedCursor = !tb.itEquals(s._initialCursor, s.cursor);
 
-        if (modified) {
+        if (modified || movedCursor) {
             s.isAutoScrolling = true;
         }
 
@@ -712,6 +715,8 @@ function textEditorExtendSelection(s: TextEditorState, cursor: tb.Iterator) {
 // NOTE: this needs to be inside a container
 // with position: relative to correctly position the fake text-area.
 export function imBeginTextEditor(
+    c: ImCache,
+    ev: ImGlobalEventSystem,
     s: TextEditorState,
     container: HTMLElement | null,
     ctrlHeld: boolean,
@@ -724,9 +729,9 @@ export function imBeginTextEditor(
 
     const wasShifting = s.isShifting;
     s.isShifting = shiftHeld;
-    const mouse = getImMouse();
+    const mouse = ev.mouse;
 
-    if (s.isMouseSelecting && !mouse.lastClickedElement) {
+    if (s.isMouseSelecting && !mouse.leftMouseButton) {
         s.isMouseSelecting = false;
     }
 
@@ -734,15 +739,24 @@ export function imBeginTextEditor(
         s.isKeyboardSelecting = false;
     }
 
+    const MINIMUM_SCROLL_WINDOW_LINES = 5;
+
     // handle scroll input from last frame (??? TODO: Move if needd)
     let newViewLine = s.viewLine;
-    while (s.wantedScrollAmount > 1) {
+    const numNewlines = tb.buffNumNewlines(s.buffer);
+    while (
+        s.wantedScrollAmount > 1 &&
+        newViewLine < numNewlines - MINIMUM_SCROLL_WINDOW_LINES
+    ) {
         s.wantedScrollAmount--;
-        newViewLine--;
-    }
-    while (s.wantedScrollAmount < -1) {
-        s.wantedScrollAmount++;
         newViewLine++;
+    }
+    while (
+        s.wantedScrollAmount < -1 &&
+        newViewLine > 0
+    ) {
+        s.wantedScrollAmount++;
+        newViewLine--;
     }
     textEditorSetViewLine(s, newViewLine);
 
@@ -751,10 +765,10 @@ export function imBeginTextEditor(
     tb.itCopy(s._renderCursor, s._renderCursorStart);
 
     // using an input to allow hooking into the browser's existing focusing mechanisms.
-    const textAreaRoot = imBeginRoot(newTextArea); {
+    const textAreaRoot = imElBegin(c, EL_TEXTAREA).root; {
         s._textAreaElement = textAreaRoot;
-        s._keyDownEvent = imOn("keydown");
-        s._keyUpEvent = imOn("keyup");
+        s._keyDownEvent = imOn(c, EV_KEYDOWN);
+        s._keyUpEvent = imOn(c, EV_KEYUP);
 
         // preprocess events
         {
@@ -764,106 +778,115 @@ export function imBeginTextEditor(
             }
         }
 
-        if (imInit()) {
-            setStyle("all", "unset");
-            setStyle("width", "1px");
-            setStyle("position", "absolute");
-            setStyle("color", "transparent");
-            setStyle("textShadow", "0px 0px 0px tomato"); // hahaha tomato. lmao. https://stackoverflow.com/questions/44845792/hide-caret-in-textarea
+        if (isFirstishRender(c)) {
+            elSetStyle(c, "all", "unset");
+            elSetStyle(c, "width", "1px");
+            elSetStyle(c, "position", "absolute");
+            elSetStyle(c, "color", "transparent");
+            elSetStyle(c, "textShadow", "0px 0px 0px tomato"); // hahaha tomato. lmao. https://stackoverflow.com/questions/44845792/hide-caret-in-textarea
             // debugging
             // setStyle("border", "1px solid red");
         }
 
-        s.hasFocus = document.activeElement === s._textAreaElement.root;
+        s.hasFocus = document.activeElement === s._textAreaElement;
         if (s._textAreaElement && s.shouldFocusTextArea) {
             s.shouldFocusTextArea = false;
             if (!s.hasFocus) {
-                s._textAreaElement.root.focus();
+                s._textAreaElement.focus();
                 s.hasFocus = true;
             }
         }
-    } imEnd();
+    } imElEnd(c, EL_TEXTAREA);
 }
 
-export function imEndTextEditor(s: TextEditorState) {
+export function imEndTextEditor(c: ImCache, ev: ImGlobalEventSystem, s: TextEditorState) {
     tb.itCopy(s._renderCursorEnd, s._renderCursor);
 
     // NOTE: code that is in the rendering pass should be moved
     // out of the rendering pass unless there is no other way to do it.
 
-    const offsetTopChanged = imMemo(s._cursorSpan?.offsetTop);
-    const offsetLeftChanged = imMemo(s._cursorSpan?.offsetLeft);
-    const offsetHeightChanged = imMemo(s._cursorSpan?.offsetHeight);
+    const offsetTopChanged    = imMemo(c, s._cursorSpan?.offsetTop);
+    const offsetLeftChanged   = imMemo(c, s._cursorSpan?.offsetLeft);
+    const offsetHeightChanged = imMemo(c, s._cursorSpan?.offsetHeight);
 
     if (s._cursorSpan && s._textAreaElement) {
         if (offsetTopChanged) {
-            setStyle("top", s._cursorSpan.offsetTop + "px", s._textAreaElement);
+            elSetStyle(c, "top", s._cursorSpan.offsetTop + "px", s._textAreaElement);
         }
         if (offsetLeftChanged) {
-            setStyle("left", s._cursorSpan.offsetLeft + "px", s._textAreaElement)
+            elSetStyle(c, "left", s._cursorSpan.offsetLeft + "px", s._textAreaElement)
         }
         if (offsetHeightChanged) {
-            setStyle("height", s._cursorSpan.clientHeight + "px", s._textAreaElement);
+            elSetStyle(c, "height", s._cursorSpan.clientHeight + "px", s._textAreaElement);
         }
     }
 
-    defaultTextEditorKeyboardEventHandler(s);
+    defaultTextEditorKeyboardEventHandler(ev, s);
 
+    // Make sure the cursor is still in view. autoscrolling.
+    // Since the user can render anything inside a line, we actually can't make any assumptions about
+    // how tall the line should be. Hence, we scroll by 1 step per frame.
+    // TODO: think of better abstraction.
 
-    if (s.isAutoScrolling) {
-        // Make sure the cursor is still in view. autoscrolling.
-        // Since the user can render anything inside a line, we actually can't make any assumptions about
-        // how tall the line should be. Hence, we scroll by 1 step per frame.
-        // TODO: think of better abstraction.
+    if (s._cursorSpan && s._containerElement && s._lastRenderedCharSpan) {
+        const cursorRect = s._cursorSpan.getBoundingClientRect();
+        const containerRect = s._containerElement.getBoundingClientRect();
 
-        if (s._cursorSpan && s._containerElement && s._lastRenderedCharSpan) {
-            const cursorRect = s._cursorSpan.getBoundingClientRect();
-            const containerRect = s._containerElement.getBoundingClientRect();
+        const cursorTop = cursorRect.top;
+        const cursorBottom = cursorRect.bottom;
 
-            const cursorTop = cursorRect.top;
-            const cursorBottom = cursorRect.bottom;
+        const containerTop = containerRect.top;
+        const containerBottom = containerRect.bottom;
 
-            const containerTop = containerRect.top;
-            const containerBottom = containerRect.bottom;
+        const containerSize = containerBottom - containerTop;
 
-            const containerSize = containerBottom - containerTop;
+        const percentToTop = (cursorBottom - containerTop) / containerSize;
+        const percentToBottom = (containerBottom - cursorTop) / containerSize;
 
-            const percentToTop = (cursorBottom - containerTop) / containerSize;
-            const percentToBottom = (containerBottom - cursorTop) / containerSize;
+        const scrollThreshold = 0.25;
 
-            const scrollThreshold = 0.25;
+        let autoScrolled = false;
 
-            let scrolled = false;
-
-            let newViewLine = s.viewLine;
-            if (percentToTop < scrollThreshold) {
-                if (s.viewLine > 0) {
-                    newViewLine--;
-                }
-            } else if (percentToBottom < scrollThreshold) {
-                let canScrollDown = true;
-                if (tb.itIsAtEnd(s._renderCursorEnd)) {
-                    const lastRenderedCharRect = s._lastRenderedCharSpan.getBoundingClientRect();
-                    const lastCharIsFullyVisible = lastRenderedCharRect.bottom < containerBottom;
-                    if (lastCharIsFullyVisible) {
-                        canScrollDown = false;
-                    }
-                }
-
-                if (canScrollDown) {
-                    newViewLine++;
+        if (percentToTop < scrollThreshold) {
+            if (s.viewLine > 0) {
+                s.wantedScrollAmount--;
+                autoScrolled = true;
+            }
+        } else if (percentToBottom < scrollThreshold) {
+            let canScrollDown = true;
+            if (tb.itIsAtEnd(s._renderCursorEnd)) {
+                const lastRenderedCharRect = s._lastRenderedCharSpan.getBoundingClientRect();
+                const lastCharIsFullyVisible = lastRenderedCharRect.bottom < containerBottom;
+                if (lastCharIsFullyVisible) {
+                    canScrollDown = false;
                 }
             }
 
-            if (!textEditorSetViewLine(s, newViewLine)) {
-                s.isAutoScrolling = false;
+            if (canScrollDown) {
+                s.wantedScrollAmount++;
+                autoScrolled = true;
             }
+        }
+
+        if (!autoScrolled) {
+            s.isAutoScrolling = false;
+        }
+    } else {
+        const cursorLine = tb.itLine(s.cursor);
+
+        if (tb.itBefore(s.cursor, s._renderCursorStart)) {
+            const dist = s.viewLine - cursorLine;
+            s.wantedScrollAmount -= Math.ceil(dist / 2);
+        } else if (tb.itBefore(s._renderCursorEnd, s.cursor)) {
+            const endLine = s.viewLine + s.viewTotalLines;
+            const dist = cursorLine - endLine;
+            s.wantedScrollAmount += Math.ceil(dist / 2);
         }
     }
 }
 
-export function handleTextEditorClickEventForChar(s: TextEditorState, cursor: tb.Iterator) {
-    if (elementHasMousePress()) {
+export function handleTextEditorClickEventForChar(c: ImCache, ev: ImGlobalEventSystem, s: TextEditorState, cursor: tb.Iterator) {
+    if (elHasMouseDown(c, ev)) {
         s.hasClick = true;
 
         // single click, clear selection
@@ -872,7 +895,7 @@ export function handleTextEditorClickEventForChar(s: TextEditorState, cursor: tb
         textEditorStartSelection(s, s.cursor);
     }
 
-    if (s.hasClick && elementHasMouseDown(false)) {
+    if (s.hasClick && elHasMouseDown(c, ev)) {
         // mouse is down. could be a single click, or a drag click
         
         // we probably wanted to start selecting from here

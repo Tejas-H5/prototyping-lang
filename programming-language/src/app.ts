@@ -1,57 +1,61 @@
-import { cn } from "src/utils/cn";
-import { imAppCodeEditor } from './code-editor';
-import { renderDebugger } from './debugger';
+import { cn } from "src/utils/cssb";
+import { imAppCodeEditor as imCodeEditor } from './code-editor';
+import { imAppCodeOutput } from "./code-output";
 import {
-    ABSOLUTE,
-    ALIGN_CENTER,
-    imBeginHeading,
+    BLOCK,
     COL,
-    FIXED,
-    FLEX,
-    GAP,
-    H100,
-    imBeginButton,
-    imBeginLayout,
-    imBeginSpace,
-    imTextSpan,
-    JUSTIFY_CENTER,
-    NORMAL,
-    ROW,
-    setInset,
-    W100,
-    NOT_SET,
-    PX
-} from './layout';
+    imAbsolute,
+    imAlign,
+    imButton,
+    imFixed,
+    imFlex,
+    imGap,
+    imJustify,
+    imLayout,
+    imLayoutEnd,
+    imPadding,
+    imSize,
+    NA,
+    PERCENT,
+    PX,
+    ROW
+} from "./components/core/layout";
+import { imDebugger as imDebugger } from './debugger';
+import { parse } from "./program-parser";
 import { GlobalContext, newGlobalContext, rerun, saveState } from './state';
 import "./styling";
 import { cnApp } from './styling';
 import { assert } from './utils/assert';
 import {
-    abortListAndRewindUiStack,
-    deltaTimeSeconds,
-    disableIm,
-    elementHasMousePress,
-    enableIm,
-    getImKeys,
-    imBeginList,
-    imEnd,
-    imEndList,
-    imInit,
-    imMap,
-    imMemo,
-    imMemoObjectVals,
-    imRef,
-    imState,
-    nextListRoot,
-    setClass,
-    setStyle,
+    getDeltaTimeSeconds,
+    ImCache,
+    imFor,
+    imForEnd,
+    imGet,
     imIf,
-    imElse,
-    imEndIf,
+    imIfElse,
+    imIfEnd,
+    imMemo,
+    imSet,
     imTry,
-} from './utils/im-dom-utils';
-import { parse } from "./program-parser";
-import { renderAppCodeOutput } from "./code-output";
+    imTryCatch,
+    imTryEnd,
+    inlineTypeId,
+    isFirstishRender
+} from "./utils/im-core";
+import {
+    EL_H1,
+    elHasMouseDown,
+    elSetClass,
+    elSetStyle,
+    imElBegin,
+    imElEnd,
+    imGlobalEventSystemBegin,
+    imGlobalEventSystemEnd,
+    imStr
+} from "./utils/im-dom";
+import { imTestHarness } from "./test-harness";
+import { FpsCounterState } from "./components/fps-counter";
 
 let saveTimeout = 0;
 let savingDisabled = false;
@@ -65,33 +69,56 @@ function saveStateDebounced(ctx: GlobalContext) {
     }, 1000);
 }
 
-export function renderApp() {
-    const errors = imMap<string, number>();
-    const dismissedRef = imRef();
-    const totalErrorsRef = imRef<number>();
 
-    imBeginLayout(FIXED | NORMAL); {
-        if (imInit()) {
-            setClass(cnApp.normalFont);
-            setClass(cn.absoluteFill);
+// const TESTING_ENABLED = !IS_PROD;
+const TEST_HARNESS_ENABLED = true;
+let isTesting = false;
+
+export function imApp(c: ImCache, fps: FpsCounterState) {
+    let errorState; errorState = imGet(c, inlineTypeId(imApp));
+    if (!errorState) errorState = imSet(c, {
+        errors: new Map<string, number>(),
+        dismissed: true,
+        totalErrors: 0,
+    });
+
+    let ctx = imGet(c, newGlobalContext);
+    if (!ctx) ctx = imSet(c, newGlobalContext());
+
+    imGlobalEventSystemBegin(c, ctx.ev);
+
+    if (TEST_HARNESS_ENABLED) {
+        const keys = ctx.ev.keyboard;
+        if (keys.keyDown) {
+            const key = keys.keyDown.key;
+            if (key === "F1") {
+                isTesting = !isTesting;
+            } else if (key === "Escape" && isTesting) {
+                isTesting = !isTesting;
+                keys.keyDown = null;
+            }
+        }
+    }
+
+    imLayout(c, BLOCK); imFixed(c, 0, PX, 0, PX, 0, PX, 0, PX); {
+        if (isFirstishRender(c)) {
+            elSetClass(c, cnApp.normalFont);
+            elSetClass(c, cn.absoluteFill);
         }
 
-        const l = imTry();
-        try {
+        const tryState = imTry(c); try {
             savingDisabled = false;
 
-            if (imIf() && !dismissedRef.val) {
-                const ctx = imState(newGlobalContext);
-
-                const { state } = ctx;
-
+            if (imIf(c) && !errorState.dismissed) {
+                const { state, stateVersion } = ctx;
 
                 const input = ctx.input;
 
                 input.keyboard.escape = false;
 
-                disableIm(); {
-                    const { keyDown, keyUp, blur } = getImKeys();
+                // input handling
+                {
+                    const { keyDown, keyUp, blur } = ctx.ev.keyboard;
 
                     if (keyDown) {
                         const shiftPressed = keyDown.key === "Shift";
@@ -113,10 +140,8 @@ export function renderApp() {
                         input.keyboard.ctrlHeld = false;
                     }
                 }
-                enableIm();
 
-                const stateChanged = imMemoObjectVals(state);
-                if (stateChanged) {
+                if (imMemo(c, stateVersion)) {
                     saveStateDebounced(ctx);
 
                     // Need to parse as soon as the text changes
@@ -130,115 +155,100 @@ export function renderApp() {
 
                 const timerOn = ctx.autoRunTimer > 0;
                 if (timerOn) {
-                    ctx.autoRunTimer -= deltaTimeSeconds();
+                    ctx.autoRunTimer -= getDeltaTimeSeconds(c);
                 }
 
-                if (imMemo(timerOn)) {
+                if (imMemo(c, timerOn)) {
                     if (!timerOn) {
                         rerun(ctx);
                     }
                 }
 
-                imBeginLayout(ROW | H100); {
-                    imBeginLayout(FLEX); {
-                        imAppCodeEditor(ctx);
+                imLayout(c, ROW); imSize(c, 0, NA, 100, PERCENT); {
+                    imLayout(c, BLOCK); imFlex(c); {
+                        imCodeEditor(c, ctx);
+                    } imLayoutEnd(c);
 
-                        // imEditableTextArea({
-                        //     text: ctx.state.text,
-                        //     isEditing: true,
-                        //     onInput: text => ctx.state.text = text,
-                        //     config: {},
-                        // }); imEnd();
-                    } imEnd();
-
-                    imBeginLayout(FLEX | COL | GAP); {
-                        if (imInit()) {
-                            setInset("10px");
-                        }
-
-                        if (imIf() && ctx.isDebugging) {
+                    imLayout(c, COL); imFlex(c); imGap(c, 5, PX); imPadding(c, 10, PX, 10, PX, 10, PX, 10, PX); {
+                        if (imIf(c) && ctx.isDebugging) {
                             const interpretResult = ctx.lastInterpreterResult;
-                            assert(interpretResult);
-                            renderDebugger(ctx, interpretResult);
+                            assert(!!interpretResult);
+                            imDebugger(c, ctx, interpretResult);
                         } else {
-                            imElse();
-                            nextListRoot();
-                            renderAppCodeOutput(ctx);
-                        } imEndIf();
-                    } imEnd();
-                } imEnd();
+                            imIfElse(c);
+                            imAppCodeOutput(c, ctx);
+                        } imIfEnd(c);
+                    } imLayoutEnd(c);
+                } imLayoutEnd(c);
 
-                imBeginLayout(ROW | GAP | ALIGN_CENTER | ABSOLUTE | NORMAL); {
-                    if (imInit()) {
-                        setStyle("right", "10px");
-                        setStyle("bottom", "10px");
-                        setStyle("borderRight", "10px");
-                        setStyle("height", "2em");
+                imLayout(c, ROW); imGap(c, 5, PX); imAlign(c); imAbsolute(c, 0, NA, 10, PX, 10, PX, 0, NA); {
+                    if (isFirstishRender(c)) {
+                        elSetStyle(c, "right", "10px");
+                        elSetStyle(c, "bottom", "10px");
+                        elSetStyle(c, "borderRight", "10px");
+                        elSetStyle(c, "height", "2em");
                     }
 
-                    imTextSpan(saveTimeout ? "Saving..." : "Saved");
-                } imEnd();
+                    imStr(c, saveTimeout ? "Saving..." : "Saved");
+                } imLayoutEnd(c);
             } else {
+                const { errors, dismissed, totalErrors } = errorState;
+
                 assert(errors.size !== 0);
 
-                imElse();
+                imIfElse(c);
 
-                imBeginLayout(COL | ALIGN_CENTER | JUSTIFY_CENTER | W100 | H100); {
-                    if (imIf() && errors.size === 1 && errors.values().next().value === 1) {
-                        imBeginHeading(); {
-                            imTextSpan("An error occured");
-                        } imEnd();
-                        imBeginLayout(); {
-                            imTextSpan(errors.keys().next().value!);
-                        } imEnd();
+                imLayout(c, COL); imAlign(c); imJustify(c); imSize(c, 100, PERCENT, 100, PERCENT); {
+                    if (imIf(c) && errors.size === 1 && errors.values().next().value === 1) {
+                        imElBegin(c, EL_H1); imStr(c, "An error occured"); imElEnd(c, EL_H1);
+
+                        imLayout(c, BLOCK); imStr(c, errors.keys().next().value!); imLayoutEnd(c);
                     } else {
-                        imElse();
+                        imIfElse(c);
 
-                        imBeginHeading(); {
-                            imTextSpan("The errors just keep occuring !!! Apologies.");
-                        } imEnd();
+                        imElBegin(c, EL_H1); imStr(c, "The errors just keep occuring !!! Apologies."); imElEnd(c, EL_H1);
 
-                        imBeginList();
-                        for (const [err, count] of errors) {
-                            nextListRoot();
-                            imBeginLayout(); {
-                                imTextSpan(err + " [" + count + "x]");
-                            } imEnd();
-                        } 
-                        imEndList();
-                    } imEndIf();
-                    imBeginSpace(0, NOT_SET, 10, PX); imEnd();
-                    imBeginLayout(); {
-                        if (imIf() && totalErrorsRef.val && totalErrorsRef.val < 10) {
-                            imBeginButton(); {
-                                imTextSpan("Dismiss [Warning - may lead to data corruption]");
-                                if (elementHasMousePress()) {
-                                    dismissedRef.val = false;
-                                }
-                            } imEnd();
+                        imFor(c); for (const [err, count] of errors) {
+                            imLayout(c, BLOCK); imStr(c, err + " [" + count + "x]"); imLayoutEnd(c);
+                        } imForEnd(c);
+                    } imIfEnd(c);
+
+                    imLayout(c, BLOCK); imSize(c, 0, NA, 10, PX); imLayoutEnd(c);
+
+                    imLayout(c, BLOCK); {
+                        if (imIf(c) && totalErrors && totalErrors < 10) {
+                            imLayout(c, BLOCK); imButton(c); {
+                                imStr(c, "Dismiss [Warning - may lead to data corruption]");
+                                if (elHasMouseDown(c, ctx.ev)) errorState.dismissed = false;
+                            } imLayoutEnd(c);
                         } else {
-                            imElse();
-                            imTextSpan("This button was a bad idea ...");
-                        } imEndIf();
-                    } imEnd();
-                } imEnd();
-            } imEndIf();
+                            imIfElse(c);
+                            imStr(c, "This button was a bad idea ...");
+                        } imLayoutEnd(c);
+                    } imLayoutEnd(c);
+                } imLayoutEnd(c); 
+            } imIfEnd(c);
+
+            if (TEST_HARNESS_ENABLED) {
+                if (imIf(c) && isTesting) {
+                    imTestHarness(c, ctx.ev);
+                } imIfEnd(c);
+            }
+
         } catch (e) {
+            imTryCatch(c, tryState, e);
+
             savingDisabled = true;
 
             console.error(e);
 
-            abortListAndRewindUiStack(l);
             const msg = `` + e;
-            const existing = errors.get(msg) ?? 0;
-            errors.set(msg, existing + 1);
+            const existing = errorState.errors.get(msg) ?? 0;
+            errorState.errors.set(msg, existing + 1);
+            errorState.totalErrors++;
+            errorState.dismissed = true;
+        } imTryEnd(c, tryState);
+    } imLayoutEnd(c);
 
-            if (!totalErrorsRef.val) totalErrorsRef.val = 0;
-            totalErrorsRef.val++;
-
-            dismissedRef.val = true;
-        }
-        imEndList();
-    } imEnd();
-
+    imGlobalEventSystemEnd(c, ctx.ev);
 }

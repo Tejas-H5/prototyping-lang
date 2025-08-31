@@ -1,25 +1,34 @@
-import { cssVars } from "src/styling";
-import { cn, newCssBuilder } from "src/utils/cn";
-import { execCommand } from "src/utils/depracated-dom-api-wrappers";
-import {
-    imDiv,
-    imBeginRoot,
-    imEnd,
-    imState,
-    imInit,
-    Ref,
-    setClass,
-    setInputValue,
-    imSpan,
-    setInnerText,
-    setAttr,
-    imIf,
-    imEndIf
-} from "src/utils/im-dom-utils";
-import { getLineBeforePos } from "src/utils/text-utils";
+import { newCssBuilder } from "src/utils/cssb";
+import { setInputValue } from "src/utils/dom-utils";
+import { ImCache, imMemo, isFirstishRender } from "src/utils/im-core";
+import { EL_TEXTAREA, elSetAttr, elSetClass, elSetStyle, elSetTextSafetyRemoved, imElBegin, imElEnd } from "src/utils/im-dom";
+import { BLOCK, imLayout, imLayoutEnd, INLINE } from "./core/layout";
+import { cn, cssVars } from "./core/stylesheets";
 
-const CSSVARS_FOCUS = cssVars.bg;
-const CSSVARS_FG = cssVars.fg;
+export function getLineBeforePos(text: string, pos: number): string {
+    const i = getLineStartPos(text, pos);
+    return text.substring(i, pos);
+}
+
+export function getLineStartPos(text: string, pos: number): number {
+    let i = pos;
+    if (text[i] === "\r" || text[i] === "\n") {
+        i--;
+    }
+
+    for (; i > 0; i--) {
+        if (text[i] === "\r" || text[i] === "\n") {
+            i++
+            break;
+        }
+    }
+
+    if (pos < i) {
+        return 0;
+    }
+
+    return i;
+}
 
 export function newTextArea(initFn?: (el: HTMLTextAreaElement) => void): HTMLTextAreaElement {
     const textArea = document.createElement("textarea");
@@ -31,136 +40,132 @@ export function newTextArea(initFn?: (el: HTMLTextAreaElement) => void): HTMLTex
 
 const cssb = newCssBuilder();
 
-const cnEditableTextArea = cssb.newClassName("editableTextArea");
+const cnTextAreaRoot = cssb.newClassName("customTextArea");
 cssb.s(`
-textarea.${cnEditableTextArea} { 
-    white-space: pre-wrap; padding: 5px; 
-    caret-color: ${CSSVARS_FG};
+.${cnTextAreaRoot} textarea { 
+    white-space: pre-wrap; 
+    padding: 5px; 
+    caret-color: ${cssVars.fg};
     color: transparent;
 }
-textarea.${cnEditableTextArea}:focus { 
-    color: ${CSSVARS_FG};
+.${cnTextAreaRoot}:has(textarea:focus), .${cnTextAreaRoot}:has(textarea:hover) { 
+    background-color: ${cssVars.bg2};
 }
-textarea.${cnEditableTextArea}:focus { background-color: ${CSSVARS_FOCUS}; }
 `);
 
-export type EditableTextAreaArgs = {
-    text: string;
-    isEditing: boolean;
+
+export type TextAreaArgs = {
+    value: string;
     isOneLine?: boolean;
-    onInput(text: string, textArea: HTMLTextAreaElement): void;
-    onInputKeyDown?(e: KeyboardEvent, textArea: HTMLTextAreaElement): void;
-    config: EditableTextAreaConfig;
-    textAreaRef?: Ref<HTMLTextAreaElement>;
+    placeholder?: string;
 };
 
-type EditableTextAreaConfig = {
+// My best attempt at making a text input with the layout semantics of a div.
+// NOTE: this text area has a tonne of minor things wrong with it. we should fix them at some point.
+//   - When I have a lot of empty newlines, and then click off, the empty lines go away 'as needed' 
+export function imTextAreaBegin(c: ImCache, {
+    value,
+    isOneLine,
+    placeholder = "",
+}: TextAreaArgs) {
+    let textArea: HTMLTextAreaElement;
+
+    const root = imLayout(c, BLOCK); {
+        if (isFirstishRender(c)) {
+            elSetClass(c, cn.flex1);
+            elSetClass(c, cn.row);
+            elSetClass(c, cn.h100);
+            elSetClass(c, cn.overflowYAuto);
+            elSetClass(c, cnTextAreaRoot);
+        }
+
+        // This is now always present.
+        imLayout(c, BLOCK); {
+            if (isFirstishRender(c)) {
+                elSetClass(c, cn.handleLongWords);
+                elSetClass(c, cn.relative);
+                elSetClass(c, cn.w100);
+                elSetClass(c, cn.hFitContent);
+                elSetStyle(c, "minHeight", "100%");
+            }
+
+            if (imMemo(c, isOneLine)) {
+                elSetClass(c, cn.preWrap, !isOneLine)
+                elSetClass(c, cn.pre, !!isOneLine)
+                elSetClass(c, cn.overflowHidden, isOneLine)
+                elSetClass(c, cn.noWrap, !!isOneLine);
+            }
+
+            // This is a facade that gives the text area the illusion of auto-sizing!
+            // but it only works if the text doesn't end in whitespace....
+            imLayout(c, INLINE); {
+                const placeholderChanged = imMemo(c, placeholder);
+                const valueChanged = imMemo(c, value);
+                if (placeholderChanged || valueChanged) {
+                    if (!value) {
+                        elSetTextSafetyRemoved(c, placeholder);
+                        elSetStyle(c, "color", cssVars.fg2);
+                    } else {
+                        elSetTextSafetyRemoved(c, value);
+                        elSetStyle(c, "color", cssVars.fg);
+                    }
+                }
+            } imLayoutEnd(c);
+
+            // This full-stop at the end of the text is what prevents the text-area from collapsing in on itself
+            imLayout(c, INLINE); {
+                if (isFirstishRender(c)) {
+                    elSetStyle(c, "color", "transparent");
+                    elSetStyle(c, "userSelect", "none");
+                    elSetTextSafetyRemoved(c, ".");
+                }
+            } imLayoutEnd(c);
+
+            textArea = imElBegin(c, EL_TEXTAREA).root; {
+                if (isFirstishRender(c)) {
+                    elSetAttr(c, "class", [cn.allUnset, cn.absoluteFill, cn.preWrap, cn.w100, cn.h100].join(" "));
+                    elSetAttr(c, "style", "background-color: transparent; color: transparent; overflow-y: hidden; padding: 0px");
+                }
+
+                if (imMemo(c, value)) {
+                    // don't update the value out from under the user implicitly
+                    setInputValue(textArea, value);
+                }
+
+            } // imElEnd(c, EL_TEXTAREA);
+        } // imLayoutEnd(c);
+
+        // TODO: some way to optionally render other stuff hereYou can now render your own overlays here.
+    } // imLayoutEnd(c);
+
+
+    return [root, textArea] as const;
+}
+
+export function imTextAreaEnd(c: ImCache) {
+    {
+        {
+            {
+            } imElEnd(c, EL_TEXTAREA);
+        } imLayoutEnd(c);
+    } imLayoutEnd(c);
+}
+
+
+
+export type EditableTextAreaConfig = {
     useSpacesInsteadOfTabs?: boolean;
     tabStopSize?: number;
 };
 
-function newEditableTextAreaState() {
-    return { 
-        isEditing: false,
-        lastText: "",
-        lastIsEditing: false,
-    };
-}
+// Use this in a text area's "keydown" event handler
+export function doExtraTextAreaInputHandling(
+    e: KeyboardEvent,
+    textArea: HTMLTextAreaElement,
+    config: EditableTextAreaConfig
+): boolean {
+    const execCommand = document.execCommand.bind(document);
 
-// NOTE: this text area has a tonne of minor things wrong with it. we should fix them at some point.
-//   - When I have a lot of empty newlines, and then click off, the empty lines go away 'as needed' 
-export function imEditableTextArea({
-    text,
-    isEditing,
-    isOneLine,
-    onInput,
-    onInputKeyDown,
-    config,
-    textAreaRef,
-}: EditableTextAreaArgs) {
-    const state = imState(newEditableTextAreaState);
-
-    const wasEditing = state.isEditing;
-    state.isEditing = isEditing;
-
-    const root = imDiv(); {
-        if (imInit()) {
-            setAttr("class", [cn.flex1, cn.row, cn.h100, cn.overflowYAuto].join(" "));
-        }
-
-        // This is now always present.
-        imDiv(); {
-            if (imInit()) {
-                setAttr("class", [cn.handleLongWords, cn.relative, cn.w100, cn.hFitContent].join(" "));
-                setAttr("style", "min-height: 100%");
-            }
-
-            setClass(cn.preWrap, !isOneLine)
-            setClass(cn.pre, !!isOneLine)
-            setClass(cn.overflowHidden, isOneLine)
-            setClass(cn.noWrap, !!isOneLine);
-
-            // This is a facade that gives the text area the illusion of auto-sizing!
-            // but it only works if the text doesn't end in whitespace....
-            imSpan(); {
-                setInnerText(text);
-            } imEnd();
-
-            // This full-stop at the end of the text is what prevents the text-area from collapsing in on itself
-            imSpan(); {
-                if (imInit()) {
-                    setAttr("style", "color: transparent");
-                    setInnerText(".");
-                }
-            } imEnd();
-
-            if (imIf() && isEditing) {
-                const textArea = imBeginRoot(newTextArea).root; {
-                    if (textAreaRef) {
-                        textAreaRef.val = textArea;
-                    }
-
-                    if (imInit()) {
-                        setAttr("class", [cnEditableTextArea, cn.allUnset, cn.absoluteFill, cn.preWrap, cn.w100, cn.h100].join(" "));
-                        setAttr("style", "background-color: transparent; color: transparent; overflow-y: hidden; padding: 0px");
-                    }
-
-                    if (!wasEditing) {
-                        textArea.focus({ preventScroll: true });
-                    }
-
-                    if (state.lastText !== text || state.lastIsEditing !== isEditing) {
-                        state.lastText = text;
-                        // for some reason, we need to render this thing again when we start editing - perhaps
-                        // setting the input value doesn't work if it isn't visible...
-                        state.lastIsEditing = isEditing;
-                        setInputValue(textArea, text);
-                    }
-
-                    if (imInit()) {
-                        textArea.addEventListener("input", () => {
-                            onInput(textArea.value, textArea);
-                        });
-                        textArea.addEventListener("keydown", (e) => {
-                            if (!handleTextAreaKeyboardInput(e, textArea, config)) {
-                                onInputKeyDown?.(e, textArea);
-                            }
-                        });
-                    }
-                } imEnd();
-            } imEndIf();
-        } imEnd();
-
-    } 
-
-    // user specified end.
-    // You can now render your own overlays here.
-
-    return root;
-}
-
-
-function handleTextAreaKeyboardInput(e: KeyboardEvent, textArea: HTMLTextAreaElement, config: EditableTextAreaConfig): boolean {
     // HTML text area doesn't like tabs, we need this additional code to be able to insert tabs (among other things).
     // Using the execCommand API is currently the only way to do this while perserving undo, 
     // and I won't be replacing it till there is really something better.
@@ -205,8 +210,6 @@ function handleTextAreaKeyboardInput(e: KeyboardEvent, textArea: HTMLTextAreaEle
     }
 
     if (e.key === "Backspace" && !e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey) {
-        handled = true;
-
         if (start === end) {
             const col = getLineBeforePos(text, start);
 
@@ -215,12 +218,11 @@ function handleTextAreaKeyboardInput(e: KeyboardEvent, textArea: HTMLTextAreaEle
                 e.preventDefault();
                 for (let i = 0; i < spacesToRemove; i++) {
                     execCommand("delete", false, undefined);
+                    handled = true;
                 }
             }
         }
     } else if (e.key === "Tab" && !e.altKey && !e.ctrlKey && !e.metaKey) {
-        handled = true;
-
         if (e.shiftKey) {
             e.preventDefault();
 
@@ -248,6 +250,7 @@ function handleTextAreaKeyboardInput(e: KeyboardEvent, textArea: HTMLTextAreaEle
                     for (let i = 0; i < spacesToRemove; i++) {
                         // cursor implicitly moves back 1 for each deletion.
                         execCommand("delete", false, undefined);
+                        handled = true;
                         newEnd--;
                     }
                 }
@@ -263,6 +266,7 @@ function handleTextAreaKeyboardInput(e: KeyboardEvent, textArea: HTMLTextAreaEle
                 const indentation = getIndentation(col);
                 e.preventDefault();
                 execCommand("insertText", false, indentation);
+                handled = true;
             } else {
                 e.preventDefault();
 
@@ -288,6 +292,7 @@ function handleTextAreaKeyboardInput(e: KeyboardEvent, textArea: HTMLTextAreaEle
                     textArea.selectionEnd = pos;
 
                     execCommand("insertText", false, indentation);
+                    handled = true;
                     newEnd += indentation.length;
 
                     i -= col.length;

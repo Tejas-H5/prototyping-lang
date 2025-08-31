@@ -61,7 +61,7 @@ export function getTestSuites() {
 }
 
 export function runTest<T>(test: Test<T>, debug = false) {
-    assert(test.suite);
+    assert(!!test.suite);
 
     if (test.status === TEST_STATUS_RUNNING) {
         // TODO: terminate this test, and rerun it. I don't know how to terminate a test that has a while (true) {} in it though.

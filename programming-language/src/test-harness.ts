@@ -1,40 +1,9 @@
-import {
-    ALIGN_CENTER,
-    CODE,
-    COL,
-    FIXED,
-    GAP,
-    H100,
-    H3,
-    imBeginButton,
-    imBeginLayout,
-    imBeginScrollContainer,
-    imTextSpan,
-    OPAQUE,
-    PADDED,
-    PRE,
-    RELATIVE,
-    ROW,
-    W100
-} from "./layout";
-import {
-    elementHasMousePress,
-    imEnd,
-    imEndIf,
-    imEndList,
-    imIf,
-    imInit,
-    imBeginList,
-    imMemo,
-    imState,
-    nextListRoot,
-    setStyle,
-    imTry,
-    imRef,
-    imElse,
-    imCatch,
-    imEndTry
-} from "./utils/im-dom-utils";
+import { imCode } from "./app-styling";
+import { BLOCK, COL, imAlign, imBg, imButton, imFixed, imGap, imLayout, imLayoutEnd, imPadding, imPre, imRelative, imSize, NA, PERCENT, PX, ROW } from "./components/core/layout";
+import { imScrollContainerBegin, imScrollContainerEnd, newScrollContainer } from "./components/scroll-container";
+import { cssVars } from "./styling";
+import { ImCache, imFor, imForEnd, imIf, imIfElse, imIfEnd, imMemo, imState, imTry, imTryCatch, imTryEnd, isFirstishRender } from "./utils/im-core";
+import { EL_H3, elHasMouseDown, elSetStyle, imElBegin, imElEnd, ImGlobalEventSystem, imStr } from "./utils/im-dom";
 import {
     getTestSuites,
     runTest,
@@ -67,13 +36,11 @@ function newTestHarnessState(): {
     };
 }
 
-export function imTestHarness() {
-    const s = imState(newTestHarnessState);
+export function imTestHarness(c: ImCache, ev: ImGlobalEventSystem) {
+    const s = imState(c, newTestHarnessState);
 
-    const errorRef = imRef<any>();
-
-    const l = imTry(); try {
-        if (imInit()) {
+    const tryState = imTry(c); try {
+        if (isFirstishRender(c)) {
             s.suites = getTestSuites();
             s.tests = s.suites.flatMap(s => s.tests);
             for (const suite of s.suites) {
@@ -85,7 +52,7 @@ export function imTestHarness() {
             }
         }
 
-        if (imIf() && !errorRef.val) {
+        if (imIf(c) && tryState.err) {
             if (s.runAllStaggered.running) {
                 if (s.runAllStaggered.idx >= s.tests.length) {
                     s.runAllStaggered.running = false;
@@ -97,58 +64,55 @@ export function imTestHarness() {
                 }
             }
 
-            imBeginLayout(FIXED | RELATIVE | OPAQUE | W100 | H100); {
-                imBeginLayout(ROW | GAP); {
-                    imBeginLayout(H3); {
-                        imTextSpan("Tests");
-                    } imEnd();
+            imLayout(c, BLOCK); imRelative(c); imBg(c, cssVars.bg); 
+            imFixed(c, 0, PX, 0, PX, 0, PX, 0, PX); {
+                imLayout(c, ROW); imGap(c, 5, PX); {
+                    imElBegin(c, EL_H3); imStr(c, "Tests"); imElEnd(c, EL_H3);
 
-                    imBeginButton(); {
-                        imTextSpan("Run failed");
+                    imLayout(c, BLOCK); imButton(c); {
+                        imStr(c, "Run failed");
 
-                        if (elementHasMousePress()) {
+                        if (elHasMouseDown(c, ev)) {
                             for (const test of s.tests) {
                                 if (test.error !== null) runTest(test);
                             }
                         }
-                    } imEnd();
+                    } imLayoutEnd(c);
 
-                    imBeginButton(); {
-                        imTextSpan("Run all staggered");
+                    imLayout(c, BLOCK); imButton(c); {
+                        imStr(c, "Run all staggered");
 
-                        if (elementHasMousePress()) {
+                        if (elHasMouseDown(c, ev)) {
                             s.runAllStaggered.running = true;
                             s.runAllStaggered.idx = 0;
                         }
-                    } imEnd();
+                    } imLayoutEnd(c);
 
-                    imBeginButton(); {
-                        imTextSpan("Run all");
+                    imLayout(c, BLOCK); imButton(c); {
+                        imStr(c, "Run all");
 
-                        if (elementHasMousePress()) {
+                        if (elHasMouseDown(c, ev)) {
                             for (const test of s.tests) {
                                 runTest(test);
                             }
                         }
-                    } imEnd();
-                } imEnd();
+                    } imLayoutEnd(c);
+                } imLayoutEnd(c);
 
-                imBeginScrollContainer(COL); {
-                    imBeginList();
-                    for (const suite of s.suites) {
+
+                const sc = imState(c, newScrollContainer);
+                imScrollContainerBegin(c, sc); {
+                    imFor(c); for (const suite of s.suites) {
                         const tests = suite.tests;
-                        nextListRoot();
 
-                        imBeginLayout(H3); imTextSpan(suite.name); imEnd();
+                        imElBegin(c, EL_H3); imStr(c, suite.name); imElEnd(c, EL_H3); 
 
-                        imBeginLayout(COL); {
-                            imBeginList();
-                            for (let i = 0; i < tests.length; i++) {
+                        imLayout(c, COL); {
+                            imFor(c); for (let i = 0; i < tests.length; i++) {
                                 const test = tests[i];
 
-                                nextListRoot();
-                                imBeginLayout(ROW | GAP | ALIGN_CENTER); {
-                                    imBeginLayout(H100 | PADDED); {
+                                imLayout(c, ROW);  imGap(c, 5, PX); imAlign(c); {
+                                    imLayout(c, BLOCK); imSize(c, 0, NA, 100, PERCENT); imPadding(c, 10, PX, 10, PX, 10, PX, 10, PX); {
                                         let bg = "";
                                         let text = "";
                                         let textCol = "";
@@ -170,68 +134,63 @@ export function imTestHarness() {
                                             text = "FAILED";
                                         }
 
-                                        if (imMemo(bg)) {
-                                            setStyle("backgroundColor", bg);
+                                        if (imMemo(c, bg)) {
+                                            elSetStyle(c, "backgroundColor", bg);
                                         }
 
-                                        if (imMemo(textCol)) {
-                                            setStyle("color", textCol);
+                                        if (imMemo(c,textCol)) {
+                                            elSetStyle(c, "color", textCol);
                                         }
 
-                                        imTextSpan(text);
-                                    } imEnd();
+                                        imStr(c, text);
+                                    } imLayoutEnd(c);
 
-                                    imBeginButton(); {
-                                        imTextSpan("Debug");
+                                    imLayout(c, BLOCK); imButton(c); {
+                                        imStr(c, "Debug");
 
-                                        if (elementHasMousePress()) {
+                                        if (elHasMouseDown(c, ev)) {
                                             runTest(test, true);
                                         }
-                                    } imEnd();
+                                    } imLayoutEnd(c);
 
-                                    imBeginButton(); {
-                                        imTextSpan("Rerun");
+                                    imLayout(c, BLOCK); imButton(c); {
+                                        imStr(c, "Rerun");
 
-                                        if (elementHasMousePress()) {
+                                        if (elHasMouseDown(c, ev)) {
                                             runTest(test);
                                         }
-                                    } imEnd();
+                                    } imLayoutEnd(c);
 
-                                    imTextSpan(test.name);
+                                    imStr(c, test.name);
 
-                                    if (imIf() && test.error) {
-                                        imBeginLayout(CODE | PRE); {
-                                            imTextSpan(test.error);
-                                        } imEnd();
-                                    } imEndIf();
-                                } imEnd();
-                            }
-                            imEndList();
-                        } imEnd();
-                    }
-                    imEndList();
-                } imEnd();
-
-            } imEnd();
+                                    if (imIf(c) && test.error) {
+                                        imLayout(c, BLOCK); imCode(c); imPre(c); {
+                                            imStr(c, test.error);
+                                        } imLayoutEnd(c);
+                                    } imIfEnd(c);
+                                } imLayoutEnd(c);
+                            } imForEnd(c);
+                        } imLayoutEnd(c);
+                    } imForEnd(c);
+                } imScrollContainerEnd(c);
+            } imLayoutEnd(c);
         } else {
-            imElse();
+            imIfElse(c);
 
-            imBeginLayout(CODE); {
-                imTextSpan(errorRef.val);
-            } imEnd();
+            imLayout(c, BLOCK); imCode(c); {
+                imStr(c, tryState.err);
+            } imLayoutEnd(c);
 
-            imBeginButton(); {
-                imTextSpan("Ok");
+            imLayout(c, BLOCK); imButton(c); {
+                imStr(c, "Ok");
 
-                if (elementHasMousePress()) {
-                    errorRef.val = null;
+                if (elHasMouseDown(c, ev)) {
+                    tryState.recover();
                 }
-            } imEnd();
-        } imEndIf();
+            } imLayoutEnd(c);
+        } imIfEnd(c);
     } catch (e) {
-        imCatch(l);
-
+        imTryCatch(c, tryState, e);
         console.error("An error occured while rendering: ", e);
-        errorRef.val = e;
-    } imEndTry();
+    } imTryEnd(c, tryState);
 }

@@ -1,5 +1,6 @@
 import { interpret, ProgramInterpretResult, ProgramResultFunction, startInterpreting } from "./program-interpreter";
 import { parse, ProgramParseResult } from "./program-parser";
+import { ImGlobalEventSystem, newImGlobalEventSystem } from "./utils/im-dom";
 import { autoMigrate, recursiveCloneNonComputedFields } from "./utils/serialization";
 
 export type GlobalState = {
@@ -11,6 +12,8 @@ export type GlobalState = {
 };
 
 export type GlobalContext = {
+    ev: ImGlobalEventSystem;
+
     isDebugging: boolean;
     functionToDebug: ProgramResultFunction | null;
     textCursorIdx: number;
@@ -27,6 +30,8 @@ export type GlobalContext = {
 
     // This stuff is actually saved and persisted between runs
     state: GlobalState;
+    // bump this whenever you mutate state
+    stateVersion: number;
 
     autoRunTimer: number;
 }
@@ -85,7 +90,10 @@ export function startDebuggingFunction(ctx: GlobalContext, functionName: string)
 
 export function newGlobalContext(): GlobalContext {
     return {
+        ev: newImGlobalEventSystem(),
+
         state: loadState(),
+        stateVersion: 0,
 
         isDebugging: false,
         functionToDebug: null,
