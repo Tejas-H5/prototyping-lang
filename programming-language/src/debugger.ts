@@ -8,7 +8,7 @@ import { GlobalContext, startDebugging } from './state';
 import "./styling";
 import { assert } from './utils/assert';
 import { ImCache, imFor, imForEnd, imGet, imIf, imIfElse, imIfEnd, imSet, imState, inlineTypeId } from './utils/im-core';
-import { EL_H3, imElBegin, imElEnd, imStr, imStrFmt } from './utils/im-dom';
+import { EL_H3, imEl, imElEnd, imStr, imStrFmt } from './utils/im-dom';
 
 
 export function imDebugger(
@@ -54,18 +54,18 @@ export function imDebugger(
         imLayout(c, COL); imFlex(c); {
             imLayout(c, COL); imFlex(c); {
                 if (imIf(c) && cs) {
-                    imElBegin(c, EL_H3); imStrFmt(c, cs.fn, getFunctionName); imElEnd(c, EL_H3);
+                    imEl(c, EL_H3); imStrFmt(c, cs.fn, getFunctionName); imElEnd(c, EL_H3);
 
                     imFunctionInstructions(c, interpretResult, cs.code);
                 } imIfEnd(c)
             } imLayoutEnd(c);
             imLayout(c, ROW); imFlex(c); {
                 imLayout(c, COL); imFlex(c); {
-                    imElBegin(c, EL_H3); imStr(c, "Stack"); imElEnd(c, EL_H3);
+                    imEl(c, EL_H3); imStr(c, "Stack"); imElEnd(c, EL_H3);
                     imProgramStack(c, ctx, interpretResult);
                 } imLayoutEnd(c);
                 imLayout(c, COL); imFlex(c); {
-                    imElBegin(c, EL_H3); imStr(c, "Results"); imElEnd(c, EL_H3);
+                    imEl(c, EL_H3); imStr(c, "Results"); imElEnd(c, EL_H3);
                     imProgramOutputs(c, ctx, interpretResult, interpretResult.outputs);
                 } imLayoutEnd(c);
             } imLayoutEnd(c);

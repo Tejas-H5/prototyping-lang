@@ -10,9 +10,8 @@ import {
     EV_KEYDOWN,
     EV_KEYUP,
     getGlobalEventSystem,
-    imElBegin,
+    imEl,
     imElEnd,
-    ImGlobalEventSystem,
     imOn
 } from "./im-dom";
 import { ImCache, imMemo, isFirstishRender } from "./im-core";
@@ -678,7 +677,7 @@ function textEditorSetViewLine(s: TextEditorState, newViewLine: number): boolean
     s._renderPosStart = 0;
     for (let i = 0; i < s.viewLine; i++) {
         const count = iterateToNextNewline(s._renderCursorStart);
-        s._renderPosStart += count;
+        s._renderPosStart += count + 1;
     }
 
     tb.iterateBackwardsUnclamped(s._renderCursorStart);
@@ -765,7 +764,7 @@ export function imBeginTextEditor(
     tb.itCopy(s._renderCursor, s._renderCursorStart);
 
     // using an input to allow hooking into the browser's existing focusing mechanisms.
-    const textAreaRoot = imElBegin(c, EL_TEXTAREA).root; {
+    const textAreaRoot = imEl(c, EL_TEXTAREA).root; {
         s._textAreaElement = textAreaRoot;
         s._keyDownEvent = imOn(c, EV_KEYDOWN);
         s._keyUpEvent = imOn(c, EV_KEYUP);
@@ -826,7 +825,7 @@ export function imEndTextEditor(c: ImCache, s: TextEditorState) {
     // Make sure the cursor is still in view. autoscrolling.
     // Since the user can render anything inside a line, we actually can't make any assumptions about
     // how tall the line should be. Hence, we scroll by 1 step per frame.
-    // TODO: think of better abstraction.
+    // TODO: think of better abstraction. Or maybe we put a limit on the height of the items.
 
     if (s._cursorSpan && s._containerElement && s._lastRenderedCharSpan) {
         const cursorRect = s._cursorSpan.getBoundingClientRect();
@@ -895,7 +894,9 @@ export function handleTextEditorClickEventForChar(c: ImCache, s: TextEditorState
         textEditorStartSelection(s, s.cursor);
     }
 
-    if (s.hasClick && elHasMousePress(c)) {
+    const mouse = getGlobalEventSystem().mouse;
+
+    if (s.hasClick && elHasMouseOver(c) && mouse.leftMouseButton) {
         // mouse is down. could be a single click, or a drag click
         
         // we probably wanted to start selecting from here

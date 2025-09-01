@@ -111,7 +111,7 @@ import {
     elHasMouseOver,
     elSetStyle,
     getGlobalEventSystem,
-    imElBegin,
+    imEl,
     imElEnd,
     imPreventScrollEventPropagation,
     imStr,
@@ -149,7 +149,7 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
         } imLayoutEnd(c);
 
 
-        imLayout(c, BLOCK); imButton(c, ctx.state.showParserOutput); {
+        imLayout(c, BLOCK); imButton(c, ctx.state.showInterpreterOutput); {
             imStr(c, "Show instructions");
             if (elHasMousePress(c)) {
                 ctx.state.showInterpreterOutput = !ctx.state.showInterpreterOutput;
@@ -181,10 +181,10 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
                 imLayout(c, BLOCK); {
                     imDiagnosticInfo(c, "Interpreting errors", interpretResult.errors, "No interpreting errors");
 
-                    imElBegin(c, EL_H3); imStr(c, "Instructions"); imElEnd(c, EL_H3);
+                    imEl(c, EL_H3); imStr(c, "Instructions"); imElEnd(c, EL_H3);
 
                     imLayout(c, ROW); imGap(c, 5, PX); {
-                        imElBegin(c, EL_H3); imStr(c, interpretResult.entryPoint.name); imElEnd(c, EL_H3);
+                        imEl(c, EL_H3); imStr(c, interpretResult.entryPoint.name); imElEnd(c, EL_H3);
 
                         imLayout(c, ROW); imButton(c); {
                             imStr(c, "Start debugging");
@@ -198,7 +198,7 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
 
                     imFor(c); for (const [, fn] of interpretResult.functions) {
                         imLayout(c, ROW); imGap(c, 5, PX); {
-                            imElBegin(c, EL_H3); imStrFmt(c, fn, getFunctionName); imElEnd(c, EL_H3);
+                            imEl(c, EL_H3); imStrFmt(c, fn, getFunctionName); imElEnd(c, EL_H3);
 
                             imLayout(c, ROW); imButton(c); {
                                 imStr(c, "Start debugging");
@@ -219,7 +219,7 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
             } imIfEnd(c);
         } imIfEnd(c);
 
-        imElBegin(c, EL_H3); imStr(c, "Code output"); imElEnd(c, EL_H3);
+        imEl(c, EL_H3); imStr(c, "Code output"); imElEnd(c, EL_H3);
 
         imLayout(c, ROW); imButton(c, ctx.state.showGroupedOutput); {
             imStr(c, "Grouped");
@@ -248,7 +248,7 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
         if (imIf(c) && ctx.state.text === "") {
             // NOTE: might not be the best workflow. i.e maybe we want to be able to see the examples while we're writing things.
 
-            imElBegin(c, EL_H3); imStr(c, "Examples"); imElEnd(c, EL_H3);
+            imEl(c, EL_H3); imStr(c, "Examples"); imElEnd(c, EL_H3);
 
             imLayout(c, COL); imGap(c, 5, PX); {
                 imFor(c); for (const eg of CODE_EXAMPLES) {
@@ -320,10 +320,15 @@ function imRecursiveParserOutputExpression(
     const s = imState(c, imRecursiveParserOutputExpressionState);
 
     const exprChanged = imMemo(c, expr);
+    const showPosChanged = imMemo(c, s.showPos);
 
     let code = imGet(c, String);
-    if (code === undefined || exprChanged) {
-        if (expr.children.length === 0) {
+    if (code === undefined || exprChanged || showPosChanged) {
+        if (
+            expr.children.length === 0 || 
+            // When showing position info, we should just show the entire expression, for easier debugging
+            s.showPos
+        ) {
             code = expressionToString(parseResult.text, expr);
         } else {
             code = expressionToString(parseResult.text, expr).substring(0, 20);
@@ -476,7 +481,7 @@ function imParserOutputs(c: ImCache, parseResult: ProgramParseResult | undefined
 // TODO: display these above the code editor itself. 
 function imDiagnosticInfo(c: ImCache, heading: string, info: DiagnosticInfo[], emptyText: string) {
     if (imIf(c) && heading) {
-        imElBegin(c, EL_H3); imStr(c, heading); imElEnd(c, EL_H3);
+        imEl(c, EL_H3); imStr(c, heading); imElEnd(c, EL_H3);
     } imIfEnd(c);
 
     imFor(c); for (const e of info) {
@@ -752,7 +757,7 @@ export function imProgramOutputs(
                     s.outputToScrollTo = root;
                 }
 
-                imElBegin(c, EL_H3); imStr(c, "Graph #" + idx); imElEnd(c, EL_H3);
+                imEl(c, EL_H3); imStr(c, "Graph #" + idx); imElEnd(c, EL_H3);
             } imIfEnd(c);
 
             imLayout(c, ROW); imGap(c, 5, PX); {
@@ -822,7 +827,7 @@ export function imProgramOutputs(
                 }
 
                 imLayout(c, COL); imGap(c, 5, PX); {
-                    imElBegin(c, EL_H3); imStr(c, "Plot #" + plot.idx); imElEnd(c, EL_H3);
+                    imEl(c, EL_H3); imStr(c, "Plot #" + plot.idx); imElEnd(c, EL_H3);
                 } imLayoutEnd(c); 
 
                 let exprFrequencies; exprFrequencies = imGet(c, inlineTypeId(Map));
@@ -964,32 +969,51 @@ function imPlotZoomingAndPanning(
     dpi: number,
     shiftHeld: boolean
 ) {
+    let mutated = false;
+
     const isMaximized = plot === currentMaximizedItem;
     const canZoom = elHasMouseOver(c) && (shiftHeld || isMaximized);
-    plot.canZoom = canZoom;
+    if (plot.canZoom !== canZoom) {
+        plot.canZoom = canZoom;
+        mutated = true;
+    }
 
     if (isFirstishRender(c)) {
         elSetStyle(c, "cursor", "move");
     }
 
-    plot.width = width;
-    plot.height = height;
-    plot.dpi = dpi;
+    if (plot.width !== width || plot.height !== height || plot.dpi !== dpi) {
+        plot.width = width;
+        plot.height = height;
+        plot.dpi = dpi;
+        mutated = true;
+    }
 
     const { mouse } = getGlobalEventSystem();
 
-    plot.isPanning = mouse.leftMouseButton && elHasMouseOver(c);
+    if (mouse.leftMouseButton && elHasMouseOver(c)) {
+        plot.isPanning = true;
+        mutated = true;
+    } else if (!mouse.leftMouseButton) {
+        plot.isPanning = false;
+        mutated = true;
+    }
+
     if (plot.isPanning) {
         const dxPlot = getPlotLength(plot, screenToCanvas(plot, mouse.dX));
         const dyPlot = getPlotLength(plot, screenToCanvas(plot, mouse.dY));
 
         plot.posX -= dxPlot;
         plot.posY -= dyPlot;
+        mutated = true;
     }
 
     const scrollBlocker = imPreventScrollEventPropagation(c);
     scrollBlocker.isBlocking = canZoom;
-    plot.scrollY = scrollBlocker.scrollY;
+    if (plot.scrollY !== scrollBlocker.scrollY) {
+        plot.scrollY = scrollBlocker.scrollY;
+        mutated = true;
+    }
 
     if (canZoom) {
         const scrollY = screenToCanvas(plot, scrollBlocker.scrollY);
@@ -1004,12 +1028,18 @@ function imPlotZoomingAndPanning(
             const mouseXPlot = getPlotX(plot, mouseX);
             const mouseYPlot = getPlotY(plot, mouseY);
 
+            let newZoom = plot.zoom;
             if (scrollY < 0) {
-                plot.zoom = plot.zoom * 1.1 * (-scrollY / 100);
+                newZoom = plot.zoom * 1.1 * (-scrollY / 100);
             } else {
-                plot.zoom = plot.zoom / (1.1 * (scrollY / 100));
+                newZoom = plot.zoom / (1.1 * (scrollY / 100));
             }
-            plot.zoom = clamp(plot.zoom, 0.5, 10000000);
+            newZoom = clamp(newZoom, 0.5, 10000000);
+
+            if (newZoom !== plot.zoom) {
+                plot.zoom = newZoom;
+                mutated = true;
+            }
 
             const newMouseX = getCanvasElementX(plot, mouseXPlot);
             const newMouseY = getCanvasElementY(plot, mouseYPlot);
@@ -1019,12 +1049,19 @@ function imPlotZoomingAndPanning(
 
             const dX = getPlotLength(plot, mouseDX);
             const dY = getPlotLength(plot, mouseDY);
-
-            plot.posX += dX;
-            plot.posY += dY;
+            if (Math.abs(dX) + Math.abs(dY) > 0) {
+                plot.posX += dX;
+                plot.posY += dY;
+                mutated = true;
+            }
         }
     }
+
+    if (mutated) {
+        plot.version++;
+    }
 }
+
 
 function imGraph(c: ImCache, ctx: GlobalContext, graph: ProgramGraphOutput) {
     const plotState = imState(c, newPlotState);
@@ -1324,7 +1361,7 @@ function imBeginCanvasRenderingContext2D(c: ImCache): ImCanvasRenderingContext {
     imLayout(c, BLOCK); imRelative(c); imSize(c, 100, PERCENT, 100, PERCENT);
     const { size } = imTrackSize(c);
 
-    const canvas = imElBegin(c, EL_CANVAS).root;
+    const canvas = imEl(c, EL_CANVAS).root;
 
     let ctx = imGet(c, imBeginCanvasRenderingContext2D);
     if (!ctx) {
@@ -1457,16 +1494,15 @@ function imPlot(c: ImCache, ctx: GlobalContext, plot: ProgramPlotOutput, program
     imMaximizeableContainerBegin(c, plot); {
         imLayout(c, COL); imBg(c, cssVars.bg); imFlex(c); imGap(c, 5, PX); {
             imLayout(c, ROW); imGap(c, 5, PX); {
-                if (imButtonIsClicked(c, "Overlays")) {
+                imMaximizeItemButton(c, ctx, plot);
+
+                if (imButtonIsClicked(c, "Overlays", plotState.overlay)) {
                     plotState.overlay = !plotState.overlay;
                 }
 
-                imLayout(c, BLOCK); imButton(c, plotState.overlay); {
-                    imStr(c, "Autofit");
-                    if (elHasMousePress(c)) {
-                        plotState.autofit = !plotState.autofit;
-                    }
-                } imLayoutEnd(c);
+                if (imButtonIsClicked(c, "Autofit", plotState.autofit)) {
+                    plotState.autofit = !plotState.autofit;
+                }
             } imLayoutEnd(c);
 
             let state; state = imGet(c, inlineTypeId(imGet));
@@ -1474,7 +1510,6 @@ function imPlot(c: ImCache, ctx: GlobalContext, plot: ProgramPlotOutput, program
                 shiftScrollToZoom: 0,
                 problems: [] as string[],
                 rows: [] as number[][],
-                timer: 0 as number | null,
             }); 
 
             imLayout(c, COL); imFlex(c); imRelative(c); {
@@ -1491,7 +1526,7 @@ function imPlot(c: ImCache, ctx: GlobalContext, plot: ProgramPlotOutput, program
                         ctx.input.keyboard.shiftHeld
                     );
 
-                    if (elHasMousePress(c) && (mouse.scrollWheel !== 0 && !plotState.canZoom)) {
+                    if (elHasMouseOver(c) && (mouse.scrollWheel !== 0 && !plotState.canZoom)) {
                         state.shiftScrollToZoom = 1;
                     }
 
@@ -1768,17 +1803,21 @@ function imPlot(c: ImCache, ctx: GlobalContext, plot: ProgramPlotOutput, program
                     }
                 } imEndCanvasRenderingContext2D(c);
 
-                if (state.timer !== null) {
+                if (state.shiftScrollToZoom !== null) {
                     const dt = getDeltaTimeSeconds(c);
-                    state.timer -= dt;
-                    if (state.timer < 0) {
-                        state.timer = null;
+                    state.shiftScrollToZoom -= dt;
+                    if (state.shiftScrollToZoom < 0) {
+                        state.shiftScrollToZoom = -1;
                     }
                 }
 
-                imLayout(c, BLOCK); imAbsolute(c, 5, PX, 0, NA, 5, PX, 0, NA); {
-                    if (imMemo(c, state.timer)) {
-                        elSetStyle(c, "opacity", (state.timer ?? 0) + "");
+                imLayout(c, BLOCK); imAbsolute(c, 5, PX, 0, PX, 0, NA, 0, PX); {
+                    if (isFirstishRender(c)) {
+                        elSetStyle(c, "zIndex", "1000");
+                    }
+
+                    if (imMemo(c, state.shiftScrollToZoom)) {
+                        elSetStyle(c, "opacity", (state.shiftScrollToZoom ?? 0) + "");
                     } 
                     imStr(c, "Shift + scroll to zoom");
                 } imLayoutEnd(c);

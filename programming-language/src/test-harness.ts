@@ -4,7 +4,7 @@ import { BLOCK, COL, imAlign, imBg, imFixed, imGap, imLayout, imLayoutEnd, imPad
 import { imScrollContainerBegin, imScrollContainerEnd, newScrollContainer } from "./components/scroll-container";
 import { cssVars } from "./styling";
 import { ImCache, imFor, imForEnd, imIf, imIfElse, imIfEnd, imMemo, imState, imTry, imTryCatch, imTryEnd, isFirstishRender } from "./utils/im-core";
-import { EL_H3, elHasMousePress, elSetStyle, imElBegin, imElEnd, imStr } from "./utils/im-dom";
+import { EL_H3, elHasMousePress, elSetStyle, imEl, imElEnd, imStr } from "./utils/im-dom";
 import {
     getTestSuites,
     runTest,
@@ -68,7 +68,7 @@ export function imTestHarness(c: ImCache) {
             imLayout(c, BLOCK); imRelative(c); imBg(c, cssVars.bg); 
             imFixed(c, 0, PX, 0, PX, 0, PX, 0, PX); {
                 imLayout(c, ROW); imGap(c, 5, PX); {
-                    imElBegin(c, EL_H3); imStr(c, "Tests"); imElEnd(c, EL_H3);
+                    imEl(c, EL_H3); imStr(c, "Tests"); imElEnd(c, EL_H3);
 
                     if (imButtonIsClicked(c, "Run failed")) {
                         for (const test of s.tests) {
@@ -94,7 +94,7 @@ export function imTestHarness(c: ImCache) {
                     imFor(c); for (const suite of s.suites) {
                         const tests = suite.tests;
 
-                        imElBegin(c, EL_H3); imStr(c, suite.name); imElEnd(c, EL_H3); 
+                        imEl(c, EL_H3); imStr(c, suite.name); imElEnd(c, EL_H3); 
 
                         imLayout(c, COL); {
                             imFor(c); for (let i = 0; i < tests.length; i++) {

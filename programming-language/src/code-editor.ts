@@ -38,6 +38,7 @@ import {
     imSize,
     INLINE,
     NA,
+    PERCENT,
     PX,
     ROW,
     START
@@ -90,12 +91,13 @@ import {
     EL_SPAN,
     elSetClass,
     elSetStyle,
-    imElBegin,
+    imEl,
     imElEnd,
     imStr
 } from "./utils/im-dom";
 import { max } from './utils/math-utils';
 import { isWhitespace } from './utils/text-utils';
+import { imB } from "./components/core/text";
 
 
 const UNANIMOUSLY_DECIDED_TAB_SIZE = 4;
@@ -299,7 +301,7 @@ function imSimpleTextInputBody(c: ImCache, s: SimpleTextEditorState) {
         imFor(c); while (textEditorHasChars(s.editorState)) {
             imLayout(c, ROW); {
                 imFor(c); while (textEditorHasChars(s.editorState)) {
-                    const textSpan = imElBegin(c, EL_SPAN).root; {
+                    const textSpan = imEl(c, EL_SPAN).root; {
                         const actualC = textEditorGetNextChar(s.editorState);
                         const ws = isWhitespace(actualC);
                         const char = getStringRepr(actualC, ws);
@@ -655,7 +657,11 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
                                 imStr(c, lineText);
                             } imLayoutEnd(c);
 
-                            imLine(c, LINE_VERTICAL, 5);
+
+
+                            imLayout(c, BLOCK); imPadding(c, 0, NA, 5, PX, 0, NA, 5, PX);  {
+                                imLayout(c, BLOCK); imSize(c, 5, PX, 100, PERCENT); imBg(c, cssVars.fg); imLayoutEnd(c);
+                            } imLayoutEnd(c);
 
                             imLayout(c, COL); imFlex(c); {
                                 // Actual text line
@@ -672,7 +678,7 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
                                         const ws = isWhitespace(actualC);
                                         const char = getStringRepr(actualC, ws);
 
-                                        const textSpan = imElBegin(c, EL_SPAN); {
+                                        const textSpan = imEl(c, EL_SPAN); {
                                             imStr(c, char);
                                             handleTextEditorClickEventForChar(c, editorState, editorState._renderCursor);
 

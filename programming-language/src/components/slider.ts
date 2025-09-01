@@ -95,7 +95,7 @@ export function imSliderInput(
             }
         }
 
-        if (mouse.leftMouseButton && elHasMouseOver(c)) {
+        if (s.startedDragging) {
             const rect = sliderBody.getBoundingClientRect();
 
             const x0 = rect.left + sliderHandleSize / 2;

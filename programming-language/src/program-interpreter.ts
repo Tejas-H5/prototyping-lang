@@ -2914,7 +2914,7 @@ function interpretRestOfProgram(result: ProgramInterpretResult) {
     // I've kept it low, because matrix ops and array programming can result in singular iterations
     // actually doing quite a lot of computations.
     let safetyCounter = 0;
-    const MAX_ITERATIONS = 1000 * 1000;
+    const MAX_ITERATIONS = 5 * 1000 * 1000;
     while (result.callStack.length > 0) {
         safetyCounter++;
         if (safetyCounter >= MAX_ITERATIONS) {

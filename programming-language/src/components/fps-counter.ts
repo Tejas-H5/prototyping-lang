@@ -1,7 +1,7 @@
 import {
-    // CACHE_ITEMS_ITERATED_LAST_FRAME,
-    // CACHE_TOTAL_DESTRUCTORS,
-    // CACHE_TOTAL_MAP_ENTRIES_LAST_FRAME,
+    CACHE_ITEMS_ITERATED_LAST_FRAME,
+    CACHE_TOTAL_DESTRUCTORS,
+    CACHE_TOTAL_MAP_ENTRIES_LAST_FRAME,
     ImCache,
     imGet,
     imSet,
@@ -69,18 +69,18 @@ export function imFpsCounterSimple(c: ImCache, fpsCounter: FpsCounterState) {
 }
 
 export function imExtraDiagnosticInfo(c: ImCache) {
-    // const itemsIterated  = c[CACHE_ITEMS_ITERATED_LAST_FRAME];
-    // const numDestructors = c[CACHE_TOTAL_DESTRUCTORS];
-    // const numMapEntries  = c[CACHE_TOTAL_MAP_ENTRIES_LAST_FRAME];
-    //
-    // imLayout(c, BLOCK); {
-    //     imStr(c, itemsIterated);
-    //     imStr(c, "i ");
-    //
-    //     // If either of these just keep increasing forever, you have a memory leak.
-    //     imStr(c, numDestructors);
-    //     imStr(c, "d ");
-    //     imStr(c, numMapEntries);
-    //     imStr(c, "m");
-    // } imLayoutEnd(c);
+    const itemsIterated  = c[CACHE_ITEMS_ITERATED_LAST_FRAME];
+    const numDestructors = c[CACHE_TOTAL_DESTRUCTORS];
+    const numMapEntries  = c[CACHE_TOTAL_MAP_ENTRIES_LAST_FRAME];
+
+    imLayout(c, BLOCK); {
+        imStr(c, itemsIterated);
+        imStr(c, "i ");
+
+        // If either of these just keep increasing forever, you have a memory leak.
+        imStr(c, numDestructors);
+        imStr(c, "d ");
+        imStr(c, numMapEntries);
+        imStr(c, "m");
+    } imLayoutEnd(c);
 }

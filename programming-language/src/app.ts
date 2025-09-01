@@ -49,7 +49,7 @@ import {
     elSetClass,
     elSetStyle,
     getGlobalEventSystem,
-    imElBegin,
+    imEl,
     imElEnd,
     imStr
 } from "./utils/im-dom";
@@ -203,13 +203,13 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
 
                 imLayout(c, COL); imAlign(c); imJustify(c); imSize(c, 100, PERCENT, 100, PERCENT); {
                     if (imIf(c) && errors.size === 1 && errors.values().next().value === 1) {
-                        imElBegin(c, EL_H1); imStr(c, "An error occured"); imElEnd(c, EL_H1);
+                        imEl(c, EL_H1); imStr(c, "An error occured"); imElEnd(c, EL_H1);
 
                         imLayout(c, BLOCK); imStr(c, errors.keys().next().value!); imLayoutEnd(c);
                     } else {
                         imIfElse(c);
 
-                        imElBegin(c, EL_H1); imStr(c, "The errors just keep occuring !!! Apologies."); imElEnd(c, EL_H1);
+                        imEl(c, EL_H1); imStr(c, "The errors just keep occuring !!! Apologies."); imElEnd(c, EL_H1);
 
                         imFor(c); for (const [err, count] of errors) {
                             imLayout(c, BLOCK); imStr(c, err + " [" + count + "x]"); imLayoutEnd(c);

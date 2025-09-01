@@ -1552,38 +1552,13 @@ export function parse(text: string): ProgramParseResult {
     return program;
 }
 
-export type ResumeableAstTraverser = {
-    stack: [idx: number, expr: ProgramExpression][];
-    statementIdx: 0,
-};
-
-export function resetAstTraversal(t: ResumeableAstTraverser, parseResult: ProgramParseResult) {
-    t.stack.length = 0;
-    t.statementIdx = 0;
-    if (parseResult.statements.length > 0) {
-        t.stack.push([
-            0,
-            parseResult.statements[0]
-        ]);
-    }
-}
-
-export function newResumeableAstTraverser(parseResult: ProgramParseResult) {
-    const traversalStart: ResumeableAstTraverser = { 
-        stack: [],  
-        statementIdx: 0,
-    };
-    resetAstTraversal(traversalStart, parseResult);
-    return traversalStart;
-}
-
 export function getAstNodeForTextPos(
     parseResult: ProgramParseResult,
     textPos: number
 ): ProgramExpression | undefined {
     for (let i = 0; i < parseResult.statements.length; i++) {
         const statement = parseResult.statements[i];
-        if (statement.start.i <= textPos && textPos <= statement.end.i) {
+        if (statement.start.i <= textPos && textPos < statement.end.i) {
             return getAstNodeForTextPosRecursive(statement, textPos);
         }
         if (statement.start.i > textPos) break;
@@ -1593,19 +1568,15 @@ export function getAstNodeForTextPos(
 }
 
 function getAstNodeForTextPosRecursive(expr: ProgramExpression, textPos: number) {
-    if (expr.children.length === 0) {
-        return expr;
-    }
-
     for (let i = 0; i < expr.children.length; i++) {
         const child = expr.children[i];
-        if (child.start.i <= textPos && textPos <= child.end.i) {
+        if (child.start.i <= textPos && textPos < child.end.i) {
             return getAstNodeForTextPosRecursive(child, textPos);
         }
         if (child.start.i > textPos) break;
     }
 
-    return undefined;
+    return expr;
 }
 
 
