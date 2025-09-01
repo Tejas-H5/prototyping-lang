@@ -17,7 +17,8 @@ import {
     UNARY_OP_PRINT,
     UnaryOperatorType,
     unaryOpToOpString,
-    unaryOpToString
+    unaryOpToString,
+    BIN_OP_MODULO
 } from "./program-parser";
 import { clamp, inverseLerp } from "./utils/math-utils";
 import { getNextRng, newRandomNumberGenerator, RandomNumberGenerator, setRngSeed } from "./utils/random";
@@ -131,20 +132,19 @@ function evaluateBinaryOpNumberXNumber(
     let range: NumberRange | undefined;
 
     switch (op) {
-        case BIN_OP_MULTIPLY: num = l.val * r.val; break;
-        case BIN_OP_DIVIDE: num = r.val / l.val; break;
-        case BIN_OP_ADD: num = r.val + l.val; break;
-        case BIN_OP_SUBTRACT: num = r.val - l.val; break;
-        case BIN_OP_IS_EQUAL_TO: num = (r.val === l.val) ? 1 : 0; break;
-        case BIN_OP_LESS_THAN: num = (r.val < l.val) ? 1 : 0; break;
-        case BIN_OP_LESS_THAN_EQ: num = (r.val <= l.val) ? 1 : 0; break;
-        case BIN_OP_GREATER_THAN: num = (r.val > l.val) ? 1 : 0; break;
-        case BIN_OP_GREATER_THAN_EQ: num = (r.val >= l.val) ? 1 : 0; break;
-        case BIN_OP_AND_AND: num = (r.val && l.val) ? 1 : 0; break;
-        case BIN_OP_OR_OR: num = (r.val || l.val) ? 1 : 0; break;
-        case BIN_OP_INVALID:
-            // An invalid binary op was parsed, and added to the result tree somehow
-            assert(false)
+        case BIN_OP_MULTIPLY:        num = l.val * r.val;             break;
+        case BIN_OP_DIVIDE:          num = r.val / l.val;             break;
+        case BIN_OP_ADD:             num = r.val + l.val;             break;
+        case BIN_OP_SUBTRACT:        num = r.val - l.val;             break;
+        case BIN_OP_IS_EQUAL_TO:     num = (r.val === l.val) ? 1 : 0; break;
+        case BIN_OP_LESS_THAN:       num = (r.val < l.val) ? 1 : 0;   break;
+        case BIN_OP_LESS_THAN_EQ:    num = (r.val <= l.val) ? 1 : 0;  break;
+        case BIN_OP_GREATER_THAN:    num = (r.val > l.val) ? 1 : 0;   break;
+        case BIN_OP_GREATER_THAN_EQ: num = (r.val >= l.val) ? 1 : 0;  break;
+        case BIN_OP_AND_AND:         num = (r.val && l.val) ? 1 : 0;  break;
+        case BIN_OP_OR_OR:           num = (r.val || l.val) ? 1 : 0;  break;
+        case BIN_OP_MODULO:          num = r.val % l.val;             break;
+        case BIN_OP_INVALID:         assert(false) // An invalid binary op was parsed, and added to the result tree somehow
     }
 
     let result: ProgramResultNumber | ProgramResultRange | null = null;
@@ -206,6 +206,9 @@ function evaluateBinaryOpMatrixXMatrix(
             [val, err] = matrixLogicalAndElements(l.val, r.val);
             break;
         case BIN_OP_OR_OR:
+            [val, err] = matrixLogicalOrElements(l.val, r.val);
+            break;
+        case BIN_OP_MODULO:
             [val, err] = matrixLogicalOrElements(l.val, r.val);
             break;
         case BIN_OP_INVALID:
@@ -808,6 +811,11 @@ function getExecutionSteps(
                 jumpToEnd.n = endIdx;
             } break;
             case T_BLOCK: {
+                if (expr.statements.length === 0) {
+                    addError(expr, "All blocks must contain at least 1 statement");
+                    return false;
+                }
+
                 noOp = true;
                 for (const s of expr.statements) {
                     if (dfs(s)) {

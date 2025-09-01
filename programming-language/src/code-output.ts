@@ -999,7 +999,7 @@ function imPlotZoomingAndPanning(
 
     if (plot.isPanning) {
         const dxPlot = getPlotLength(plot, screenToCanvas(plot, mouse.dX));
-        const dyPlot = getPlotLength(plot, screenToCanvas(plot, mouse.dY));
+        const dyPlot = -getPlotLength(plot, screenToCanvas(plot, mouse.dY));
 
         plot.posX -= dxPlot;
         plot.posY -= dyPlot;
@@ -1215,16 +1215,20 @@ function recomputePlotExtent(
     minX: number, maxX: number,
     minY: number, maxY: number,
 ) {
-    minX--; maxX++;
-    minY--; maxY++;
-
-    if (minX === Number.MAX_SAFE_INTEGER || minX === maxX) {
+    if (minX === Number.MAX_SAFE_INTEGER) {
         state.zoom = 1;
         state.originalExtent = 1;
         state.posX = 0;
         state.posY = 0;
         state.version++;
     } else {
+        if (Math.abs(minX - maxX) < 0.000001) {
+            minX -= 0.001; maxX + 0.001;
+        }
+        if (Math.abs(minY - maxY) < 0.000001) {
+            minY -= 0.001; maxY + 0.001;
+        }
+
         let maxDist = Math.max(maxX - minX, maxY - minY);
         const centerX = (minX + maxX) / 2;
         const centerY = (minY + maxY) / 2;
@@ -1282,8 +1286,9 @@ function canvasToScreen(plot: PlotState, val: number): number {
 function getCanvasElementY(plot: PlotState, y: number): number {
     const { posY } = plot;
     const extent = getExtent(plot);
-    const y0Extent = posY - extent;
-    const y1Extent = posY + extent;
+    // Flip the Y to conform to math units instead of HTML units
+    const y0Extent = posY + extent;
+    const y1Extent = posY - extent;
 
     const dim = getDim(plot);
     const other = getOtherDim(plot);
@@ -1716,8 +1721,10 @@ function imPlot(c: ImCache, ctx: GlobalContext, plot: ProgramPlotOutput, program
                                         }
                                     }
 
-                                    renderPoints = numPointsOnScreen < 20;
-                                } else {
+                                    renderPoints = numPointsOnScreen < 40;
+                                } 
+
+                                if (renderPoints) {
                                     canvas.lineWidth = screenToCanvas(plotState, 2);
                                     for (let i = 0; i < line.pointsX.length; i++) {
                                         const x1 = line.pointsX[i];
@@ -1789,7 +1796,7 @@ function imPlot(c: ImCache, ctx: GlobalContext, plot: ProgramPlotOutput, program
                                     canvas.moveTo(x, 0);
                                     canvas.lineTo(x, height);
                                 } 
-                                let y = getCanvasElementY(plotState, gridSnap(getPlotY(plotState, 0), spacing));
+                                let y = 0; // getCanvasElementY(plotState, gridSnap(getPlotY(plotState, 0), spacing));
                                 for (; y < height; y += spacingEl) {
                                     if (safety++>1000) {
                                         throw new Error("Bruh");

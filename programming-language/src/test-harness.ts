@@ -53,7 +53,7 @@ export function imTestHarness(c: ImCache) {
             }
         }
 
-        if (imIf(c) && tryState.err) {
+        if (imIf(c) && !tryState.err) {
             if (s.runAllStaggered.running) {
                 if (s.runAllStaggered.idx >= s.tests.length) {
                     s.runAllStaggered.running = false;
@@ -65,7 +65,7 @@ export function imTestHarness(c: ImCache) {
                 }
             }
 
-            imLayout(c, BLOCK); imRelative(c); imBg(c, cssVars.bg); 
+            imLayout(c, BLOCK); imBg(c, cssVars.bg); 
             imFixed(c, 0, PX, 0, PX, 0, PX, 0, PX); {
                 imLayout(c, ROW); imGap(c, 5, PX); {
                     imEl(c, EL_H3); imStr(c, "Tests"); imElEnd(c, EL_H3);
@@ -77,6 +77,7 @@ export function imTestHarness(c: ImCache) {
                     }
 
                     if (imButtonIsClicked(c, "Run all staggered")) {
+                        // It's identical to Run all, but looks cooler
                         s.runAllStaggered.running = true;
                         s.runAllStaggered.idx = 0;
                     }

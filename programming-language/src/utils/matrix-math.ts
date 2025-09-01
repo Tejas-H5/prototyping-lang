@@ -290,6 +290,20 @@ export function matrixLogicalOrElements(a: Matrix, b: Matrix): [Matrix | null, s
     return [result, ""];
 }
 
+// NOTE: this is jus a copypaste of matrixAddElements
+export function matrixModuloElements(a: Matrix, b: Matrix): [Matrix | null, string] {
+    if (!matrixShapesAreEqual(a, b)) {
+        return [null, "Elementwise add is only defined for matrices of identical shape"];
+    }
+    const result = matrixZeroes(a.shape);
+    for (let i = 0; i < a.values.length; i++) {
+        const aVal = getSliceValue(a.values, i);
+        const bVal = getSliceValue(b.values, i);
+        setSliceValue(result.values, i, aVal % bVal);
+    }
+    return [result, ""];
+}
+
 
 export function matrixElementsEqual(a: Matrix, b: Matrix): [boolean, string] {
     if (!matrixShapesAreEqual(a, b)) {

@@ -208,7 +208,7 @@ export function imStr(c: ImCache, value: Stringifyable): Text {
     let lastValue = imGet(c, inlineTypeId(document.createTextNode));
     if (lastValue !== value) {
         imSet(c, value);
-        textNodeLeafAppender.root.nodeValue = value.toString();
+        textNodeLeafAppender.root.nodeValue = "" + value;
     }
 
     const domAppender = getEntriesParent(c, newDomAppender);

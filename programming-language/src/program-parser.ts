@@ -80,6 +80,7 @@ export const BIN_OP_GREATER_THAN = 9;
 export const BIN_OP_GREATER_THAN_EQ = 10;
 export const BIN_OP_AND_AND = 11;
 export const BIN_OP_OR_OR = 12;
+export const BIN_OP_MODULO = 13;
 export const BIN_OP_INVALID = -1;
 
 export type BinaryOperatorType = typeof BIN_OP_MULTIPLY
@@ -93,6 +94,7 @@ export type BinaryOperatorType = typeof BIN_OP_MULTIPLY
     | typeof BIN_OP_GREATER_THAN_EQ
     | typeof BIN_OP_AND_AND
     | typeof BIN_OP_OR_OR
+    | typeof BIN_OP_MODULO
     | typeof BIN_OP_INVALID;
 
 export const UNARY_OP_INVALID = -1;
@@ -133,6 +135,7 @@ export function binOpToOpString(op: BinaryOperatorType): string {
 
         case BIN_OP_AND_AND: return "&&";
         case BIN_OP_OR_OR: return "||";
+        case BIN_OP_MODULO: return "%";
         case BIN_OP_INVALID: return "???";
     }
 }
@@ -156,6 +159,7 @@ function getBinOpPrecedence(op: BinaryOperatorType): number {
             return 4;
         case BIN_OP_MULTIPLY:
         case BIN_OP_DIVIDE:
+        case BIN_OP_MODULO:
             return 7;
         case BIN_OP_ADD:
         case BIN_OP_SUBTRACT:
@@ -182,6 +186,7 @@ export function binOpToString(op: BinaryOperatorType): string {
         case BIN_OP_GREATER_THAN_EQ: return "Is greater than or equal to";
         case BIN_OP_AND_AND: return "And";
         case BIN_OP_OR_OR: return "Or";
+        case BIN_OP_MODULO: return "Modulo";
         case BIN_OP_INVALID: return "???";
     }
 }
@@ -500,7 +505,7 @@ function parseStringLiteral(ctx: ParserContext): ProgramExpressionStringLiteral 
     const [val, error] = computeStringForStringLiteral(
         expressionToString(ctx.text, result)
     );
-    if (!val) {
+    if (val === undefined) {
         addErrorAtCurrentPosition(ctx, error);
         return;
     }
@@ -571,11 +576,6 @@ function parseBlock(ctx: ParserContext): ProgramExpressionBlock | undefined {
         return;
     }
 
-    if (statements.length === 0) {
-        addErrorAtCurrentPosition(ctx, "All blocks must contain at least 1 statement");
-        return;
-    }
-
     advance(ctx);
 
     return {
@@ -599,7 +599,7 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
     parseWhitespace(ctx);
 
     if (!isLetter(currentChar(ctx))) {
-        addErrorAtCurrentPosition(ctx, "Example for-loop: `for i in range(0, 100) { // forwards loop }`");
+        addErrorAtCurrentPosition(ctx, "Loops are only like `for i in range(0, 100) { ...` or `for i in rrange(0, 100) { ... `");
         return undefined;
     }
     const loopVar = parseIdentifier(ctx);
@@ -607,7 +607,7 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
     parseWhitespace(ctx);
 
     if (!compareCurrent(ctx, "in")) {
-        addErrorAtCurrentPosition(ctx, "Example for-loop: `for i in rrange(0, 100) { // backwards loop }`");
+        addErrorAtCurrentPosition(ctx, "Loops are only like `for i in range(0, 100) { ...` or `for i in rrange(0, 100) { ... `");
         return undefined;
     }
     for (let i = 0; i < 2; i++) {
@@ -620,7 +620,7 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
 
     const rangeExpr = parseExpression(ctx);
     if (!rangeExpr) {
-        addErrorAtCurrentPosition(ctx, "Example for-loop: `for i in rrange(0, 100, 0.1) { // you can optionally add a 'step' }`");
+        addErrorAtCurrentPosition(ctx, "Loops are only like `for i in range(0, 100) { ...` or `for i in rrange(0, 100) { ... `");
         return undefined;
     }
 
@@ -628,7 +628,7 @@ function parseRangedFor(ctx: ParserContext): ProgramExpressionRangedFor | undefi
 
     parseWhitespace(ctx);
     if (currentChar(ctx) !== "{") {
-        addErrorAtCurrentPosition(ctx, "Coming soon: for-loop: `for i in [1, 2, 3] { // looping through other things!? aint noway? }`");
+        addErrorAtCurrentPosition(ctx, "Loops are only like `for i in range(0, 100) { ...` or `for i in rrange(0, 100) { ... `");
         return undefined;
     }
 
@@ -1102,21 +1102,21 @@ function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
     const c2 = currentChar(ctx, 1);
     const c3 = currentChar(ctx, 2);
     switch (c) {
-        case "=":
+        case "=": {
             if (c2 === "=") {
                 op = BIN_OP_IS_EQUAL_TO;
             }
-            break;
+        } break;
         case "*": op = BIN_OP_MULTIPLY; break;
         case "/": op = BIN_OP_DIVIDE; break;
         case "+": op = BIN_OP_ADD; break;
-        case "-":
+        case "-": {
             // Avoid conflicting with "->"
             if (c2 !== ">" && c2 !== "<") {
                 op = BIN_OP_SUBTRACT;
             }
-            break;
-        case "<":
+        } break;
+        case "<": {
             // Avoid conflicting with "<-"
             if (c2 !== "-") {
                 if (c2 === "=") {
@@ -1125,8 +1125,8 @@ function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
                     op = BIN_OP_LESS_THAN;
                 }
             }
-            break;
-        case ">":
+        } break;
+        case ">": {
             if (c2 !== ">" && c3 !== ">") {
                 if (c2 === "=") {
                     op = BIN_OP_GREATER_THAN_EQ;
@@ -1134,18 +1134,20 @@ function parseBinaryOperator(ctx: ParserContext): BinaryOperatorType {
                     op = BIN_OP_GREATER_THAN;
                 }
             }
-            break;
-        case "&":
+        } break;
+        case "&": {
             if (c2 === "&") {
                 op = BIN_OP_AND_AND;
             }
-            break;
+        } break;
         case "|": {
             if (c2 === "|") {
                 op = BIN_OP_OR_OR;
             }
-            break;
-        }
+        } break;
+        case "%": {
+            op = BIN_OP_MODULO;
+        } break;
     }
 
     return op;
