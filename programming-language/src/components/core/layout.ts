@@ -105,24 +105,38 @@ export function imPadding(
     let val = imGet(c, newPaddingState);
     if (val === undefined) val = imSet(c, newPaddingState());
 
+    let changed = false;
+
     if (val.left !== left || val.leftType !== leftType) {
         val.left = left; val.leftType = leftType;
+        changed = true;
         elSetStyle(c, "paddingLeft", getSize(left, leftType));
     }
 
     if (val.right !== right || val.rightType !== rightType) {
         val.right = right; val.rightType = rightType;
+        changed = true;
         elSetStyle(c, "paddingRight", getSize(right, rightType));
     }
 
     if (val.top !== top || val.topType !== topType) {
         val.top = top; val.topType = topType;
+        changed = true;
         elSetStyle(c, "paddingTop", getSize(top, topType));
     }
 
     if (val.bottom !== bottom || val.bottomType !== bottomType) {
         val.bottom = bottom; val.bottomType = bottomType;
+        changed = true;
         elSetStyle(c, "paddingBottom", getSize(bottom, bottomType));
+    }
+
+    if (changed) {
+        if (rightType !== NA || leftType !== NA || bottomType !== NA || topType !== NA) {
+            elSetStyle(c, "boxSizing", "border-box");
+        } else {
+            elSetStyle(c, "boxSizing", "");
+        }
     }
 }
 

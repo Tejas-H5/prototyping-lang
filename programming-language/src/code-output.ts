@@ -758,7 +758,7 @@ export function imProgramOutputs(
                 }
 
                 imEl(c, EL_H3); imStr(c, "Graph #" + idx); imElEnd(c, EL_H3);
-            } imIfEnd(c);
+            } imLayoutEnd(c);
 
             imLayout(c, ROW); imGap(c, 5, PX); {
                 imLine(c, LINE_VERTICAL);
@@ -772,7 +772,7 @@ export function imProgramOutputs(
                     } imLayoutEnd(c);
 
                     imMaximizeableContainerBegin(c, graph); {
-                        imLayout(c, COL); imBg(c, cssVars.bg); imGap(c, 5, PX); {
+                        imLayout(c, COL); imBg(c, cssVars.bg); imGap(c, 5, PX); imFlex(c); {
                             imLayout(c, ROW); imGap(c, 5, PX); {
                                 imMaximizeItemButton(c, ctx, graph);
                             } imLayoutEnd(c);
@@ -927,8 +927,7 @@ function imImageOutput(c: ImCache, ctx: GlobalContext, image: ProgramImageOutput
                                             color = `rgb(${v * 255}, ${v * 255}, ${v * 255})`;
                                         }
 
-                                        canvas.beginPath();
-                                        {
+                                        canvas.beginPath(); {
                                             canvas.fillStyle = color;
                                             const x0Canvas = getCanvasElementX(plotState, x0);
                                             const y0Canvas = getCanvasElementY(plotState, y0);
@@ -941,8 +940,7 @@ function imImageOutput(c: ImCache, ctx: GlobalContext, image: ProgramImageOutput
                                                 size
                                             );
                                             canvas.fill();
-                                        }
-                                        canvas.closePath();
+                                        } canvas.closePath();
                                     }
                                 }
 
@@ -991,10 +989,10 @@ function imPlotZoomingAndPanning(
 
     const { mouse } = getGlobalEventSystem();
 
-    if (mouse.leftMouseButton && elHasMouseOver(c)) {
+    if (!plot.isPanning && mouse.leftMouseButton && elHasMouseOver(c)) {
         plot.isPanning = true;
         mutated = true;
-    } else if (!mouse.leftMouseButton) {
+    } else if (plot.isPanning && !mouse.leftMouseButton) {
         plot.isPanning = false;
         mutated = true;
     }
@@ -1034,7 +1032,7 @@ function imPlotZoomingAndPanning(
             } else {
                 newZoom = plot.zoom / (1.1 * (scrollY / 100));
             }
-            newZoom = clamp(newZoom, 0.5, 10000000);
+            newZoom = clamp(newZoom, 0.005, 10000000);
 
             if (newZoom !== plot.zoom) {
                 plot.zoom = newZoom;
@@ -1066,32 +1064,6 @@ function imPlotZoomingAndPanning(
 function imGraph(c: ImCache, ctx: GlobalContext, graph: ProgramGraphOutput) {
     const plotState = imState(c, newPlotState);
 
-    let s; s = imGet(c, inlineTypeId(imGraph));
-    if (!s) s = imSet(c, {
-        nodeData: new Map<string | number, {
-            position: { x: number, y: number };
-            adjacencies: (string | number)[];
-        }>(),
-    });
-
-    const graphChanged = imMemo(c, graph);
-    if (graphChanged) {
-        let minX = Number.MAX_SAFE_INTEGER;
-        let maxX = Number.MIN_SAFE_INTEGER;
-        let minY = Number.MAX_SAFE_INTEGER;
-        let maxY = Number.MIN_SAFE_INTEGER;
-
-        for (const node of s.nodeData.values()) {
-            const { x, y } = node.position;
-            minX = Math.min(x, minX);
-            maxX = Math.max(x, maxX);
-            minY = Math.min(y, minY);
-            maxY = Math.max(y, maxY);
-        }
-
-        recomputePlotExtent(plotState, minX, maxX, minY, maxY);
-    } 
-
     imLayout(c, BLOCK); imFlex(c); imRelative(c); imSize(c, 0, NA, 100, PERCENT); {
         const [_, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(c); {
             imPlotZoomingAndPanning(c, plotState, width, height, dpi, ctx.input.keyboard.shiftHeld);
@@ -1101,29 +1073,59 @@ function imGraph(c: ImCache, ctx: GlobalContext, graph: ProgramGraphOutput) {
             const graphChanged     = imMemo(c, graph);
             const plotStateChanged = imMemo(c, plotState.version);
 
+
+            let s; s = imGet(c, inlineTypeId(imGraph));
+            if (!s) s = imSet(c, {
+                nodeData: new Map<string | number, {
+                    position: { x: number, y: number };
+                    adjacencies: (string | number)[];
+                }>(),
+            });
+
             if (widthChanged || heightChanged || graphChanged || plotStateChanged) {
                 canvas.clearRect(0, 0, width, height);
 
-                for (const [key] of s.nodeData) {
-                    if (!graph.graph.has(key)) {
-                        s.nodeData.delete(key);
-                    }
-                }
+                // recompute graph
+                {
 
-                for (const [key, connections] of graph.graph) {
-                    let node = s.nodeData.get(key);
-                    if (!node) {
-                        node = {
-                            position: {
-                                x: Math.random(),
-                                y: Math.random(),
-                            },
-                            adjacencies: [],
-                        };
-                        s.nodeData.set(key, node);
+                    for (const [key] of s.nodeData) {
+                        if (!graph.graph.has(key)) {
+                            s.nodeData.delete(key);
+                        }
                     }
 
-                    node.adjacencies = [...connections];
+                    for (const [key, connections] of graph.graph) {
+                        let node = s.nodeData.get(key);
+                        if (!node) {
+                            node = {
+                                position: {
+                                    x: Math.random(),
+                                    y: Math.random(),
+                                },
+                                adjacencies: [],
+                            };
+                            s.nodeData.set(key, node);
+                        }
+
+                        node.adjacencies = [...connections];
+                    }
+
+                    if (graphChanged) {
+                        let minX = Number.MAX_SAFE_INTEGER;
+                        let maxX = Number.MIN_SAFE_INTEGER;
+                        let minY = Number.MAX_SAFE_INTEGER;
+                        let maxY = Number.MIN_SAFE_INTEGER;
+
+                        for (const node of s.nodeData.values()) {
+                            const { x, y } = node.position;
+                            minX = Math.min(x, minX);
+                            maxX = Math.max(x, maxX);
+                            minY = Math.min(y, minY);
+                            maxY = Math.max(y, maxY);
+                        }
+
+                        recomputePlotExtent(plotState, minX, maxX, minY, maxY);
+                    }
                 }
 
                 const theme = getCurrentTheme();
@@ -1213,11 +1215,15 @@ function recomputePlotExtent(
     minX: number, maxX: number,
     minY: number, maxY: number,
 ) {
+    minX--; maxX++;
+    minY--; maxY++;
+
     if (minX === Number.MAX_SAFE_INTEGER || minX === maxX) {
         state.zoom = 1;
         state.originalExtent = 1;
         state.posX = 0;
         state.posY = 0;
+        state.version++;
     } else {
         let maxDist = Math.max(maxX - minX, maxY - minY);
         const centerX = (minX + maxX) / 2;
@@ -1227,6 +1233,7 @@ function recomputePlotExtent(
         state.originalExtent = maxDist;
         state.posX = centerX;
         state.posY = centerY;
+        state.version++;
     }
 }
 
@@ -1710,11 +1717,7 @@ function imPlot(c: ImCache, ctx: GlobalContext, plot: ProgramPlotOutput, program
                                     }
 
                                     renderPoints = numPointsOnScreen < 20;
-                                }
-
-                                if (renderPoints) {
-                                    const theme = getCurrentTheme();
-                                    canvas.strokeStyle = theme.fg.toCssString();
+                                } else {
                                     canvas.lineWidth = screenToCanvas(plotState, 2);
                                     for (let i = 0; i < line.pointsX.length; i++) {
                                         const x1 = line.pointsX[i];
