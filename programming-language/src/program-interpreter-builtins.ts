@@ -542,7 +542,7 @@ export function getBuiltinFunctionsMap() {
         return list;
     });
     newBuiltinFunction(
-        "slider", 
+        "ui_slider", 
         [
             newArg("name", [T_RESULT_STRING]), 
             newArg("start", [T_RESULT_NUMBER]), 

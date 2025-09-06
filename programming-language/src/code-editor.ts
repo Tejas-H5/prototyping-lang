@@ -18,17 +18,15 @@ import {
     TextEditorState
 } from 'src/utils/text-editor';
 import { imCode, imNotCode } from "./app-styling";
-import { imProgramOutputs } from './code-output';
+import { imCodeInputUIs, imProgramOutputs } from './code-output';
 import {
     BLOCK,
     COL,
-    EM,
     imAbsolute,
     imAlign,
     imBg,
     imFlex,
     imFlexWrap,
-    imGap,
     imJustify,
     imLayout,
     imLayoutEnd,
@@ -46,10 +44,8 @@ import {
 } from "./components/core/layout";
 import { cn } from "./components/core/stylesheets";
 import { imScrollContainerBegin, newScrollContainer } from "./components/scroll-container";
-import { imSliderInput } from './components/slider';
 import {
-    programResultTypeStringFromType,
-    UI_INPUT_SLIDER
+    programResultTypeStringFromType
 } from './program-interpreter';
 import { BuiltinFunction, getBuiltinFunctionsMap } from "./program-interpreter-builtins";
 import {
@@ -65,7 +61,7 @@ import {
     T_STRING_LITERAL,
     T_VECTOR_LITERAL
 } from './program-parser';
-import { GlobalContext, mutateState, rerun } from './state';
+import { GlobalContext, mutateState } from './state';
 import "./styling";
 import { cnApp, cssVars } from './styling';
 import { assert } from './utils/assert';
@@ -81,8 +77,6 @@ import {
     imMemo,
     imSet,
     imState,
-    imSwitch,
-    imSwitchEnd,
     inlineTypeId,
     isFirstishRender
 } from "./utils/im-core";
@@ -822,31 +816,15 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
                             elSetStyle(c, "overflow", "clip");
                         }
 
-                        const outputs = lastInterpreterResult?.outputs;
-                        const inputs = outputs?.uiInputsPerLine?.get(lineIdx);
-                        if (imIf(c) && inputs) {
-                            imFor(c); for (const ui of inputs) {
-                                imLayout(c, COL); imGap(c, 5, PX); imPadding(c, 5, PX, 5, PX, 5, PX, 5, PX); {
-                                    imSwitch(c, ui.t); switch (ui.t) {
-                                        case UI_INPUT_SLIDER: {
-                                            imLayout(c, ROW); imGap(c, 5, PX); {
-                                                imLayout(c, BLOCK); imStr(c, ui.name); imLayoutEnd(c);
-                                                imLayout(c, BLOCK); imCode(c); imStr(c, ui.value + ""); imLayoutEnd(c);
-                                            } imLayoutEnd(c);
-                                            imLayout(c, ROW); imSize(c, 0, NA, 1, EM); {
-                                                ui.value = imSliderInput(c, ui.start, ui.end, ui.step, ui.value);
-                                                if (imMemo(c, ui.value)) {
-                                                    rerun(ctx);
-                                                }
-                                            } imLayoutEnd(c);
-                                        } break;
-                                        default: {
-                                            throw new Error("Unhandled UI input type");
-                                        }
-                                    } imSwitchEnd(c);
-                                } imLayoutEnd(c);
-                            } imForEnd(c);
-                        } imIfEnd(c);
+                        // NOTE: turns out that putting UI components in with the code
+                        // feels like ass to use. Maybe they should just snap to the closest 
+                        // plot or something? I much prefer the current behaviour
+                        // where they accumulate in the global UI panel. 
+                        // const outputs = lastInterpreterResult?.outputs;
+                        // const inputs = outputs?.uiInputsPerLine?.get(lineIdx);
+                        // if (imIf(c) && inputs) {
+                        //     imCodeInputUIs(c, ctx, inputs)
+                        // } imIfEnd(c);
 
                         const thisLineOutputs = lastInterpreterResult?.flushedOutputs?.get(lineIdx);
                         if (imIf(c) && thisLineOutputs && lastInterpreterResult) {

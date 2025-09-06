@@ -20,8 +20,8 @@ export const CODE_EXAMPLES: CodeExample[] = [
             `
 // Creating a square wave from multiple sine waves
 
-harmonics = slider("harmonics", 5, 70, 1)
-harmonic_offset = slider("harmonic_offset", 1, 10, 1)
+harmonics = ui_slider("harmonics", 5, 70, 1)
+harmonic_offset = ui_slider("harmonic_offset", 1, 10, 1)
 
 samples = list[]
 dt = 440 * 1 / 48000
@@ -76,8 +76,8 @@ plot_points(1, 0.5 * [
     {
         name: "Slider inputs",
         code: `
-period = slider("period", 0, 100)
-resolution = slider("resolution", 1, 100)
+period = ui_slider("period", 0, 100)
+resolution = ui_slider("resolution", 1, 100)
 
 lines = list[]
 
@@ -92,7 +92,7 @@ plot_lines(1, lines)
     {
         name: "Images",
         code: `
-seed = slider("seed", 0, 1000)
+seed = ui_slider("seed", 0, 1000)
 
 // rand_seed(now())
 rand_seed(seed)
@@ -131,7 +131,7 @@ graph(1, g)
         name: "Matrices",
         code: `
 
-angle = slider("angle", 0, 2 * PI)
+angle = ui_slider("angle", 0, 2 * PI)
 
 rot_matrix(a) {
     [[cos(a), -sin(a)],
@@ -154,9 +154,9 @@ plot_points(1, [
     {
         name: "3D stuff",
         code: `
-xAngle = slider("x", 0, 2 * PI)
-yAngle = slider("y", 0, 2 * PI)
-zAngle = slider("z", 0, 2 * PI)
+xAngle = ui_slider("x", 0, 2 * PI)
+yAngle = ui_slider("y", 0, 2 * PI)
+zAngle = ui_slider("z", 0, 2 * PI)
 
 X = rot3d_x(xAngle)
 Y = rot3d_y(yAngle)
@@ -250,7 +250,7 @@ val[1] = val[1] / val[3]
         name: "Some more vector things",
         code:
         `
-t = slider("t", 0, 6 * PI, 0.001)
+t = ui_slider("t", 0, 6 * PI, 0.001)
 
 dir = [sin(t), cos(t)]
 

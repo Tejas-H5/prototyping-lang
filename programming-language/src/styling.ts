@@ -12,8 +12,8 @@ const mainTheme = Object.freeze({
     translucent: newColor(0, 0, 0, 0.5),
 
     mediumText: "4rem",
-    normalText: "1.5rem",
-    smallText: "1rem",
+    normalText: "1.4rem",
+    smallText: "1.2rem",
 });
 
 export type Theme = typeof mainTheme;

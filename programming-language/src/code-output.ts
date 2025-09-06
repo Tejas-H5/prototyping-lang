@@ -4,6 +4,7 @@ import {
     BLOCK,
     COL,
     DisplayType,
+    EM,
     imAbsolute,
     imAlign,
     imAspectRatio,
@@ -28,6 +29,7 @@ import {
 } from './components/core/layout';
 import { imLine, LINE_VERTICAL } from './components/im-line';
 import { imScrollContainerBegin, imScrollContainerEnd, newScrollContainer } from './components/scroll-container';
+import { imSliderInput } from './components/slider';
 import { CODE_EXAMPLES } from './examples';
 import {
     evaluateFunctionWithinProgramWithArgs,
@@ -46,13 +48,15 @@ import {
     ProgramResultFunction,
     ProgramResultNumber,
     programResultTypeString,
+    ProgramUiInput,
     T_RESULT_FN,
     T_RESULT_LIST,
     T_RESULT_MAP,
     T_RESULT_MATRIX,
     T_RESULT_NUMBER,
     T_RESULT_RANGE,
-    T_RESULT_STRING
+    T_RESULT_STRING,
+    UI_INPUT_SLIDER
 } from './program-interpreter';
 import {
     DiagnosticInfo,
@@ -120,36 +124,6 @@ import { clamp, gridSnap, inverseLerp, lerp, max, min } from './utils/math-utils
 import { getSliceValue } from './utils/matrix-math';
 
 export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
-    imLayout(c, ROW); imGap(c, 5, PX); {
-        if (imButtonIsClicked(c, "Autorun", ctx.state.autoRun)) {
-            ctx.state.autoRun = !ctx.state.autoRun
-            mutateState(ctx.state);
-
-            if (ctx.state.autoRun) {
-                rerun(ctx);
-            }
-        }
-
-        if (imButtonIsClicked(c, "Start debugging")) {
-            startDebugging(ctx);
-        }
-
-        if (imButtonIsClicked(c, "Show AST", ctx.state.showParserOutput)) {
-            ctx.state.showParserOutput = !ctx.state.showParserOutput;
-            mutateState(ctx.state);
-        }
-
-        if (imButtonIsClicked(c, "Debug text editor", ctx.state.debugTextEditor)) {
-            ctx.state.debugTextEditor = !ctx.state.debugTextEditor;
-            mutateState(ctx.state);
-        }
-
-        if (imButtonIsClicked(c, "Show instructions", ctx.state.showInterpreterOutput)) {
-            ctx.state.showInterpreterOutput = !ctx.state.showInterpreterOutput;
-            mutateState(ctx.state);
-        }
-    } imLayoutEnd(c);
-
     const sc = imState(c, newScrollContainer);
     const scrollContainer = imScrollContainerBegin(c, sc); {
         const parseResult = ctx.lastParseResult;
@@ -252,6 +226,11 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
             } imLayoutEnd(c);
         } imIfEnd(c);
     } imScrollContainerEnd(c);
+
+    const uiInputs = ctx.lastInterpreterResult?.outputs.uiInputs;
+    if (imIf(c) && uiInputs) {
+        imCodeInputUIs(c, ctx, uiInputs);
+    } imIfEnd(c);
 }
 
 function imParserOutputRow(
@@ -764,17 +743,17 @@ export function imProgramOutputs(
                         )
                     } imLayoutEnd(c);
 
-                    imMaximizeableContainerBegin(c, graph); {
-                        imLayout(c, COL); imBg(c, cssVars.bg); imGap(c, 5, PX); imFlex(c); {
-                            imLayout(c, ROW); imGap(c, 5, PX); {
-                                imMaximizeItemButton(c, ctx, graph);
-                            } imLayoutEnd(c);
-
-                            imLayout(c, COL); imAspectRatio(c, window.innerWidth, window.innerHeight); {
-                                imGraph(c, ctx, graph);
-                            } imLayoutEnd(c);
+                    imLayout(c, COL); imBg(c, cssVars.bg); imGap(c, 5, PX); imFlex(c); {
+                        let width = window.innerWidth;
+                        let height = window.innerHeight;
+                        if (scrollContainer) {
+                            width = scrollContainer.clientWidth;
+                            height = scrollContainer.clientHeight;
+                        }
+                        imLayout(c, COL); imAspectRatio(c, width, height); {
+                            imGraph(c, ctx, graph);
                         } imLayoutEnd(c);
-                    } imMaximizeableContainerEnd(c);
+                    } imLayoutEnd(c);
                 } imLayoutEnd(c);
             } imLayoutEnd(c);
         }; imForEnd(c);
@@ -801,7 +780,7 @@ export function imProgramOutputs(
                     );
                 } imLayoutEnd(c);
 
-                imImageOutput(c, ctx, image);
+                imImageOutput(c, ctx, image, scrollContainer);
             } imLayoutEnd(c);
         } imLayoutEnd(c);
     }; imForEnd(c);
@@ -844,7 +823,13 @@ export function imProgramOutputs(
                     } imLayoutEnd(c); 
                 } imForEnd(c);
 
-                imLayout(c, COL); imAspectRatio(c, window.innerWidth, window.innerHeight); {
+                let width = window.innerWidth;
+                let height = window.innerHeight;
+                if (scrollContainer) {
+                    width = scrollContainer.clientWidth;
+                    height = scrollContainer.clientHeight;
+                }
+                imLayout(c, COL); imAspectRatio(c, width, height); {
                     imPlot(c, ctx, plot, program);
                 } imLayoutEnd(c); 
             } imLayoutEnd(c); 
@@ -860,96 +845,96 @@ export function imProgramOutputs(
     } 
 }
 
-function imImageOutput(c: ImCache, ctx: GlobalContext, image: ProgramImageOutput) {
-    imMaximizeableContainerBegin(c, image); {
-        imLayout(c, COL); imBg(c, cssVars.bg); imGap(c, 5, PX); {
-            imLayout(c, ROW); imGap(c, 5, PX); {
-                imMaximizeItemButton(c, ctx, image);
-            } imLayoutEnd(c);
+function imImageOutput(c: ImCache, ctx: GlobalContext, image: ProgramImageOutput, scrollContainer?: HTMLElement) {
+    imLayout(c, COL); imBg(c, cssVars.bg); imGap(c, 5, PX); {
+        imLayout(c, BLOCK); imFlex(c); imRelative(c); {
+            if (imIf(c) && image.width !== 0) {
+                const plotState = imState(c, newPlotState);
 
-            imLayout(c, BLOCK); imFlex(c); imRelative(c); {
-                if (imIf(c) && image.width !== 0) {
-                    const plotState = imState(c, newPlotState);
+                let width = window.innerWidth;
+                let height = window.innerHeight;
+                if (scrollContainer) {
+                    width = scrollContainer.clientWidth;
+                    height = scrollContainer.clientHeight;
+                }
+                imLayout(c, COL); imAspectRatio(c, width, height); {
+                    const [, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(c); {
+                        imPlotZoomingAndPanning(
+                            c,
+                            plotState,
+                            width,
+                            height,
+                            dpi,
+                            ctx.input.keyboard.shiftHeld
+                        );
 
-                    imLayout(c, COL); imAspectRatio(c, window.innerWidth, window.innerHeight); {
-                        const [, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(c); {
-                            imPlotZoomingAndPanning(
-                                c, 
-                                plotState,
-                                width,
-                                height,
-                                dpi,
-                                ctx.input.keyboard.shiftHeld
-                            );
+                        const pixelSize = 10;
 
-                            const pixelSize = 10;
+                        const imageChanged = imMemo(c, image);
+                        const plotStateChanged = imMemo(c, plotState.version);
 
-                            const imageChanged = imMemo(c, image);
-                            const plotStateChanged = imMemo(c, plotState.version);
+                        if (imageChanged) {
+                            const minX = 0,
+                                minY = 0,
+                                maxX = image.width * pixelSize,
+                                maxY = image.height * pixelSize;
 
-                            if (imageChanged) {
-                                const minX = 0,
-                                    minY = 0,
-                                    maxX = image.width * pixelSize,
-                                    maxY = image.height * pixelSize;
+                            recomputePlotExtent(plotState, minX, maxX, minY, maxY);
+                        }
 
-                                recomputePlotExtent(plotState, minX, maxX, minY, maxY);
+                        if (imageChanged || plotStateChanged) {
+                            canvas.clearRect(0, 0, width, height);
+
+                            for (let i = 0; i < image.width; i++) {
+                                for (let j = 0; j < image.height; j++) {
+                                    const x0 = i * pixelSize;
+                                    const y0 = j * pixelSize;
+                                    let color;
+                                    if (image.rgb) {
+                                        const idx = (j * image.width + i) * 3;
+                                        assert(idx + 2 < image.pixels.length);
+
+                                        const r = image.pixels[idx];
+                                        const g = image.pixels[idx + 1];
+                                        const b = image.pixels[idx + 2];
+
+                                        color = `rgb(${r * 255}, ${g * 255}, ${b * 255})`;
+                                    } else {
+                                        const idx = (j * image.width + i);
+                                        assert(idx < image.pixels.length);
+                                        const v = image.pixels[idx];
+                                        color = `rgb(${v * 255}, ${v * 255}, ${v * 255})`;
+                                    }
+
+                                    canvas.beginPath(); {
+                                        canvas.fillStyle = color;
+                                        const x0Canvas = getCanvasElementX(plotState, x0);
+                                        const y0Canvas = getCanvasElementY(plotState, y0);
+                                        const size = getCanvasElementLength(plotState, pixelSize);
+                                        drawRectSized(
+                                            canvas,
+                                            x0Canvas,
+                                            y0Canvas,
+                                            size,
+                                            size
+                                        );
+                                        canvas.fill();
+                                    } canvas.closePath();
+                                }
                             }
 
-                            if (imageChanged || plotStateChanged) {
-                                canvas.clearRect(0, 0, width, height);
-
-                                for (let i = 0; i < image.width; i++) {
-                                    for (let j = 0; j < image.height; j++) {
-                                        const x0 = i * pixelSize;
-                                        const y0 = j * pixelSize;
-                                        let color;
-                                        if (image.rgb) {
-                                            const idx = (j * image.width + i) * 3;
-                                            assert(idx + 2 < image.pixels.length);
-
-                                            const r = image.pixels[idx];
-                                            const g = image.pixels[idx + 1];
-                                            const b = image.pixels[idx + 2];
-
-                                            color = `rgb(${r * 255}, ${g * 255}, ${b * 255})`;
-                                        } else {
-                                            const idx = (j * image.width + i);
-                                            assert(idx < image.pixels.length);
-                                            const v = image.pixels[idx];
-                                            color = `rgb(${v * 255}, ${v * 255}, ${v * 255})`;
-                                        }
-
-                                        canvas.beginPath(); {
-                                            canvas.fillStyle = color;
-                                            const x0Canvas = getCanvasElementX(plotState, x0);
-                                            const y0Canvas = getCanvasElementY(plotState, y0);
-                                            const size = getCanvasElementLength(plotState, pixelSize);
-                                            drawRectSized(
-                                                canvas,
-                                                x0Canvas,
-                                                y0Canvas,
-                                                size,
-                                                size
-                                            );
-                                            canvas.fill();
-                                        } canvas.closePath();
-                                    }
-                                }
-
-                                drawBoundary(canvas, width, height);
-                            } 
-                        } imEndCanvasRenderingContext2D(c);
-                    } imLayoutEnd(c);
-                } else {
-                    imIfElse(c);
-                    imLayout(c, COL); imAlign(c); imJustify(c); {
-                        imStr(c, "Value was empty");
-                    } imLayoutEnd(c);
-                } imIfEnd(c);
-            } imLayoutEnd(c);
+                            drawBoundary(canvas, width, height);
+                        }
+                    } imEndCanvasRenderingContext2D(c);
+                } imLayoutEnd(c);
+            } else {
+                imIfElse(c);
+                imLayout(c, COL); imAlign(c); imJustify(c); {
+                    imStr(c, "Value was empty");
+                } imLayoutEnd(c);
+            } imIfEnd(c);
         } imLayoutEnd(c);
-    } imMaximizeableContainerEnd(c);
+    } imLayoutEnd(c);
 }
 
 function imPlotZoomingAndPanning(
@@ -1039,7 +1024,7 @@ function imPlotZoomingAndPanning(
             const mouseDY = newMouseY - mouseY;
 
             const dX = getPlotLength(plot, mouseDX);
-            const dY = getPlotLength(plot, mouseDY);
+            const dY = -getPlotLength(plot, mouseDY);
             if (Math.abs(dX) + Math.abs(dY) > 0) {
                 plot.posX += dX;
                 plot.posY += dY;
@@ -1310,8 +1295,8 @@ function getCanvasElementLength(plot: PlotState, l: number): number {
 function getPlotY(plot: PlotState, y: number): number {
     const { posY } = plot;
     const extent = getExtent(plot);
-    const y0Extent = posY - extent;
-    const y1Extent = posY + extent;
+    const y0Extent = posY + extent;
+    const y1Extent = posY - extent;
 
     const dim = getDim(plot);
     const other = getOtherDim(plot);
@@ -1456,381 +1441,369 @@ function drawBoundary(ctx: CanvasRenderingContext2D, width: number, height: numb
     ctx.closePath();
 }
 
-function imMaximizeableContainerBegin(c: ImCache, item: object) {
-    const isMaximized = item === currentMaximizedItem;
-    const unit = isMaximized ? PX : NA;
-
-    // NOTE: A shortcoming of our styling system now, is that we can't conditionally call these. sad. 
-    // TODO: fix.
-    imLayout(c, COL); imGap(c, 5, PX); imFlex(c); imJustify(c); 
-    imBg(c, isMaximized ? cssVars.translucent : "");
-    imFixed(c, 0, unit, 0, unit, 0, unit, 0, unit); 
-    imPadding(c, 10, unit, 10, unit, 10, unit, 10, unit); {
-
-    } // imLayoutEnd(c);
-}
-
-function imMaximizeableContainerEnd(c: ImCache) {
-    imLayoutEnd(c);
-}
-
-function imMaximizeItemButton(c: ImCache, ctx: GlobalContext, item: object) {
-    const isMaximized = currentMaximizedItem === item;
-
-    if (imButtonIsClicked(c, isMaximized ? "minimize" : "maximize")) {
-        if (isMaximized) {
-            currentMaximizedItem = null;
-        } else {
-            currentMaximizedItem = item;
-        }
-    }
-
-    if (ctx.input.keyboard.escape) {
-        currentMaximizedItem = null;
-    }
-}
-
-
 function imPlot(c: ImCache, ctx: GlobalContext, plot: ProgramPlotOutput, program: ProgramInterpretResult) {
     const isMaximized = plot === currentMaximizedItem;
     const plotState = imState(c, newPlotState);
     plotState.maximized = isMaximized;
 
-    imMaximizeableContainerBegin(c, plot); {
-        imLayout(c, COL); imBg(c, cssVars.bg); imFlex(c); imGap(c, 5, PX); {
-            imLayout(c, ROW); imGap(c, 5, PX); {
-                imMaximizeItemButton(c, ctx, plot);
+    imLayout(c, COL); imBg(c, cssVars.bg); imFlex(c); imGap(c, 5, PX); {
+        imLayout(c, ROW); imGap(c, 5, PX); {
+            if (imButtonIsClicked(c, "Overlays", plotState.overlay)) {
+                plotState.overlay = !plotState.overlay;
+            }
 
-                if (imButtonIsClicked(c, "Overlays", plotState.overlay)) {
-                    plotState.overlay = !plotState.overlay;
+            if (imButtonIsClicked(c, "Autofit", plotState.autofit)) {
+                plotState.autofit = !plotState.autofit;
+            }
+        } imLayoutEnd(c);
+
+        let state; state = imGet(c, inlineTypeId(imGet));
+        if (!state) state = imSet(c, {
+            shiftScrollToZoom: 0,
+            problems: [] as string[],
+            rows: [] as number[][],
+        });
+
+        imLayout(c, COL); imFlex(c); imRelative(c); {
+            const [_, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(c); {
+                const mouse = getGlobalEventSystem().mouse;
+
+                // init canvas 
+                imPlotZoomingAndPanning(
+                    c,
+                    plotState,
+                    width,
+                    height,
+                    dpi,
+                    ctx.input.keyboard.shiftHeld
+                );
+
+                if (elHasMouseOver(c) && (mouse.scrollWheel !== 0 && !plotState.canZoom)) {
+                    state.shiftScrollToZoom = 1;
                 }
 
-                if (imButtonIsClicked(c, "Autofit", plotState.autofit)) {
-                    plotState.autofit = !plotState.autofit;
-                }
-            } imLayoutEnd(c);
+                const programChanged = imMemo(c, program);
+                const autoFitChanged = imMemo(c, plotState.autofit);
+                const runChanged = programChanged || autoFitChanged;
+                const textChanged = imMemo(c, program.parseResult.text);
+                if (runChanged || textChanged) {
+                    if (plotState.autofit) {
+                        let minX = Number.MAX_SAFE_INTEGER;
+                        let maxX = Number.MIN_SAFE_INTEGER;
+                        let minY = Number.MAX_SAFE_INTEGER;
+                        let maxY = Number.MIN_SAFE_INTEGER;
 
-            let state; state = imGet(c, inlineTypeId(imGet));
-            if (!state) state = imSet(c, {
-                shiftScrollToZoom: 0,
-                problems: [] as string[],
-                rows: [] as number[][],
-            }); 
+                        for (const line of plot.lines) {
+                            for (let i = 0; i < line.pointsX.length; i++) {
+                                const x = line.pointsX[i];
+                                minX = Math.min(x, minX);
+                                maxX = Math.max(x, maxX);
 
-            imLayout(c, COL); imFlex(c); imRelative(c); {
-                const [_, canvas, width, height, dpi] = imBeginCanvasRenderingContext2D(c); {
-                    const mouse = getGlobalEventSystem().mouse;
-
-                    // init canvas 
-                    imPlotZoomingAndPanning(
-                        c, 
-                        plotState,
-                        width,
-                        height,
-                        dpi,
-                        ctx.input.keyboard.shiftHeld
-                    );
-
-                    if (elHasMouseOver(c) && (mouse.scrollWheel !== 0 && !plotState.canZoom)) {
-                        state.shiftScrollToZoom = 1;
-                    }
-
-                    const programChanged = imMemo(c, program);
-                    const autoFitChanged = imMemo(c, plotState.autofit);
-                    const runChanged = programChanged || autoFitChanged;
-                    const textChanged = imMemo(c, program.parseResult.text);
-                    if (runChanged || textChanged) {
-                        if (plotState.autofit) {
-                            let minX = Number.MAX_SAFE_INTEGER;
-                            let maxX = Number.MIN_SAFE_INTEGER;
-                            let minY = Number.MAX_SAFE_INTEGER;
-                            let maxY = Number.MIN_SAFE_INTEGER;
-
-                            for (const line of plot.lines) {
-                                for (let i = 0; i < line.pointsX.length; i++) {
-                                    const x = line.pointsX[i];
-                                    minX = Math.min(x, minX);
-                                    maxX = Math.max(x, maxX);
-
-                                    const y = line.pointsY[i];
-                                    minY = Math.min(y, minY);
-                                    maxY = Math.max(y, maxY);
-                                }
+                                const y = line.pointsY[i];
+                                minY = Math.min(y, minY);
+                                maxY = Math.max(y, maxY);
                             }
-
-                            recomputePlotExtent(plotState, minX, maxX, minY, maxY);
                         }
+
+                        recomputePlotExtent(plotState, minX, maxX, minY, maxY);
                     }
+                }
 
-                    const plotChanged = imMemo(c, plot);
-                    const plotStateChanged = imMemo(c, plotState.version);
-                    if (plotChanged || plotStateChanged) {
-                        state.problems.length = 0;
+                const plotChanged = imMemo(c, plot);
+                const plotStateChanged = imMemo(c, plotState.version);
+                if (plotChanged || plotStateChanged) {
+                    state.problems.length = 0;
 
-                        const { width, height } = plotState;
+                    const { width, height } = plotState;
 
-                        canvas.clearRect(0, 0, width, height);
+                    canvas.clearRect(0, 0, width, height);
 
-                        // draw function heatmaps (if the program had no errors, since we need to evaluate the function in the same program context)
-                        if (program.errors.length === 0) {
+                    // draw function heatmaps (if the program had no errors, since we need to evaluate the function in the same program context)
+                    if (program.errors.length === 0) {
 
-                            let n = program.outputs.heatmapSubdivisions + 1;
-                            if (plotState.isPanning) {
-                                // Otherwise, dragging is agonizingly slow
-                                // TODO: progressive refinement over multiple frames.
-                                // this shit too damn slow, bruh.
-                                n = min(n, 21);
+                        let n = program.outputs.heatmapSubdivisions + 1;
+                        if (plotState.isPanning) {
+                            // Otherwise, dragging is agonizingly slow
+                            // TODO: progressive refinement over multiple frames.
+                            // this shit too damn slow, bruh.
+                            n = min(n, 21);
+                        }
+
+                        const dim = getMaxDim(plotState);
+
+                        const centerX = getPlotX(plotState, width / 2);
+                        const centerY = getPlotY(plotState, width / 2);
+                        const sizeScreen = dim / n;
+                        const size = getPlotLength(plotState, sizeScreen);
+
+                        for (const output of plot.functions) {
+                            if (program.isDebugging) {
+                                // TODO: we need to be able to run functions that we're debugging.
+                                // This will be useful when we want to implement a 'watch' window. Prob just as simple as
+                                // duplicating the program stack. 
+                                state.problems.push("Can't render heatmaps while we're debugging - the program stack is still in use. ");
+                                break;
                             }
 
-                            const dim = getMaxDim(plotState);
+                            state.rows.length = 0
 
-                            const centerX = getPlotX(plotState, width / 2);
-                            const centerY = getPlotY(plotState, width / 2);
-                            const sizeScreen = dim / n;
-                            const size = getPlotLength(plotState, sizeScreen);
+                            const args: ProgramResultNumber[] = [
+                                newNumberResult(1),
+                                newNumberResult(1),
+                            ];
 
-                            for (const output of plot.functions) {
-                                if (program.isDebugging) {
-                                    // TODO: we need to be able to run functions that we're debugging.
-                                    // This will be useful when we want to implement a 'watch' window. Prob just as simple as
-                                    // duplicating the program stack. 
-                                    state.problems.push("Can't render heatmaps while we're debugging - the program stack is still in use. ");
-                                    break;
+                            let minValue = Number.MAX_SAFE_INTEGER;
+                            let maxValue = Number.MIN_SAFE_INTEGER;
+
+                            outer: for (let i = 0; i < n; i++) {
+                                const row: number[] = Array(n);
+                                row.fill(0);
+
+                                for (let j = 0; j < n; j++) {
+                                    const evalPointX = centerX + (-(n / 2) + i) * size;
+                                    const evalPointY = centerY + (-(n / 2) + j) * size;
+
+                                    args[0].val = evalPointX;
+                                    args[1].val = evalPointY;
+
+                                    const result = evaluateFunctionWithinProgramWithArgs(program, output.step, output.fn, args);
+                                    if (!result) {
+                                        state.problems.push("result for " + i + ", " + j + " didn't return anything");
+                                        break outer;
+                                    }
+                                    if (program.errors.length > 0) {
+                                        // TODO: display the error
+                                        state.problems.push("Encountered an error in the program");
+                                        break outer;
+                                    }
+                                    if (result.t !== T_RESULT_NUMBER) {
+                                        state.problems.push("result for " + i + ", " + j + " wasn't a number");
+                                        break outer;
+                                    }
+
+                                    const res = result.val;
+                                    row[j] = res;
+
+                                    minValue = min(minValue, res);
+                                    maxValue = max(maxValue, res);
                                 }
 
-                                state.rows.length = 0
+                                state.rows.push(row);
+                            }
 
-                                const args: ProgramResultNumber[] = [
-                                    newNumberResult(1),
-                                    newNumberResult(1),
-                                ];
+                            if (state.problems.length === 0) {
+                                const theme = getCurrentTheme();
+                                const color = output.color ?? theme.fg;
 
-                                let minValue = Number.MAX_SAFE_INTEGER;
-                                let maxValue = Number.MIN_SAFE_INTEGER;
-
-                                outer: for (let i = 0; i < n; i++) {
-                                    const row: number[] = Array(n);
-                                    row.fill(0);
-
+                                for (let i = 0; i < n; i++) {
                                     for (let j = 0; j < n; j++) {
+                                        const val = state.rows[i][j];
+                                        const heat = inverseLerp(val, minValue, maxValue);
+
                                         const evalPointX = centerX + (-(n / 2) + i) * size;
                                         const evalPointY = centerY + (-(n / 2) + j) * size;
 
-                                        args[0].val = evalPointX;
-                                        args[1].val = evalPointY;
+                                        const x0 = getCanvasElementX(plotState, evalPointX);
+                                        const y0 = getCanvasElementY(plotState, evalPointY);
 
-                                        const result = evaluateFunctionWithinProgramWithArgs(program, output.step, output.fn, args);
-                                        if (!result) {
-                                            state.problems.push("result for " + i + ", " + j + " didn't return anything");
-                                            break outer;
+                                        canvas.fillStyle = color.toCssString(heat);
+                                        canvas.beginPath(); {
+                                            canvas.rect(x0, y0, sizeScreen, sizeScreen);
+                                            canvas.fill();
                                         }
-                                        if (program.errors.length > 0) {
-                                            // TODO: display the error
-                                            state.problems.push("Encountered an error in the program");
-                                            break outer;
-                                        }
-                                        if (result.t !== T_RESULT_NUMBER) {
-                                            state.problems.push("result for " + i + ", " + j + " wasn't a number");
-                                            break outer;
-                                        }
-
-                                        const res = result.val;
-                                        row[j] = res;
-
-                                        minValue = min(minValue, res);
-                                        maxValue = max(maxValue, res);
-                                    }
-
-                                    state.rows.push(row);
-                                }
-
-                                if (state.problems.length === 0) {
-                                    const theme = getCurrentTheme();
-                                    const color = output.color ?? theme.fg;
-
-                                    for (let i = 0; i < n; i++) {
-                                        for (let j = 0; j < n; j++) {
-                                            const val = state.rows[i][j];
-                                            const heat = inverseLerp(val, minValue, maxValue);
-
-                                            const evalPointX = centerX + (-(n / 2) + i) * size;
-                                            const evalPointY = centerY + (-(n / 2) + j) * size;
-
-                                            const x0 = getCanvasElementX(plotState, evalPointX);
-                                            const y0 = getCanvasElementY(plotState, evalPointY);
-
-                                            canvas.fillStyle = color.toCssString(heat);
-                                            canvas.beginPath(); {
-                                                canvas.rect(x0, y0, sizeScreen, sizeScreen);
-                                                canvas.fill();
-                                            }
-                                            canvas.closePath();
-                                        }
+                                        canvas.closePath();
                                     }
                                 }
                             }
                         }
+                    }
 
-                        // draw lines
-                        {
-                            for (const line of plot.lines) {
-                                // TODO: labels
+                    // draw lines
+                    {
+                        for (const line of plot.lines) {
+                            // TODO: labels
 
-                                canvas.strokeStyle = line.color ? line.color.toString() : cssVars.fg;
-                                canvas.lineWidth = screenToCanvas(plotState, 2);
+                            canvas.strokeStyle = line.color ? line.color.toString() : cssVars.fg;
+                            canvas.lineWidth = screenToCanvas(plotState, 2);
 
-                                // draw the actual lines
+                            // draw the actual lines
 
-                                let x0 = line.pointsX[0];
-                                let y0 = line.pointsY[0];
-                                const x0Plot = getCanvasElementX(plotState, x0);
-                                const y0Plot = getCanvasElementY(plotState, y0);
-                                if (!line.displayAsPoints) {
-                                    canvas.beginPath();
-                                    canvas.moveTo(x0Plot, y0Plot);
-                                    for (let i = 1; i < line.pointsX.length; i++) {
-                                        const x1 = line.pointsX[i];
-                                        const y1 = line.pointsY[i];
-
-                                        const x1Plot = getCanvasElementX(plotState, x1);
-                                        const y1Plot = getCanvasElementY(plotState, y1);
-
-                                        canvas.lineTo(x1Plot, y1Plot);
-
-                                        x0 = x1; y0 = y1;
-                                    }
-                                    canvas.stroke();
-                                    canvas.closePath();
-                                }
-
-                                let renderPoints = line.displayAsPoints;
-                                if (!renderPoints) {
-                                    let numPointsOnScreen = 0;
-                                    for (let i = 0; i < line.pointsX.length; i++) {
-                                        const x1 = line.pointsX[i];
-                                        const y1 = line.pointsY[i];
-                                        if (isPointOnScreen(plotState, x1, y1)) {
-                                            numPointsOnScreen++;
-                                        }
-                                    }
-
-                                    renderPoints = numPointsOnScreen < 40;
-                                } 
-
-                                if (renderPoints) {
-                                    canvas.lineWidth = screenToCanvas(plotState, 2);
-                                    for (let i = 0; i < line.pointsX.length; i++) {
-                                        const x1 = line.pointsX[i];
-                                        const y1 = line.pointsY[i];
-
-                                        const x1Plot = getCanvasElementX(plotState, x1);
-                                        const y1Plot = getCanvasElementY(plotState, y1);
-                                        const r = screenToCanvas(plotState, 5);
-
-                                        drawPointAt(canvas, x1Plot, y1Plot, r);
-                                    }
-                                }
-                            }
-                        }
-
-                        // Draw the grid
-                        if (plotState.overlay) { 
-                            const xMin = getPlotX(plotState, 0);
-                            const xMax = getPlotX(plotState, width);
-                            const yMin = getPlotY(plotState, 0);
-                            const yMax = getPlotY(plotState, height);
-                            const padding = screenToCanvas(plotState, 5);
-
-                            const theme = getCurrentTheme();
-                            canvas.fillStyle = theme.fg.toCssString();
-                            canvas.strokeStyle = theme.fg.toCssString();
-                            canvas.font = screenToCanvas(plotState, 0.7) + "em Arial";
-
-                            // draw the extent info
-                            {
-                                let precision = max(3, Math.ceil(Math.log10(plotState.zoom)));
-
-                                canvas.textAlign = "start";
-                                canvas.textBaseline = "middle";
-                                canvas.fillText("" + xMin.toPrecision(precision), padding, plotState.height / 2);
-
-                                canvas.textAlign = "end";
-                                canvas.textBaseline = "middle";
-                                canvas.fillText("" + xMax.toPrecision(precision), plotState.width - padding, plotState.height / 2);
-
-                                canvas.textAlign = "center";
-                                canvas.textBaseline = "top";
-                                canvas.fillText("" + yMin.toPrecision(precision), plotState.width / 2, padding);
-
-                                canvas.textAlign = "center";
-                                canvas.textBaseline = "bottom";
-                                canvas.fillText("" + yMax.toPrecision(precision), plotState.width / 2, plotState.height - padding);
-                            }
-
-                            // draw the grid
-                            canvas.strokeStyle = theme.mg.toCssString();
-                            canvas.lineWidth = screenToCanvas(plotState, 1);
-                            {
-                                const extent = getExtent(plotState);
-                                const gridFractalLevel = Math.floor(Math.log10(extent));
-                                const gridLargeSpacing = Math.pow(10, gridFractalLevel)
-
-                                let spacing = gridLargeSpacing;
-                                let spacingEl = getCanvasElementLength(plotState, spacing);
-
-                                let safety = 0;
-
+                            let x0 = line.pointsX[0];
+                            let y0 = line.pointsY[0];
+                            const x0Plot = getCanvasElementX(plotState, x0);
+                            const y0Plot = getCanvasElementY(plotState, y0);
+                            if (!line.displayAsPoints) {
                                 canvas.beginPath();
-                                let x = getCanvasElementX(plotState, gridSnap(getPlotX(plotState, 0), spacing));
-                                for (; x < width; x += spacingEl) {
-                                    if (safety++>1000) {
-                                        throw new Error("Bruh");
-                                    }
-                                    canvas.moveTo(x, 0);
-                                    canvas.lineTo(x, height);
-                                } 
-                                let y = 0; // getCanvasElementY(plotState, gridSnap(getPlotY(plotState, 0), spacing));
-                                for (; y < height; y += spacingEl) {
-                                    if (safety++>1000) {
-                                        throw new Error("Bruh");
-                                    }
-                                    canvas.moveTo(0, y);
-                                    canvas.lineTo(width, y);
+                                canvas.moveTo(x0Plot, y0Plot);
+                                for (let i = 1; i < line.pointsX.length; i++) {
+                                    const x1 = line.pointsX[i];
+                                    const y1 = line.pointsY[i];
+
+                                    const x1Plot = getCanvasElementX(plotState, x1);
+                                    const y1Plot = getCanvasElementY(plotState, y1);
+
+                                    canvas.lineTo(x1Plot, y1Plot);
+
+                                    x0 = x1; y0 = y1;
                                 }
-                                canvas.closePath();
                                 canvas.stroke();
+                                canvas.closePath();
+                            }
+
+                            let renderPoints = line.displayAsPoints;
+                            if (!renderPoints) {
+                                let numPointsOnScreen = 0;
+                                for (let i = 0; i < line.pointsX.length; i++) {
+                                    const x1 = line.pointsX[i];
+                                    const y1 = line.pointsY[i];
+                                    if (isPointOnScreen(plotState, x1, y1)) {
+                                        numPointsOnScreen++;
+                                    }
+                                }
+
+                                renderPoints = numPointsOnScreen < 40;
+                            }
+
+                            if (renderPoints) {
+                                canvas.lineWidth = screenToCanvas(plotState, 2);
+                                for (let i = 0; i < line.pointsX.length; i++) {
+                                    const x1 = line.pointsX[i];
+                                    const y1 = line.pointsY[i];
+
+                                    const x1Plot = getCanvasElementX(plotState, x1);
+                                    const y1Plot = getCanvasElementY(plotState, y1);
+                                    const r = screenToCanvas(plotState, 5);
+
+                                    drawPointAt(canvas, x1Plot, y1Plot, r);
+                                }
                             }
                         }
-
-                        drawBoundary(canvas, width, height);
                     }
-                } imEndCanvasRenderingContext2D(c);
 
-                if (state.shiftScrollToZoom !== null) {
-                    const dt = getDeltaTimeSeconds(c);
-                    state.shiftScrollToZoom -= dt;
-                    if (state.shiftScrollToZoom < 0) {
-                        state.shiftScrollToZoom = -1;
+                    // Draw the grid
+                    if (plotState.overlay) {
+                        const xMin = getPlotX(plotState, 0);
+                        const xMax = getPlotX(plotState, width);
+                        const yMin = getPlotY(plotState, 0);
+                        const yMax = getPlotY(plotState, height);
+                        const padding = screenToCanvas(plotState, 5);
+
+                        const theme = getCurrentTheme();
+                        canvas.fillStyle = theme.fg.toCssString();
+                        canvas.strokeStyle = theme.fg.toCssString();
+                        canvas.font = screenToCanvas(plotState, 0.7) + "em Arial";
+
+                        // draw the extent info
+                        {
+                            let precision = max(3, Math.ceil(Math.log10(plotState.zoom)));
+
+                            canvas.textAlign = "start";
+                            canvas.textBaseline = "middle";
+                            canvas.fillText("" + xMin.toPrecision(precision), padding, plotState.height / 2);
+
+                            canvas.textAlign = "end";
+                            canvas.textBaseline = "middle";
+                            canvas.fillText("" + xMax.toPrecision(precision), plotState.width - padding, plotState.height / 2);
+
+                            canvas.textAlign = "center";
+                            canvas.textBaseline = "top";
+                            canvas.fillText("" + yMin.toPrecision(precision), plotState.width / 2, padding);
+
+                            canvas.textAlign = "center";
+                            canvas.textBaseline = "bottom";
+                            canvas.fillText("" + yMax.toPrecision(precision), plotState.width / 2, plotState.height - padding);
+                        }
+
+                        // draw the grid
+                        canvas.strokeStyle = theme.mg.toCssString();
+                        canvas.lineWidth = screenToCanvas(plotState, 1);
+                        {
+                            const extent = getExtent(plotState);
+                            const gridFractalLevel = Math.floor(Math.log10(extent));
+                            const gridLargeSpacing = Math.pow(10, gridFractalLevel)
+
+                            let spacing = gridLargeSpacing;
+                            let spacingEl = getCanvasElementLength(plotState, spacing);
+
+                            let safety = 0;
+
+                            canvas.beginPath();
+                            let x = getCanvasElementX(plotState, gridSnap(getPlotX(plotState, 0), spacing));
+                            for (; x < width; x += spacingEl) {
+                                if (safety++ > 1000) {
+                                    throw new Error("Bruh");
+                                }
+                                canvas.moveTo(x, 0);
+                                canvas.lineTo(x, height);
+                            }
+                            let y = 0; // getCanvasElementY(plotState, gridSnap(getPlotY(plotState, 0), spacing));
+                            for (; y < height; y += spacingEl) {
+                                if (safety++ > 1000) {
+                                    throw new Error("Bruh");
+                                }
+                                canvas.moveTo(0, y);
+                                canvas.lineTo(width, y);
+                            }
+                            canvas.closePath();
+                            canvas.stroke();
+                        }
                     }
+
+                    drawBoundary(canvas, width, height);
+                }
+            } imEndCanvasRenderingContext2D(c);
+
+            if (state.shiftScrollToZoom !== null) {
+                const dt = getDeltaTimeSeconds(c);
+                state.shiftScrollToZoom -= dt;
+                if (state.shiftScrollToZoom < 0) {
+                    state.shiftScrollToZoom = -1;
+                }
+            }
+
+            imLayout(c, BLOCK); imAbsolute(c, 5, PX, 0, PX, 0, NA, 0, PX); {
+                if (isFirstishRender(c)) {
+                    elSetStyle(c, "zIndex", "1000");
                 }
 
-                imLayout(c, BLOCK); imAbsolute(c, 5, PX, 0, PX, 0, NA, 0, PX); {
-                    if (isFirstishRender(c)) {
-                        elSetStyle(c, "zIndex", "1000");
-                    }
-
-                    if (imMemo(c, state.shiftScrollToZoom)) {
-                        elSetStyle(c, "opacity", (state.shiftScrollToZoom ?? 0) + "");
-                    } 
-                    imStr(c, "Shift + scroll to zoom");
-                } imLayoutEnd(c);
-
-                imFor(c); for (const prob of state.problems) {
-                    imLayout(c, BLOCK); {
-                        imStr(c, "Problem: " + prob);
-                    } imLayoutEnd(c);
-                } imForEnd(c);
+                if (imMemo(c, state.shiftScrollToZoom)) {
+                    elSetStyle(c, "opacity", (state.shiftScrollToZoom ?? 0) + "");
+                }
+                imStr(c, "Shift + scroll to zoom");
             } imLayoutEnd(c);
+
+            imFor(c); for (const prob of state.problems) {
+                imLayout(c, BLOCK); {
+                    imStr(c, "Problem: " + prob);
+                } imLayoutEnd(c);
+            } imForEnd(c);
         } imLayoutEnd(c);
-    } imMaximizeableContainerEnd(c);
+    } imLayoutEnd(c);
 }
+
+
+export function imCodeInputUIs(c: ImCache, ctx: GlobalContext, inputs: ProgramUiInput[]) {
+    imFor(c); for (const ui of inputs) {
+        imLayout(c, COL); imGap(c, 5, PX); imPadding(c, 5, PX, 5, PX, 5, PX, 5, PX); {
+            imSwitch(c, ui.t); switch (ui.t) {
+                case UI_INPUT_SLIDER: {
+                    imLayout(c, ROW); imGap(c, 5, PX); {
+                        imLayout(c, BLOCK); imStr(c, ui.name); imLayoutEnd(c);
+                        imLayout(c, BLOCK); imCode(c); imStr(c, ui.value + ""); imLayoutEnd(c);
+                    } imLayoutEnd(c);
+                    imLayout(c, ROW); imSize(c, 0, NA, 1, EM); {
+                        ui.value = imSliderInput(c, ui.start, ui.end, ui.step, ui.value);
+                        if (imMemo(c, ui.value)) {
+                            rerun(ctx);
+                        }
+                    } imLayoutEnd(c);
+                } break;
+                default: {
+                    throw new Error("Unhandled UI input type");
+                }
+            } imSwitchEnd(c);
+        } imLayoutEnd(c);
+    } imForEnd(c);
+}
+
+

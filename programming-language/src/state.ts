@@ -35,6 +35,9 @@ export type GlobalContext = {
     state: GlobalState;
 
     autoRunTimer: number;
+
+    editorIsOpen:boolean;
+    resultsIsOpen:boolean;
 }
 
 type GlobalInput = {
@@ -114,6 +117,9 @@ export function newGlobalContext(): GlobalContext {
         },
 
         autoRunTimer: 0,
+
+        editorIsOpen: true,
+        resultsIsOpen: true,
     };
 }
 export function newGlobalState(): GlobalState {

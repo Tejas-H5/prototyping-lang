@@ -23,7 +23,7 @@ import { cn } from './components/core/stylesheets';
 import { FpsCounterState, imExtraDiagnosticInfo, imFpsCounterSimple } from "./components/fps-counter";
 import { imDebugger } from './debugger';
 import { parse } from "./program-parser";
-import { GlobalContext, newGlobalContext, rerun, saveState } from './state';
+import { GlobalContext, mutateState, newGlobalContext, rerun, saveState, startDebugging } from './state';
 import "./styling";
 import { imTestHarness } from "./test-harness";
 import { assert } from './utils/assert';
@@ -96,7 +96,7 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
         }
     }
 
-    imLayout(c, BLOCK); imFixed(c, 0, PX, 0, PX, 0, PX, 0, PX); {
+    imLayout(c, COL); imFixed(c, 0, PX, 0, PX, 0, PX, 0, PX); {
         if (isFirstishRender(c)) {
             elSetClass(c, cn.normalFont);
             elSetClass(c, cn.absoluteFill);
@@ -158,37 +158,95 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
                     }
                 }
 
-                imLayout(c, ROW); imSize(c, 0, NA, 100, PERCENT); {
-                    imLayout(c, COL); imFlex(c); {
-                        imCodeEditor(c, ctx);
+                imLayout(c, ROW); imGap(c, 5, PX); imPadding(c, 10, PX, 10, PX, 10, PX, 10, PX); {
+                    imLayout(c, BLOCK); {
+                        if (imButtonIsClicked(c, "Editor", ctx.editorIsOpen)) {
+                            ctx.editorIsOpen = !ctx.editorIsOpen;
+
+                            if (!ctx.editorIsOpen && !ctx.resultsIsOpen) {
+                                ctx.resultsIsOpen = true;
+                            }
+                        }
                     } imLayoutEnd(c);
 
-                    imLayout(c, COL); imFlex(c); imGap(c, 5, PX); imPadding(c, 10, PX, 10, PX, 10, PX, 10, PX); {
-                        if (imIf(c) && ctx.isDebugging) {
-                            const interpretResult = ctx.lastInterpreterResult;
-                            assert(!!interpretResult);
-                            imDebugger(c, ctx, interpretResult);
-                        } else {
-                            imIfElse(c);
-                            imAppCodeOutput(c, ctx);
+                    imLayout(c, ROW); imFlex(c); imGap(c, 5, PX); {
+                        if (imIf(c) && ctx.editorIsOpen) {
+                            imLayout(c, ROW); imFlex(c); imGap(c, 5, PX); {
+                                imLayout(c, ROW); imFlex(c); imGap(c, 5, PX); {
+                                    if (imButtonIsClicked(c, "Debug text editor", ctx.state.debugTextEditor)) {
+                                        ctx.state.debugTextEditor = !ctx.state.debugTextEditor;
+                                        mutateState(ctx.state);
+                                    }
+                                } imLayoutEnd(c);
+                            } imLayoutEnd(c);
                         } imIfEnd(c);
+                        if (imIf(c) && ctx.resultsIsOpen) {
+                            imLayout(c, ROW); imFlex(c); imGap(c, 5, PX); {
+                                if (imButtonIsClicked(c, "Autorun", ctx.state.autoRun)) {
+                                    ctx.state.autoRun = !ctx.state.autoRun
+                                    mutateState(ctx.state);
+
+                                    if (ctx.state.autoRun) {
+                                        rerun(ctx);
+                                    }
+                                }
+
+                                if (imButtonIsClicked(c, "Start debugging")) {
+                                    startDebugging(ctx);
+                                }
+
+                                if (imButtonIsClicked(c, "Show AST", ctx.state.showParserOutput)) {
+                                    ctx.state.showParserOutput = !ctx.state.showParserOutput;
+                                    mutateState(ctx.state);
+                                }
+
+                                if (imButtonIsClicked(c, "Show instructions", ctx.state.showInterpreterOutput)) {
+                                    ctx.state.showInterpreterOutput = !ctx.state.showInterpreterOutput;
+                                    mutateState(ctx.state);
+                                }
+                            } imLayoutEnd(c);
+                        } imIfEnd(c);
+                    } imLayoutEnd(c);
+
+                    imLayout(c, BLOCK); {
+                        if (imButtonIsClicked(c, "Results", ctx.resultsIsOpen)) {
+                            ctx.resultsIsOpen = !ctx.resultsIsOpen;
+
+                            if (!ctx.editorIsOpen && !ctx.resultsIsOpen) {
+                                ctx.editorIsOpen = true;
+                            }
+                        }
                     } imLayoutEnd(c);
                 } imLayoutEnd(c);
 
-                imLayout(c, ROW); imGap(c, 5, PX); imAlign(c); imAbsolute(c, 0, NA, 10, PX, 10, PX, 0, NA); {
-                    if (isFirstishRender(c)) {
-                        elSetStyle(c, "right", "10px");
-                        elSetStyle(c, "bottom", "10px");
-                        elSetStyle(c, "borderRight", "10px");
-                        elSetStyle(c, "height", "2em");
-                    }
+                imLayout(c, ROW); imFlex(c); {
+                    if (imIf(c) && ctx.editorIsOpen) {
+                        imLayout(c, COL); imFlex(c); {
+                            imCodeEditor(c, ctx);
+                        } imLayoutEnd(c);
+                    } imIfEnd(c);
 
+                    if (imIf(c) && ctx.resultsIsOpen) {
+                        imLayout(c, COL); imFlex(c); imGap(c, 5, PX); imPadding(c, 10, PX, 10, PX, 10, PX, 10, PX); {
+                            if (imIf(c) && ctx.isDebugging) {
+                                const interpretResult = ctx.lastInterpreterResult;
+                                assert(!!interpretResult);
+                                imDebugger(c, ctx, interpretResult);
+                            } else {
+                                imIfElse(c);
+                                imAppCodeOutput(c, ctx);
+                            } imIfEnd(c);
+                        } imLayoutEnd(c);
+                    } imIfEnd(c);
+                } imLayoutEnd(c);
+
+                imLayout(c, ROW); imGap(c, 5, PX); imAlign(c); imJustify(c); imAbsolute(c, 0, NA, 0, PX, 0, PX, 0, PX); {
                     if (imIf(c) && saveTimeout) {
                         imStr(c, saveTimeout ? "Saving..." : "Saved");
                     } else {
                         imIfElse(c);
 
-                        imLayout(c, BLOCK); {
+                        imLayout(c, ROW); imGap(c, 10, PX); imFixed(c, 0, NA, 0, PX, 0, PX, 0, PX); imJustify(c); {
                             imFpsCounterSimple(c, fps);
                             imExtraDiagnosticInfo(c);
                         } imLayoutEnd(c);
@@ -201,7 +259,7 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
 
                 imIfElse(c);
 
-                imLayout(c, COL); imAlign(c); imJustify(c); imSize(c, 100, PERCENT, 100, PERCENT); {
+                imLayout(c, COL); imAlign(c); imJustify(c); imFlex(c); {
                     if (imIf(c) && errors.size === 1 && errors.values().next().value === 1) {
                         imEl(c, EL_H1); imStr(c, "An error occured"); imElEnd(c, EL_H1);
 
