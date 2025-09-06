@@ -1,15 +1,12 @@
-import { imButtonIsClicked } from './app-components/im-button';
 import { imCode } from './app-styling';
 import { getFunctionName, imFunctionInstructions, imProgramOutputs, imProgramResult } from './code-output';
 import { BLOCK, COL, imFlex, imGap, imLayout, imLayoutEnd, imPadding, NA, PX, ROW } from './components/core/layout';
 import { imScrollContainerBegin, newScrollContainer } from './components/scroll-container';
-import { getCurrentCallstack, ProgramInterpretResult, stepProgram } from './program-interpreter';
-import { GlobalContext, startDebugging } from './state';
+import { getCurrentCallstack, ProgramInterpretResult } from './program-interpreter';
+import { GlobalContext } from './state';
 import "./styling";
-import { assert } from './utils/assert';
 import { ImCache, imFor, imForEnd, imGet, imIf, imIfElse, imIfEnd, imSet, imState, inlineTypeId } from './utils/im-core';
 import { EL_H3, imEl, imElEnd, imStr, imStrFmt } from './utils/im-dom';
-
 
 export function imDebugger(
     c: ImCache,
@@ -19,33 +16,14 @@ export function imDebugger(
     const sc = imState(c, newScrollContainer);
 
     imScrollContainerBegin(c, sc); {
-        let message; message = imGet(c, inlineTypeId(imDebugger));
-        if (!message) message = imSet(c, {
-            val: "",
-        });
+        let message = "";
+        if (interpretResult.ended) {
+            message = "Program complete! you can stop debugging now.";
+        }
 
-        imLayout(c, ROW); imGap(c, 5, PX); {
-            if (imButtonIsClicked(c, "Stop debugging")) {
-                ctx.isDebugging = false;
-            }
-
-            if (imButtonIsClicked(c, "Step")) {
-                const result = stepProgram(interpretResult);
-                if (!result) {
-                    message.val = "Program complete! you can stop debugging now.";
-                }
-            }
-
-            if (imButtonIsClicked(c, "Reset")) {
-                assert(ctx.lastParseResult !== undefined);
-                startDebugging(ctx);
-                message.val = "";
-            }
-        } imLayoutEnd(c);
-
-        if (imIf(c) && message.val) {
+        if (imIf(c) && message) {
             imLayout(c, BLOCK); {
-                imStr(c, message.val);
+                imStr(c, message);
             } imLayoutEnd(c);
         } imIfEnd(c);
 

@@ -16,6 +16,7 @@ export function mutateState(s: GlobalState) {
     s._version++;
 }
 
+
 export type GlobalContext = {
     isDebugging: boolean;
     functionToDebug: ProgramResultFunction | null;
@@ -36,8 +37,8 @@ export type GlobalContext = {
 
     autoRunTimer: number;
 
-    editorIsOpen:boolean;
-    resultsIsOpen:boolean;
+    editorIsOpen: boolean;
+    resultsIsOpen: boolean;
 }
 
 type GlobalInput = {
@@ -69,6 +70,10 @@ export function startDebugging(ctx: GlobalContext): string {
     } 
 
     return "Fix parsing errors before you can start debugging";
+}
+
+export function stopDebugging(ctx: GlobalContext) {
+    ctx.isDebugging = false;
 }
 
 // Even after this method is called, the user still needs to input arguments into the function.

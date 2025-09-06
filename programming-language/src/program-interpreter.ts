@@ -585,6 +585,7 @@ export type ProgramInterpretResult = {
     rng: RandomNumberGenerator;
 
     isDebugging: boolean;
+    ended: boolean;
 
     errors: DiagnosticInfo[];
 
@@ -1167,6 +1168,7 @@ export function startInterpreting(
         rng,
         parseResult,
         isDebugging,
+        ended: false,
         entryPoint: {
             name: "Entry point",
             steps: [],
@@ -1527,14 +1529,20 @@ function validateIndex(
 }
 
 export function stepProgram(program: ProgramInterpretResult): boolean {
+    if (program.ended) {
+        return false;
+    }
+
     const call = getCurrentCallstack(program);
     if (!call) {
+        program.ended = true;
         return false;
     }
 
     const steps = call.code.steps;
     if (call.i >= steps.length) {
         call.i = steps.length;
+        program.ended = true;
         return false;
     }
 
@@ -1963,7 +1971,13 @@ export function stepProgram(program: ProgramInterpretResult): boolean {
         program.stackIdx = current ? (returnAddress - 1) : 0;
         program.stack[program.stackIdx] = val;
     }
-    return program.callStack.length > 0;
+
+    if (program.callStack.length === 0) {
+        program.ended = true;
+        return false;
+    }
+
+    return true;
 }
 
 export function newNumberResult(val: number): ProgramResultNumber {

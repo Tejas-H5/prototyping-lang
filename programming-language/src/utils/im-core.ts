@@ -594,10 +594,22 @@ export function __imBlockDerivedEnd(c: ImCache, internalType: number) {
 }
 
 /**
- * I could write a massive doc here explaning how {@link imIf], {@link imIfElse} and {@link imIfEnd} work.
- * but it may be more effective to just arrange the methods one after the other:
+ * Why not `imIf(c, <condition>)` ? 
+ *
+ * The reason to use `if` statements instead of a lambda API like `imIf(c, renderFn: () => {})` 
+ * or even `imIf(c, <condition>)` is to take advantage of typescript's ability to narrow types.
+ * I haven't found any way to emulate this with function calls:
+ *
+ * ```ts
+ *
+ * if (imIf(c) && val1 && val2 && val3) {
+ *      // actually typesafe
+ *      imRenderTheComponent(c, val1, val2, val3);
+ * } imIfEnd(c);
+ *
+ * ```
+ *
  */
-
 export function imIf(c: ImCache): true {
     __imBlockArrayBegin(c);
     __imBlockConditionalBegin(c);

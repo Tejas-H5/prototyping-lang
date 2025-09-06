@@ -185,12 +185,6 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
             } imIfEnd(c);
         } imIfEnd(c);
 
-        imEl(c, EL_H3); imStr(c, "Code output"); imElEnd(c, EL_H3);
-
-        if (imButtonIsClicked(c, "Grouped", ctx.state.showGroupedOutput)) {
-            ctx.state.showGroupedOutput = !ctx.state.showGroupedOutput;
-        }
-
         if (imIf(c) && ctx.lastInterpreterResult) {
             imProgramOutputs(
                 c,
@@ -598,7 +592,7 @@ export function imFunctionInstructions(
                     }
                 } imForEnd(c);
             } else {
-                imIfEnd(c);
+                imIfElse(c);
                 imLayout(c, BLOCK); {
                     imStr(c, "no instructions present");
                 } imLayoutEnd(c);
