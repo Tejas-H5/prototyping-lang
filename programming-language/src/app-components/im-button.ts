@@ -9,7 +9,7 @@ const cssb = newCssBuilder();
 const cnButton = (() => {
     const transiton = `0.05s linear`;
     return cssb.cn(`button`, [
-        ` { cursor: pointer; user-select: none; background-color: ${cssVars.bg}; color: ${cssVars.fg}; transition: background-color ${transiton}, color ${transiton}; padding: 1px 10px; border: 2px solid ${cssVars.fg}; border-radius: 5px;  }`,
+        ` { cursor: pointer; user-select: none; background-color: ${cssVars.bg}; color: ${cssVars.fg}; transition: background-color ${transiton}, color ${transiton}; padding: 1px 10px; border: 2px solid ${cssVars.fg}; border-radius: 5px; overflow: hidden; }`,
         `.toggled { background-color: ${cssVars.fg}; color: ${cssVars.bg}; }`,
         `:hover { background-color: ${cssVars.bg2}; color: ${cssVars.fg}; }`,
         `.toggled:hover { background-color: ${cssVars.fg2}; color: ${cssVars.bg}; }`,

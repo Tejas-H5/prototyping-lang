@@ -4,6 +4,7 @@ import { imAppCodeOutput } from "./code-output";
 import {
     BLOCK,
     COL,
+    EM,
     imAbsolute,
     imAlign,
     imFixed,
@@ -21,6 +22,7 @@ import {
 } from "./components/core/layout";
 import { cn } from './components/core/stylesheets';
 import { FpsCounterState, imExtraDiagnosticInfo, imFpsCounterSimple } from "./components/fps-counter";
+import { imLine, LINE_VERTICAL } from './components/im-line';
 import { imDebugger } from './debugger';
 import { stepProgram } from './program-interpreter';
 import { parse } from "./program-parser";
@@ -34,6 +36,7 @@ import {
     imFor,
     imForEnd,
     imGet,
+    imGetInline,
     imIf,
     imIfElse,
     imIfEnd,
@@ -164,16 +167,17 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
                 const resultsIsOpen = ctx.resultsIsOpen && !ctx.isDebugging;
                 const debuggerIsOpen = ctx.isDebugging;
 
-                imLayout(c, ROW); imGap(c, 5, PX); imPadding(c, 2, PX, 5, PX, 2, PX, 5, PX); {
-                    imLayout(c, BLOCK); {
-                        if (imButtonIsClicked(c, "Editor", editorIsOpen)) {
-                            ctx.editorIsOpen = !ctx.editorIsOpen;
+                const mouse = getGlobalEventSystem().mouse;
+                const isTopBarMinimized = mouse.Y > 100;
+                imLayout(c, ROW); imGap(c, 5, PX); imPadding(c, 2, PX, 5, PX, 2, PX, 5, PX); 
+                imSize(c, 0, NA, 10, isTopBarMinimized ? PX: NA); {
+                    if (imButtonIsClicked(c, "Editor", editorIsOpen)) {
+                        ctx.editorIsOpen = !ctx.editorIsOpen;
 
-                            if (!ctx.editorIsOpen && !ctx.resultsIsOpen) {
-                                ctx.resultsIsOpen = true;
-                            }
+                        if (!ctx.editorIsOpen && !ctx.resultsIsOpen) {
+                            ctx.resultsIsOpen = true;
                         }
-                    } imLayoutEnd(c);
+                    }
 
                     if (imIf(c) && editorIsOpen) {
                         imLayout(c, ROW);  imGap(c, 5, PX); {
@@ -187,17 +191,20 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
                     } imIfEnd(c);
 
                     imLayout(c, ROW); imFlex(c); imAlign(c); imJustify(c); {
-                        if (imIf(c) && saveTimeout) {
-                            imStr(c, saveTimeout ? "Saving..." : "Saved");
-                        } else {
-                            imIfElse(c);
+                        if (imIf(c) && !isTopBarMinimized) {
+                            if (imIf(c) && saveTimeout) {
+                                imStr(c, saveTimeout ? "Saving..." : "Saved");
+                            } else {
+                                imIfElse(c);
 
-                            imLayout(c, ROW); imGap(c, 10, PX); imJustify(c); {
-                                imFpsCounterSimple(c, fps);
-                                imExtraDiagnosticInfo(c);
-                            } imLayoutEnd(c);
+                                imLayout(c, ROW); imGap(c, 10, PX); imJustify(c); {
+                                    imFpsCounterSimple(c, fps);
+                                    imExtraDiagnosticInfo(c);
+                                } imLayoutEnd(c);
+                            } imIfEnd(c);
                         } imIfEnd(c);
                     } imLayoutEnd(c);
+
 
                     if (imIf(c) && resultsIsOpen) {
                         imLayout(c, ROW); imGap(c, 5, PX); {
@@ -226,16 +233,12 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
                             }
                         } imLayoutEnd(c);
 
-                        imStr(c, "|");
+                        imLine(c, LINE_VERTICAL, 2);
 
                     } imIfEnd(c);
 
                     if (imIf(c) && debuggerIsOpen && ctx.lastInterpreterResult) {
                         imLayout(c, ROW); imGap(c, 5, PX); {
-                            if (imButtonIsClicked(c, "Stop debugging")) {
-                                stopDebugging(ctx);
-                            }
-
                             if (imButtonIsClicked(c, "Step")) {
                                 stepProgram(ctx.lastInterpreterResult);
                             }
