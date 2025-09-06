@@ -461,7 +461,7 @@ export function itLine(a: Iterator) {
         line += b.pieces[i].numNewlines;
     }
 
-    if (a.pieceIdx < b.pieces.length) {
+    if (a.pieceIdx >= 0 && a.pieceIdx < b.pieces.length) {
         const piece = b.pieces[a.pieceIdx];
         assert(a.textIdx < piece.text.length);
         for (let i = 0; i <= a.textIdx; i++) {
@@ -503,6 +503,8 @@ export function itZero(it: Iterator) {
 export function itIsAtEnd(a: Iterator) {
     const b = a.buff;
     if (a.pieceIdx === b.pieces.length - 1) {
+        if (b.pieces.length === 0) return true;
+
         const finalPiece = b.pieces[a.pieceIdx];
         return a.textIdx === finalPiece.text.length;
     }

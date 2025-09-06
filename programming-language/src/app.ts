@@ -222,6 +222,7 @@ export function imApp(c: ImCache, fps: FpsCounterState) {
                         if (imIf(c) && totalErrors && totalErrors < 10) {
                             if (imButtonIsClicked(c, "Dismiss [Warning - may lead to data corruption]")) {
                                 errorState.dismissed = false;
+                                tryState.recover();
                             }
                         } else {
                             imIfElse(c);

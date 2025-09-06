@@ -3,6 +3,7 @@ import { imCode } from './app-styling';
 import {
     BLOCK,
     COL,
+    DisplayType,
     imAbsolute,
     imAlign,
     imAspectRatio,
@@ -18,6 +19,7 @@ import {
     imRelative,
     imSize,
     INLINE,
+    INLINE_BLOCK,
     NA,
     PERCENT,
     PX,
@@ -53,8 +55,6 @@ import {
     T_RESULT_STRING
 } from './program-interpreter';
 import {
-    binOpToString,
-    binOpToOpString as binOpToSymbolString,
     DiagnosticInfo,
     expressionToString,
     expressionTypeToString,
@@ -75,9 +75,7 @@ import {
     T_TERNARY_IF,
     T_UNARY_OP,
     T_VECTOR_LITERAL,
-    TextPosition,
-    unaryOpToOpString,
-    unaryOpToString
+    TextPosition
 } from './program-parser';
 import { GlobalContext, mutateState, rerun, startDebugging } from './state';
 import "./styling";
@@ -107,8 +105,8 @@ import {
     EL_CANVAS,
     EL_H3,
     elGet,
-    elHasMousePress,
     elHasMouseOver,
+    elHasMousePress,
     elSetStyle,
     getGlobalEventSystem,
     imEl,
@@ -123,39 +121,33 @@ import { getSliceValue } from './utils/matrix-math';
 
 export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
     imLayout(c, ROW); imGap(c, 5, PX); {
-        imLayout(c, BLOCK); imButton(c, ctx.state.autoRun); {
-            imStr(c, "Autorun");
+        if (imButtonIsClicked(c, "Autorun", ctx.state.autoRun)) {
+            ctx.state.autoRun = !ctx.state.autoRun
+            mutateState(ctx.state);
 
-            if (elHasMousePress(c)) {
-                ctx.state.autoRun = !ctx.state.autoRun
-                mutateState(ctx.state);
-
-                if (ctx.state.autoRun) {
-                    rerun(ctx);
-                }
+            if (ctx.state.autoRun) {
+                rerun(ctx);
             }
-        } imLayoutEnd(c);
+        }
 
         if (imButtonIsClicked(c, "Start debugging")) {
             startDebugging(ctx);
         }
 
-        imLayout(c, BLOCK); imButton(c, ctx.state.showParserOutput); {
-            imStr(c, "Show AST");
-            if (elHasMousePress(c)) {
-                ctx.state.showParserOutput = !ctx.state.showParserOutput;
-                mutateState(ctx.state);
-            }
-        } imLayoutEnd(c);
+        if (imButtonIsClicked(c, "Show AST", ctx.state.showParserOutput)) {
+            ctx.state.showParserOutput = !ctx.state.showParserOutput;
+            mutateState(ctx.state);
+        }
 
+        if (imButtonIsClicked(c, "Debug text editor", ctx.state.debugTextEditor)) {
+            ctx.state.debugTextEditor = !ctx.state.debugTextEditor;
+            mutateState(ctx.state);
+        }
 
-        imLayout(c, BLOCK); imButton(c, ctx.state.showInterpreterOutput); {
-            imStr(c, "Show instructions");
-            if (elHasMousePress(c)) {
-                ctx.state.showInterpreterOutput = !ctx.state.showInterpreterOutput;
-                mutateState(ctx.state);
-            }
-        } imLayoutEnd(c);
+        if (imButtonIsClicked(c, "Show instructions", ctx.state.showInterpreterOutput)) {
+            ctx.state.showInterpreterOutput = !ctx.state.showInterpreterOutput;
+            mutateState(ctx.state);
+        }
     } imLayoutEnd(c);
 
     const sc = imState(c, newScrollContainer);
@@ -212,7 +204,7 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
                     } imForEnd(c);
                 } imLayoutEnd(c);
             } else {
-                imIfEnd(c);
+                imIfElse(c);
                 imLayout(c, BLOCK); {
                     imStr(c, "No instructions generated yet");
                 } imLayoutEnd(c);
@@ -221,14 +213,9 @@ export function imAppCodeOutput(c: ImCache, ctx: GlobalContext) {
 
         imEl(c, EL_H3); imStr(c, "Code output"); imElEnd(c, EL_H3);
 
-        imLayout(c, ROW); imButton(c, ctx.state.showGroupedOutput); {
-            imStr(c, "Grouped");
-
-            if (elHasMousePress(c)) {
-                ctx.state.showGroupedOutput = !ctx.state.showGroupedOutput;
-                mutateState(ctx.state);
-            }
-        } imLayoutEnd(c);
+        if (imButtonIsClicked(c, "Grouped", ctx.state.showGroupedOutput)) {
+            ctx.state.showGroupedOutput = !ctx.state.showGroupedOutput;
+        }
 
         if (imIf(c) && ctx.lastInterpreterResult) {
             imProgramOutputs(
@@ -502,8 +489,8 @@ function textPositionToString(pos: TextPosition): string {
     return "Line " + pos.line + "|Col " + pos.col + "+" + pos.tabs + "tabs" + "|idx " + pos.i;
 }
 
-export function imProgramResult(c: ImCache, res: ProgramResult) {
-    imLayout(c, ROW); imGap(c, 5, PX); {
+export function imProgramResult(c: ImCache, res: ProgramResult, layout: DisplayType = ROW) {
+    imLayout(c, layout); imGap(c, 5, PX); {
         const typeString = programResultTypeString(res)
         imStr(c, typeString + " ");
 
@@ -541,7 +528,9 @@ export function imProgramResult(c: ImCache, res: ProgramResult) {
             } break;
             case T_RESULT_MATRIX: {
                 let idx = 0;
-                const dfs = (dim: number, isLast: boolean) => {
+                const dfs = (dim: number, totalDimensions: number, isFinal: boolean) => {
+                    const isLast = dim === totalDimensions - 1;
+
                     if (dim === res.val.shape.length) {
                         const val = getSliceValue(res.val.values, idx);
 
@@ -550,7 +539,7 @@ export function imProgramResult(c: ImCache, res: ProgramResult) {
 
                         imStr(c, "" + val);
 
-                        if (imIf(c) && !isLast) {
+                        if (imIf(c) && !isFinal) {
                             imStr(c, ", ");
                         } imIfEnd(c);
 
@@ -558,7 +547,7 @@ export function imProgramResult(c: ImCache, res: ProgramResult) {
                     }
 
                     imLayout(c, BLOCK); imCode(c, dim === 0 ? 0 : 1); {
-                        imLayout(c, BLOCK); imCode(c, 1); imStr(c, "["); imLayoutEnd(c);
+                        imLayout(c, isLast ? INLINE_BLOCK : BLOCK); imCode(c, 1); imStr(c, "["); imLayoutEnd(c);
                         const len = res.val.shape[dim];
                         imFor(c); for (let i = 0; i < len; i++) {
                             // This is because when the 'level' of the list changes, the depth itself changes,
@@ -566,13 +555,13 @@ export function imProgramResult(c: ImCache, res: ProgramResult) {
                             // We need to re-key the list, so that we may render a different kind of component at this position.
                             const key = (res.val.shape.length - dim) + "-" + i;
                             imKeyedBegin(c, key); {
-                                dfs(dim + 1, i === len - 1);
+                                dfs(dim + 1, totalDimensions, i === len - 1);
                             } imKeyedEnd(c);
                         } imForEnd(c);
-                        imLayout(c, BLOCK); imCode(c, 1); imStr(c, "]"); imLayoutEnd(c);
+                        imLayout(c, isLast ? INLINE_BLOCK : BLOCK); imCode(c, isLast ? 0 : 1); imStr(c, "]"); imLayoutEnd(c);
                     } imLayoutEnd(c);
                 }
-                dfs(0, false);
+                dfs(0, res.val.shape.length, false);
             } break;
             case T_RESULT_RANGE: {
                 imLayout(c, INLINE); imCode(c); {
@@ -677,6 +666,7 @@ function imProgramPrintOutput(
     result: ProgramPrintOutput,
 ) {
     const programText = program.parseResult.text;
+
     const root = imLayout(c, ROW); imGap(c, 5, PX); {
         if (canScrollToThing(ctx, s, result.expr)) {
             s.outputToScrollTo = root;
@@ -684,15 +674,18 @@ function imProgramPrintOutput(
 
         imLine(c, LINE_VERTICAL, 1);
 
-        imLayout(c, BLOCK); imCode(c); {
-            imStr(
-                c,
-                expressionToString(programText, result.expr)
-            )
-        } imLayoutEnd(c);
+        const layout = result.val.t === T_RESULT_MATRIX ? COL: ROW;
+        imLayout(c, layout); imFlex(c); {
+            imLayout(c, BLOCK); imCode(c); {
+                imStr(
+                    c,
+                    expressionToString(programText, result.expr)
+                )
+            } imLayoutEnd(c);
 
-        imLayout(c, BLOCK); imFlex(c); {
-            imProgramResult(c, result.val);
+            imLayout(c, BLOCK); imFlex(c); {
+                imProgramResult(c, result.val, layout);
+            } imLayoutEnd(c);
         } imLayoutEnd(c);
     } imLayoutEnd(c);
 }

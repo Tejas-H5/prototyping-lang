@@ -1,6 +1,7 @@
 export type CodeExample = {
     name: string;
     code: string;
+    boring?: boolean;
 }
 
 
@@ -218,5 +219,72 @@ mul(^, T)
 plot_lines(1, ^, [0, 0, 1])
 
         `
+    },
+    {
+        name: "Some more matrix.",
+        code:
+        `
+pixelMatrix = [
+	[100, 100, 10000, 100],
+	[100, 100, 10000, 100],
+	[100, 100, 10000, 100],
+	[100, 100, 10000, 100],
+]
+
+val = [10, 10, 10, 10]
+
+>>>mul(pixelMatrix, val)
+>>>mul(pixelMatrix, ^)
+>>>mul(pixelMatrix, ^)
+>>>mul(pixelMatrix, ^)
+>>>mul(pixelMatrix, ^) 
+>>>mul(pixelMatrix, ^)
+
+val[0] = val[0] / val[3]
+val[1] = val[1] / val[3]
+
+>>> val
+        `
+    },
+    {
+        name: "Some more vector things",
+        code:
+        `
+t = slider("t", 0, 6 * PI, 0.001)
+
+dir = [sin(t), cos(t)]
+
+a = [100, 200]
+
+proj = dot(a, dir)
+
+plot_points(0, [
+	[0, 0],
+	a,
+	proj * dir,
+	proj * a,
+])
+
+plot_lines(0, [
+	[0, 0],
+	1000 * dir
+])
+
+plot_lines(0, [
+	-1000 * a,
+	1000 * a
+])
+
+        `
+
+    },
+    {
+        name: "Reshaping",
+        boring: true,
+        code:`
+X = >>>[1, 2, 3]
+Y = >>>reshape(X, [3, 1])
+Z = >>>reshape(Y, [3])
+`
     }
 ]

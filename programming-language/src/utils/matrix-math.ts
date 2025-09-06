@@ -152,11 +152,16 @@ export function getCol(m: Matrix, i: number): Matrix {
     return { values, shape: [] };
 }
 
-export function matrixZeroes(shape: number[]): Matrix {
-    let len = 1;
+export function getShapeElementCount(shape: number[]): number {
+    let count = 1;
     for (let i = 0; i < shape.length; i++) {
-        len *= shape[i];
+        count *= shape[i];
     }
+    return count;
+}
+
+export function matrixZeroes(shape: number[]): Matrix {
+    const len = getShapeElementCount(shape);
 
     const values: number[] = Array(len).fill(0);
 

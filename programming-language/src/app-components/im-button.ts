@@ -6,7 +6,6 @@ import { elHasMousePress, elSetClass, ImGlobalEventSystem, imStr } from "src/uti
 
 const cssb = newCssBuilder();
 
-// TODO: should this really be in core/layout?
 const cnButton = (() => {
     const transiton = `0.05s linear`;
     return cssb.cn(`button`, [

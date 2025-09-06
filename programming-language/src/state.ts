@@ -1,6 +1,5 @@
 import { interpret, ProgramInterpretResult, ProgramResultFunction, startInterpreting } from "./program-interpreter";
 import { parse, ProgramParseResult } from "./program-parser";
-import { newImGlobalEventSystem } from "./utils/im-dom";
 import { autoMigrate, recursiveCloneNonComputedFields } from "./utils/serialization";
 
 export type GlobalState = {
@@ -9,6 +8,7 @@ export type GlobalState = {
     showInterpreterOutput: boolean;
     autoRun: boolean;
     showGroupedOutput: boolean;
+    debugTextEditor: boolean;
     _version: 0,
 };
 
@@ -123,6 +123,7 @@ export function newGlobalState(): GlobalState {
         showInterpreterOutput: false,
         autoRun: true,
         showGroupedOutput: false,
+        debugTextEditor: false,
         _version: 0,
     };
 }

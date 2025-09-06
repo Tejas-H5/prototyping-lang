@@ -50,7 +50,7 @@ export function iterateToNextNewline(cursor: tb.Iterator) {
     return count;
 }
 
-function moveDown(s: TextEditorState) {
+export function textEditorMoveDown(s: TextEditorState) {
     const { pieceIdx, textIdx } = s.cursor;
     const currentLineOffset = iterateToLastNewline(s.cursor);
     tb.itCopyValues(s.cursor, pieceIdx, textIdx);
@@ -71,7 +71,7 @@ export function textEditorClearSelection(s: TextEditorState) {
     tb.itClear(s.selectionEnd);
 }
 
-export function moveUp(s: TextEditorState) {
+export function textEditorMoveUp(s: TextEditorState) {
     const currentLineOffset = iterateToLastNewline(s.cursor);
     if (tb.itIsZero(s.cursor)) {
         return;
@@ -172,7 +172,6 @@ export type TextEditorState = {
     hasFocus:          boolean;
     hasClick:          boolean;
     isShifting:        boolean;
-
 }
 
 function pushToUndoBuffer(s: TextEditorState, edit: TextEdit) {
@@ -311,7 +310,7 @@ export function textEditorSetSelection(s: TextEditorState, start: tb.Iterator, e
 }
 
 export function textEditorScroll(s: TextEditorState, amount: number) {
-    s.wantedScrollAmount = amount;
+    s.wantedScrollAmount += amount;
 }
 
 export function handleTextEditorMouseScrollEvent(c: ImCache, s: TextEditorState) {
@@ -475,16 +474,16 @@ export function defaultTextEditorKeyboardEventHandler(s: TextEditorState) {
                 tb.iterate(s.cursor);
             }
         } else if (key === "ArrowUp") {
-            moveUp(s);
+            textEditorMoveUp(s);
         } else if (key === "PageUp") {
             for (let i = 0; i < 20; i++) {
-                moveUp(s);
+                textEditorMoveUp(s);
             }
         } else if (key === "ArrowDown") {
-            moveDown(s);
+            textEditorMoveDown(s);
         } else if (key === "PageDown") {
             for (let i = 0; i < 20; i++) {
-                moveDown(s);
+                textEditorMoveDown(s);
             }
         } else if (key === "End") {
             if (s.inCommandMode) {
@@ -827,59 +826,63 @@ export function imEndTextEditor(c: ImCache, s: TextEditorState) {
     // how tall the line should be. Hence, we scroll by 1 step per frame.
     // TODO: think of better abstraction. Or maybe we put a limit on the height of the items.
 
-    if (s._cursorSpan && s._containerElement && s._lastRenderedCharSpan) {
-        const cursorRect = s._cursorSpan.getBoundingClientRect();
-        const containerRect = s._containerElement.getBoundingClientRect();
+    if (s.isAutoScrolling) {
+        if (s._cursorSpan && s._containerElement && s._lastRenderedCharSpan) {
+            const cursorRect = s._cursorSpan.getBoundingClientRect();
+            const containerRect = s._containerElement.getBoundingClientRect();
 
-        const cursorTop = cursorRect.top;
-        const cursorBottom = cursorRect.bottom;
+            const cursorTop = cursorRect.top;
+            const cursorBottom = cursorRect.bottom;
 
-        const containerTop = containerRect.top;
-        const containerBottom = containerRect.bottom;
+            const containerTop = containerRect.top;
+            const containerBottom = containerRect.bottom;
 
-        const containerSize = containerBottom - containerTop;
+            const containerSize = containerBottom - containerTop;
 
-        const percentToTop = (cursorBottom - containerTop) / containerSize;
-        const percentToBottom = (containerBottom - cursorTop) / containerSize;
+            const percentToTop = (cursorBottom - containerTop) / containerSize;
+            const percentToBottom = (containerBottom - cursorTop) / containerSize;
 
-        const scrollThreshold = 0.25;
+            const scrollThreshold = 0.25;
 
-        let autoScrolled = false;
+            let autoScrolled = false;
 
-        if (percentToTop < scrollThreshold) {
-            if (s.viewLine > 0) {
-                s.wantedScrollAmount--;
-                autoScrolled = true;
-            }
-        } else if (percentToBottom < scrollThreshold) {
-            let canScrollDown = true;
-            if (tb.itIsAtEnd(s._renderCursorEnd)) {
-                const lastRenderedCharRect = s._lastRenderedCharSpan.getBoundingClientRect();
-                const lastCharIsFullyVisible = lastRenderedCharRect.bottom < containerBottom;
-                if (lastCharIsFullyVisible) {
-                    canScrollDown = false;
+            if (percentToTop < scrollThreshold) {
+                if (s.viewLine > 0) {
+                    s.wantedScrollAmount--;
+                    autoScrolled = true;
+                }
+            } else if (percentToBottom < scrollThreshold) {
+                let canScrollDown = true;
+                if (tb.itIsAtEnd(s._renderCursorEnd)) {
+                    const lastRenderedCharRect = s._lastRenderedCharSpan.getBoundingClientRect();
+                    const lastCharIsFullyVisible = lastRenderedCharRect.bottom < containerBottom;
+                    if (lastCharIsFullyVisible) {
+                        canScrollDown = false;
+                    }
+                }
+
+                if (canScrollDown) {
+                    s.wantedScrollAmount++;
+                    autoScrolled = true;
                 }
             }
 
-            if (canScrollDown) {
-                s.wantedScrollAmount++;
-                autoScrolled = true;
+            if (!autoScrolled) {
+                s.isAutoScrolling = false;
             }
-        }
+        } else {
+            // When the cursor is out of view, scroll faster.
 
-        if (!autoScrolled) {
-            s.isAutoScrolling = false;
-        }
-    } else {
-        const cursorLine = tb.itLine(s.cursor);
+            const cursorLine = tb.itLine(s.cursor);
 
-        if (tb.itBefore(s.cursor, s._renderCursorStart)) {
-            const dist = s.viewLine - cursorLine;
-            s.wantedScrollAmount -= Math.ceil(dist / 2);
-        } else if (tb.itBefore(s._renderCursorEnd, s.cursor)) {
-            const endLine = s.viewLine + s.viewTotalLines;
-            const dist = cursorLine - endLine;
-            s.wantedScrollAmount += Math.ceil(dist / 2);
+            if (tb.itBefore(s.cursor, s._renderCursorStart)) {
+                const dist = s.viewLine - cursorLine;
+                s.wantedScrollAmount -= Math.ceil(dist / 2);
+            } else if (tb.itBefore(s._renderCursorEnd, s.cursor)) {
+                const endLine = s.viewLine + s.viewTotalLines;
+                const dist = cursorLine - endLine;
+                s.wantedScrollAmount += Math.ceil(dist / 2);
+            }
         }
     }
 }

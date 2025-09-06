@@ -37,6 +37,7 @@ import {
     imRelative,
     imSize,
     INLINE,
+    INLINE_BLOCK,
     NA,
     PERCENT,
     PX,
@@ -44,15 +45,13 @@ import {
     START
 } from "./components/core/layout";
 import { cn } from "./components/core/stylesheets";
-import { imLine, LINE_VERTICAL } from "./components/im-line";
 import { imScrollContainerBegin, newScrollContainer } from "./components/scroll-container";
 import { imSliderInput } from './components/slider';
 import {
-    BuiltinFunction,
-    getBuiltinFunctionsMap,
     programResultTypeStringFromType,
     UI_INPUT_SLIDER
 } from './program-interpreter';
+import { BuiltinFunction, getBuiltinFunctionsMap } from "./program-interpreter-builtins";
 import {
     DiagnosticInfo,
     getAstNodeForTextPos,
@@ -97,7 +96,6 @@ import {
 } from "./utils/im-dom";
 import { max } from './utils/math-utils';
 import { isWhitespace } from './utils/text-utils';
-import { imB } from "./components/core/text";
 
 
 const UNANIMOUSLY_DECIDED_TAB_SIZE = 4;
@@ -590,6 +588,8 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
     const editorState = imState(c, newTextEditorState);
     const finderState = imState(c, newSimpleTextEditorState);
 
+    const debug = ctx.state.debugTextEditor;
+
     let hasSelection = false;
 
     if (editorState.hasFocus && s.isFinding) {
@@ -668,6 +668,23 @@ export function imAppCodeEditor(c: ImCache, ctx: GlobalContext) {
                                 imLayout(c, ROW); imFlexWrap(c); {
                                     imFor(c); while (textEditorHasChars(editorState)) {
                                         const actualC = textEditorGetNextChar(editorState);
+
+                                        // Debug the text editor datastructure
+                                        if (imIf(c) && debug) {
+                                            const cursor = editorState._renderCursor;
+                                            if (imIf(c) && (
+                                                cursor.textIdx <= 0 ||
+                                                actualC === "\t"
+                                            )) {
+                                                imLayout(c, INLINE_BLOCK); {
+                                                    if (isFirstishRender(c)) {
+                                                        elSetStyle(c, "border", "1px solid red");
+                                                    }
+
+                                                    imStr(c, cursor.pieceIdx);
+                                                } imLayoutEnd(c);
+                                            } imIfEnd(c);
+                                        } imIfEnd(c);
 
                                         let astNode: ProgramExpression | undefined;
                                         if (lastParseResult) {
